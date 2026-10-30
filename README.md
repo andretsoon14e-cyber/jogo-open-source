@@ -33,6 +33,8 @@ O multiplayer usa salas com código e sincronização básica dos jogadores; nã
 
 O padrão para novos jogadores é **FPS sem limite**. Quem já tinha um limite salvo mantém sua escolha: em **Configurações → Quantidade de FPS**, selecione `∞` para liberar quadros acima de 120. A taxa real depende do monitor, navegador e aparelho. O modo gráfico **Leve** reduz a resolução interna e usa iluminação mais simples; o balanço das árvores e os sons das criaturas também podem ser desligados nas configurações.
 
+[Veja as capturas, animações e amostras de áudio das melhorias](docs/previas-2026-10-30/).
+
 ## Verificações
 
 ```bash
