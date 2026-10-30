@@ -1,0 +1,15 @@
+# Dependências e artefatos de compilação
+/node_modules/
+/.next/
+/out/
+/build/
+/coverage/
+
+# Credenciais e configurações locais
+.env*
+!.env.example
+
+# Arquivos gerados localmente
+*.tsbuildinfo
+next-env.d.ts
+.DS_Store
