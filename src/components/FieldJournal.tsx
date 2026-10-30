@@ -2,6 +2,7 @@
 
 import { memo, useEffect, useState } from "react";
 import { getCharacterUrl, getSpriteUrl } from "@/game/sprites";
+import { GAME_TITLE } from "@/game/identity";
 import { BESTIARY, EQUIPMENT, SITES, type EquipmentKey } from "@/game/world-content";
 import { RES_LABEL, TOOL_LABEL, type GamePanel, type Snapshot, type ResKey, type ToolKey, type FenceStyle } from "@/game/engine";
 import { Icon } from "./Icons";
@@ -30,7 +31,7 @@ interface Props {
 }
 
 const resourceNames: ResKey[] = ["wood", "stone", "fiber", "food", "iron", "crystal"];
-const titleFor = { build: "Oficina da Clareira", forge: "Forja & melhorias", inventory: "Mochila & equipamento", bestiary: "O livro de Umbra" };
+const titleFor = { build: "Oficina da Clareira", forge: "Forja & melhorias", inventory: "Mochila & equipamento", bestiary: "O Diário da Ilha" };
 
 function Costs({ cost, inv }: { cost: Partial<Record<ResKey, number>>; inv: Record<ResKey, number> }) {
   return <div className="journal-costs">{Object.entries(cost).map(([k,n]) => (
@@ -73,7 +74,7 @@ export default function FieldJournal(props: Props) {
   return <div className="journal-backdrop" onClick={onClose}>
     <section className="journal-frame" role="dialog" aria-modal="true" aria-label={titleFor[panel]} onClick={(e) => e.stopPropagation()}>
       <header className="journal-heading">
-        <div><span className="journal-eyebrow">UMBRA · CADERNO DO EXPLORADOR</span><h2>{titleFor[panel]}</h2></div>
+        <div><span className="journal-eyebrow">{GAME_TITLE.toUpperCase()} · CADERNO DO EXPLORADOR</span><h2>{titleFor[panel]}</h2></div>
         <button className="journal-close" aria-label="Fechar caderno" onClick={onClose}><Icon name="close" size={19} /></button>
       </header>
       <nav className="journal-tabs" aria-label="Seções do caderno">
@@ -184,7 +185,7 @@ export function OutcomePanel({ won, snap, onRespawn, onRestart, onScores, onMenu
 }) {
   return <div className="journal-backdrop" style={{zIndex:55}}>
     <section className="journal-frame outcome-card" role="dialog" aria-modal="true" aria-label={won ? "Vitória" : "Fim da partida"}>
-      <div className="journal-heading"><span className="font-display text-lg">UMBRA · A ÚLTIMA CLAREIRA</span></div>
+      <div className="journal-heading"><span className="font-display text-lg">{GAME_TITLE.toUpperCase()}</span></div>
       <div className="p-7 sm:p-9 text-center">
         <div className="flex justify-center items-center gap-1 h-28 mb-3">
           {won ? [48,76,48].map((size,i) => <svg key={i} width={size} height={size} viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1l3.4 7 7.6 1.1-5.5 5.4 1.3 7.5-6.8-3.6-6.8 3.6 1.3-7.5L1 9.1 8.6 8z" fill={i===1?"#e7ad3f":"#c38d39"} stroke="#855124" strokeWidth="1.2"/><path d="M12 3l2.2 6-2.2 4-2.7-4z" fill="#f9d676"/></svg>) : <svg width="90" height="90" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 2l8 7 8-7 3 3-8 7 8 8-3 3-8-8-8 8-3-3 8-8-8-7z" fill="#526e8c" stroke="#33485e" strokeWidth="1.5"/></svg>}

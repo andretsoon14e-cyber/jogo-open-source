@@ -4,8 +4,8 @@ import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const bundlePath = join(tmpdir(), "umbra-engine-benchmark.js");
-await build({ entryPoints: ["src/game/engine.ts"], bundle: true, platform: "browser", format: "iife", globalName: "UmbraBenchmark", outfile: bundlePath, tsconfig: "tsconfig.json" });
+const bundlePath = join(tmpdir(), "ultima-luz-engine-benchmark.js");
+await build({ entryPoints: ["src/game/engine.ts"], bundle: true, platform: "browser", format: "iife", globalName: "UltimaLuzBenchmark", outfile: bundlePath, tsconfig: "tsconfig.json" });
 const browser = await chromium.launch({
   headless: true,
   args: ["--no-sandbox", "--disable-dev-shm-usage"],
@@ -16,7 +16,7 @@ try {
   await page.setContent('<html><body style="margin:0"><canvas style="width:1280px;height:720px"></canvas></body></html>');
   await page.addScriptTag({ path: bundlePath });
   const result = await page.evaluate(() => {
-    const game = new window.UmbraBenchmark.Engine({ canvas: document.querySelector("canvas"), mode: "single", difficulty: "dificil", playerName: "Benchmark", seed: 77, continueSave: false, onUi: () => {} });
+    const game = new window.UltimaLuzBenchmark.Engine({ canvas: document.querySelector("canvas"), mode: "single", difficulty: "dificil", playerName: "Benchmark", seed: 77, continueSave: false, onUi: () => {} });
     game.skipCutscene(); game.escort.active = false;
     game.updateSpawns = () => {};
     const scenes = [

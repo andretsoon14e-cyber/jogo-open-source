@@ -1,5 +1,7 @@
 /* Música procedural — sem arquivos externos, leve e infinita. */
 
+import { GAME_TITLE, GAME_TAGLINE } from "./identity";
+
 export type Track = "lobby" | "day" | "night" | "siege" | "none";
 
 interface Pattern {
@@ -165,7 +167,7 @@ export class MusicManager {
   private chant() {
     if (!this.voiceEnabled || typeof window === "undefined" || !("speechSynthesis" in window)) return;
     try {
-      const u = new SpeechSynthesisUtterance("Umbra! Survival! Constrói, vamos!");
+      const u = new SpeechSynthesisUtterance(`${GAME_TITLE}! ${GAME_TAGLINE}!`);
       u.lang = "pt-BR";
       u.rate = 0.78;
       u.pitch = 0.7;

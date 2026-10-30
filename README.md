@@ -1,4 +1,4 @@
-# UMBRA — A Última Clareira
+# Ilha da Última Luz
 
 Jogo de sobrevivência para navegador: explore a ilha, reúna recursos, construa uma base e enfrente as criaturas da noite. O projeto usa Next.js, React, TypeScript e um motor 2D baseado em canvas.
 
@@ -11,7 +11,7 @@ npm ci
 npm run dev
 ```
 
-Abra o endereço mostrado no terminal, normalmente [http://localhost:3000](http://localhost:3000). O modo **Jogar sozinho** não precisa de banco de dados. O progresso e as pontuações locais ficam no armazenamento do navegador: limpar os dados do site ou trocar de navegador pode apagá-los ou torná-los indisponíveis.
+Abra o endereço mostrado no terminal, normalmente [http://localhost:3000](http://localhost:3000). O modo **Jogar sozinho** não precisa de banco de dados. O progresso e as pontuações locais ficam no armazenamento do navegador: limpar os dados do site ou trocar de navegador pode apagá-los ou torná-los indisponíveis. As chaves antigas de armazenamento foram preservadas para manter os saves e configurações da versão anterior.
 
 ## Multiplayer e placar compartilhado
 

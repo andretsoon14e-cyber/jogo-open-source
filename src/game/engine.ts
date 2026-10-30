@@ -1,5 +1,5 @@
 /* =========================================================
-   UMBRA — A ÚLTIMA CLAREIRA · survival engine (canvas 2D)
+   ILHA DA ÚLTIMA LUZ · survival engine (canvas 2D)
    ========================================================= */
 
 import { drawSign, drawFlag } from "@/game/art";

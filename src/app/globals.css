@@ -88,8 +88,8 @@ kbd {
 .animate-breathe { animation: breathe 5s ease-in-out infinite; }
 
 @keyframes title-in {
-  0% { opacity: 0; letter-spacing: 0.5em; filter: blur(6px); }
-  100% { opacity: 1; letter-spacing: 0.22em; filter: blur(0); }
+  0% { opacity: 0; letter-spacing: 0.25em; filter: blur(6px); }
+  100% { opacity: 1; letter-spacing: 0.12em; filter: blur(0); }
 }
 .animate-title { animation: title-in 1.6s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
 

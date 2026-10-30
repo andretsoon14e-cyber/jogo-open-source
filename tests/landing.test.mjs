@@ -8,7 +8,7 @@ import worldModule from "../src/game/world-content.ts";
 const { SITES, GLACIER } = worldModule;
 
 const { Engine } = engineModule;
-const { CHAR_LOOKS, viewFromAngle } = spritesModule;
+const { CHAR_LOOKS, viewFromAngle, drawCharacter } = spritesModule;
 const { makeCharacterSprite, CHARACTER_HEIGHT, CHARACTER_WIDTH } = characterModule;
 
 const noop = () => {};
@@ -111,6 +111,69 @@ test("teclado, controle e toque movimentam o personagem após a cutscene", () =>
     for (let i = 0; i < 30; i++) game.update(1 / 60, { mx: 0, my: mode === "gamepad" ? -1 : 0 });
     assert.ok(game.py < startY - 35, `${mode} não se moveu`);
     game.destroy();
+  }
+});
+
+test("o personagem acompanha a direção ao alternar direita e esquerda", () => {
+  storage.clear();
+  for (const input of ["keyboard", "gamepad", "touch"]) {
+    for (const vertical of [-1, 0, 1]) {
+      const game = makeEngine(7);
+      try {
+        simplifySimulation(game);
+        for (const horizontal of [1, -1]) {
+          // Previous mouse aim must not override movement direction.
+          game.aimTarget = horizontal > 0 ? Math.PI : 0;
+          if (input === "keyboard") {
+            game.keys.delete("a"); game.keys.delete("d");
+            game.keys.add(horizontal > 0 ? "d" : "a");
+            if (vertical < 0) game.keys.add("w");
+            if (vertical > 0) game.keys.add("s");
+          }
+          if (input === "touch") game.setTouchMove(horizontal, vertical);
+          game.update(1 / 60, { mx: input === "gamepad" ? horizontal : 0, my: input === "gamepad" ? vertical : 0 });
+          assert.ok(Math.cos(game.pdir) * horizontal > 0, `${input}: direção errada com x=${horizontal}, y=${vertical}`);
+          assert.deepEqual(viewFromAngle(game.pdir), { view: "side", flip: horizontal < 0 }, `${input}: sprite errado com x=${horizontal}, y=${vertical}`);
+          assert.equal(game.aimTarget, null);
+        }
+      } finally {
+        game.destroy();
+      }
+    }
+  }
+});
+
+test("o sprite lateral é espelhado de verdade, inclusive nas diagonais esquerdas", () => {
+  const originalCreateElement = document.createElement;
+  const drawn = [];
+  document.createElement = () => {
+    const image = { width: 0, height: 0, operations: [] };
+    const painter = {
+      fillStyle: "",
+      fillRect(x, y, w, h) { image.operations.push({ x, y, w, h, color: this.fillStyle }); },
+    };
+    image.getContext = () => painter;
+    return image;
+  };
+  const painter = { save: noop, restore: noop, translate: noop, rotate: noop, drawImage: (image) => drawn.push(image), globalAlpha: 1 };
+  try {
+    // A unique look ID avoids reusing any cached canvas from other tests.
+    for (const angle of [0, Math.PI, Math.atan2(-1, -1), Math.atan2(1, -1)]) {
+      drawCharacter(painter, "direction-regression", 0, 0, angle, false, 0);
+    }
+    const [right, left, upLeft, downLeft] = drawn;
+    assert.equal(left.width, right.width);
+    assert.ok(right.operations.length > 0);
+    assert.equal(left.operations.length, right.operations.length);
+    for (let i = 0; i < right.operations.length; i++) {
+      const r = right.operations[i];
+      const l = left.operations[i];
+      assert.deepEqual(l, { ...r, x: right.width - r.x - r.w });
+    }
+    assert.ok(upLeft === left, "diagonal superior esquerda não usa o sprite espelhado");
+    assert.ok(downLeft === left, "diagonal inferior esquerda não usa o sprite espelhado");
+  } finally {
+    document.createElement = originalCreateElement;
   }
 });
 

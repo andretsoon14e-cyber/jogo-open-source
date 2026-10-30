@@ -646,10 +646,13 @@ function charSprite(lookId: string, view: View, frame: number): PixelSprite {
 }
 
 export function viewFromAngle(dir: number): { view: View; flip: boolean } {
-  const a = ((dir % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
-  if (a > Math.PI / 4 && a < (3 * Math.PI) / 4) return { view: "down", flip: false };
-  if (a > (5 * Math.PI) / 4 && a < (7 * Math.PI) / 4) return { view: "up", flip: false };
-  return { view: "side", flip: a > (3 * Math.PI) / 4 && a < (5 * Math.PI) / 4 };
+  const dx = Math.cos(dir);
+  const dy = Math.sin(dir);
+  // Treat equal-axis diagonals as sideways, including tiny rounding errors.
+  if (Math.abs(dy) > Math.abs(dx) + 1e-12) {
+    return { view: dy > 0 ? "down" : "up", flip: false };
+  }
+  return { view: "side", flip: dx < 0 };
 }
 
 /** Draw a character (feet at x,y). */

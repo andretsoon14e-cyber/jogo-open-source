@@ -9,7 +9,7 @@ const browser = await chromium.launch({
   args: ["--no-sandbox", "--disable-dev-shm-usage"],
   ...(process.env.CHROMIUM_EXECUTABLE_PATH ? { executablePath: process.env.CHROMIUM_EXECUTABLE_PATH } : {}),
 });
-const screenshotPath = (name) => join(tmpdir(), `umbra-${name}.png`);
+const screenshotPath = (name) => join(tmpdir(), `ultima-luz-${name}.png`);
 const errors = [];
 function observePage(page) {
   page.on("pageerror", (error) => errors.push(error.message));
@@ -24,6 +24,7 @@ const page = await context.newPage();
 observePage(page);
 await page.addInitScript(() => {
   localStorage.setItem("umbra-settings-v1", JSON.stringify({ music: false, voice: false, controls: "keyboard", fpsCap: 120, quality: "auto" }));
+  localStorage.setItem("umbra-name", "Navegante");
 });
 
 function saveAt(x, y) {
@@ -48,6 +49,11 @@ async function continueAt(x, y) {
 
 try {
   await page.goto(baseURL);
+  assert.equal(await page.title(), "Ilha da Última Luz");
+  await page.getByRole("heading", { name: "ILHA DA ÚLTIMA LUZ" }).waitFor();
+  await page.waitForFunction(() => document.querySelector("input")?.value === "Navegante");
+  await page.getByText(/Música desativada/).waitFor();
+  await page.screenshot({ path: screenshotPath("menu") });
   await page.evaluate(() => document.fonts.ready);
   assert.equal(await page.evaluate(() => document.fonts.check('700 16px "Pixelify Sans"')), true, "fonte do título não carregou");
   assert.equal(await page.evaluate(() => document.fonts.check('400 16px "Nunito"')), true, "fonte da interface não carregou");
@@ -83,7 +89,7 @@ try {
   await page.waitForTimeout(500);
   assert.equal(await dialog.getByRole("button", { name: "Fabricar & equipar" }).count(), 1, "casaco não foi equipado");
   await dialog.getByRole("button", { name: "Registros", exact: true }).click();
-  dialog = page.getByRole("dialog", { name: "O livro de Umbra" });
+  dialog = page.getByRole("dialog", { name: "O Diário da Ilha" });
   await dialog.getByRole("button", { name: "Arauto das Brasas" }).click();
   await dialog.getByRole("heading", { name: "Arauto das Brasas" }).waitFor();
   await page.screenshot({ path: screenshotPath("bestiary") });
@@ -122,7 +128,7 @@ try {
   await page.waitForTimeout(900);
   await page.screenshot({ path: screenshotPath("lizard-temple") });
 
-  const mobile = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const mobile = await browser.newContext({ viewport: { width: 320, height: 844 }, isMobile: true, hasTouch: true });
   const phone = await mobile.newPage();
   observePage(phone);
   await phone.addInitScript((save) => {
@@ -130,6 +136,19 @@ try {
     localStorage.setItem("ilha-save-dificil-single", JSON.stringify(save));
   }, saveAt(104 * 32, 88 * 32));
   await phone.goto(baseURL);
+  const mobileTitle = phone.getByRole("heading", { name: "ILHA DA ÚLTIMA LUZ" });
+  await mobileTitle.waitFor();
+  await phone.evaluate(() => document.fonts.ready);
+  await mobileTitle.evaluate((el) => Promise.all(el.getAnimations().map((animation) => animation.finished)));
+  const bounds = await mobileTitle.evaluate((el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const rect = range.getBoundingClientRect();
+    return { left: rect.left, right: rect.right, viewport: document.documentElement.clientWidth };
+  });
+  assert.ok(bounds.left >= 0 && bounds.right <= bounds.viewport, `título transborda no celular: ${JSON.stringify(bounds)}`);
+  await phone.screenshot({ path: screenshotPath("mobile-menu") });
+  await phone.setViewportSize({ width: 390, height: 844 });
   await phone.getByRole("button", { name: "Jogar sozinho" }).click();
   await phone.getByRole("button", { name: "Continuar" }).first().click();
   await phone.getByRole("button", { name: "Inventário · I" }).click();
@@ -141,7 +160,7 @@ try {
   await mobile.close();
   assert.deepEqual(errors, [], `erros de runtime: ${errors.join("; ")}`);
   console.log("OK: início, inventário, equipamento, oficina, cerca dupla, bestiário, locais e tela de toque sem erros de runtime.");
-  console.log(`Capturas salvas em ${tmpdir()} (umbra-*.png).`);
+  console.log(`Capturas salvas em ${tmpdir()} (ultima-luz-*.png).`);
 } finally {
   await browser.close();
 }

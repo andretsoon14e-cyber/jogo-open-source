@@ -1,11 +1,12 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import { GAME_TITLE } from "@/game/identity";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "UMBRA — A Última Clareira",
+  title: GAME_TITLE,
   description:
-    "Umbra — A Última Clareira: sobreviva a hordas noturnas, cerque sua clareira, melhore armas e escape da ilha. Singleplayer e multiplayer em rede local.",
+    `${GAME_TITLE}: sobreviva a hordas noturnas, cerque sua clareira, melhore armas e escape da ilha. Singleplayer e multiplayer em rede local.`,
 };
 
 export const viewport: Viewport = {

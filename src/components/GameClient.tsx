@@ -6,6 +6,7 @@ import {
   RES_ICON, RES_LABEL, TOOL_ICON, TOOL_LABEL, DIFF_LABEL, ResKey,
 } from "@/game/engine";
 import { music } from "@/game/music";
+import { GAME_TITLE, GAME_TAGLINE } from "@/game/identity";
 import { getPortraitUrl } from "@/game/sprites";
 import { Icon, type IconName } from "@/components/Icons";
 import FieldJournal, { OutcomePanel } from "@/components/FieldJournal";
@@ -20,9 +21,6 @@ interface ScoreRow {
   id: number | string; name: string; score: number; days: number; kills: number;
   difficulty: string; mode: string; outcome: string;
 }
-
-const GAME_NAME = "UMBRA";
-const GAME_SUB = "A Última Clareira";
 
 function uid() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
@@ -44,6 +42,7 @@ export default function GameClient() {
   const [showQuests, setShowQuests] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [settings, setSettings] = useState<GameSettings>(DEFAULT_SETTINGS);
+  const [storageReady, setStorageReady] = useState(false);
   const [scores, setScores] = useState<ScoreRow[]>([]);
   const [mpCode, setMpCode] = useState("");
   const [mpJoin, setMpJoin] = useState("");
@@ -75,18 +74,22 @@ export default function GameClient() {
       const n = localStorage.getItem("umbra-name");
       if (n) setPlayerName(n);
     } catch { /* */ }
+    setStorageReady(true);
   }, []);
 
+  // Do not overwrite previous settings/name with defaults before hydration.
   useEffect(() => {
+    if (!storageReady) return;
     try { localStorage.setItem("umbra-name", playerName); } catch { /* */ }
-  }, [playerName]);
+  }, [playerName, storageReady]);
 
-  useEffect(() => { saveSettings(settings); }, [settings]);
+  useEffect(() => { if (storageReady) saveSettings(settings); }, [settings, storageReady]);
 
   useEffect(() => { applyFullscreen(settings.fullscreen); }, [settings.fullscreen]);
 
   // música: lobby em todos os menus, engine controla a trilha no jogo
   useEffect(() => {
+    if (!storageReady) return;
     music.setEnabled(settings.music);
     music.setVolume(settings.musicVol);
     music.setVoice(settings.voice);
@@ -98,7 +101,7 @@ export default function GameClient() {
       window.removeEventListener("pointerdown", resume);
       window.removeEventListener("keydown", resume);
     };
-  }, [screen, settings.music, settings.musicVol, settings.voice]);
+  }, [screen, settings.music, settings.musicVol, settings.voice, storageReady]);
 
   useEffect(() => {
     if (screen !== "difficulty") return;
@@ -285,15 +288,15 @@ export default function GameClient() {
         <div className="relative z-10 flex flex-col items-center gap-5 text-center">
           <div className="relative">
             <div className="absolute inset-0 blur-3xl bg-amber-500/25 animate-breathe" />
-            <h1 className="relative font-display text-5xl md:text-7xl tracking-[0.22em] text-transparent bg-clip-text bg-gradient-to-b from-amber-200 via-amber-400 to-amber-700 drop-shadow-[0_4px_16px_rgba(0,0,0,0.9)] animate-title">
-              {GAME_NAME}
+            <h1 className="relative font-display text-[clamp(1.4rem,5vw,4.5rem)] tracking-[0.12em] text-balance text-transparent bg-clip-text bg-gradient-to-b from-amber-200 via-amber-400 to-amber-700 drop-shadow-[0_4px_16px_rgba(0,0,0,0.9)] animate-title">
+              {GAME_TITLE.toUpperCase()}
             </h1>
-            <p className="font-display text-sm md:text-base tracking-[0.5em] text-emerald-200/90 mt-1">{GAME_SUB}</p>
+            <p className="font-display text-[10px] sm:text-sm md:text-base tracking-[0.18em] sm:tracking-[0.32em] text-emerald-200/90 mt-1 uppercase">{GAME_TAGLINE}</p>
             <div className="h-px w-40 mx-auto mt-3 bg-gradient-to-r from-transparent via-amber-400/70 to-transparent" />
           </div>
 
-          <p className="text-[13px] text-amber-100/80 italic animate-flicker">
-            ♪ Umbra... survival... constrói, vamos! ♪
+          <p className="text-[11px] sm:text-[13px] text-amber-100/80 italic animate-flicker">
+            ♪ {GAME_TITLE}... {GAME_TAGLINE.toLowerCase()} ♪
           </p>
 
           <div className="w-full max-w-xs flex flex-col gap-2.5 mt-1">
@@ -400,7 +403,7 @@ export default function GameClient() {
         <h2 className="font-display text-3xl text-amber-300 text-center mb-6">🏆 Melhores pontuações</h2>
         <div className="w-full max-w-2xl px-4 overflow-x-auto">
           {scores.length === 0 ? (
-            <p className="text-slate-400 text-center">Nenhuma pontuação ainda. Seja a primeira lenda de Umbra!</p>
+            <p className="text-slate-400 text-center">Nenhuma pontuação ainda. Seja a primeira lenda da ilha!</p>
           ) : (
             <table className="w-full text-sm">
               <thead>
@@ -827,7 +830,7 @@ function SettingsModal({ settings, onChange, onClose, audioOn }: { settings: Gam
           <label className="block text-xs text-slate-200 mt-2">Volume dos efeitos</label>
           <input type="range" min={0} max={1} step={0.05} value={settings.sfxVol}
             onChange={(e) => onChange({ sfxVol: Number(e.target.value) })} className="w-full accent-amber-500" />
-          <Toggle label="Voz do tema no lobby" desc="Canta 'Umbra, survival, constrói, vamos'" on={settings.voice} onChange={(v) => onChange({ voice: v })} />
+          <Toggle label="Voz do tema no lobby" desc="Narra o tema do jogo no menu" on={settings.voice} onChange={(v) => onChange({ voice: v })} />
         </section>
 
         <button onClick={onClose} className="mt-3 w-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg py-2 cursor-pointer">
