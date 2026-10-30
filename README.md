@@ -29,6 +29,10 @@ Sem o banco, o modo solo continua disponível e o placar usa os dados locais do 
 
 O multiplayer usa salas com código e sincronização básica dos jogadores; não há autenticação nem proteção antifraude no placar. Use-o em uma rede confiável, sem expor o servidor à internet pública até adicionar essas proteções. Para acessar de outros dispositivos na rede local, execute `npm run build` e depois `npm run start -- --hostname 0.0.0.0`; nos outros dispositivos, abra o endereço de rede da máquina na porta 3000.
 
+## Desempenho e efeitos
+
+O padrão para novos jogadores é **FPS sem limite**. Quem já tinha um limite salvo mantém sua escolha: em **Configurações → Quantidade de FPS**, selecione `∞` para liberar quadros acima de 120. A taxa real depende do monitor, navegador e aparelho. O modo gráfico **Leve** reduz a resolução interna e usa iluminação mais simples; o balanço das árvores e os sons das criaturas também podem ser desligados nas configurações.
+
 ## Verificações
 
 ```bash
@@ -45,7 +49,7 @@ npm run test:browser
 npm run test:benchmark
 ```
 
-`APP_URL` pode apontar o teste de navegação para outro endereço. Opcionalmente, `CHROMIUM_EXECUTABLE_PATH` permite usar um Chromium já instalado. Para verificar também o aviso de multiplayer sem banco, execute o teste de navegação com `EXPECT_NO_DATABASE=1` no ambiente.
+`APP_URL` pode apontar o teste de navegação para outro endereço. Opcionalmente, `CHROMIUM_EXECUTABLE_PATH` permite usar um Chromium já instalado. Para verificar também o aviso de multiplayer sem banco, execute o teste de navegação com `EXPECT_NO_DATABASE=1` no ambiente. O benchmark mede intervalos e tempo de CPU em cenas de floresta, ruínas, neve e combate; os resultados dependem do ambiente e não garantem uma taxa de FPS em outros aparelhos.
 
 Para testar criação de sala, sincronização e placar com PostgreSQL, configure e prepare um **banco dedicado a testes** e execute `npm run test:db`. O teste cria e remove seus próprios dados; a criação de sala também remove salas antigas conforme a regra do jogo.
 

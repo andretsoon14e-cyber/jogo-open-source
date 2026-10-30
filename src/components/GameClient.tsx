@@ -519,7 +519,7 @@ export default function GameClient() {
           </div>
 
           {snap?.tutorial && !showSettings && panel === "none" && (
-            <div className="absolute top-28 md:top-auto md:bottom-24 left-1/2 -translate-x-1/2 z-20 w-[min(92vw,560px)] pointer-events-none">
+            <div role="region" aria-label="Tutorial" className="absolute top-28 md:top-auto md:bottom-28 left-1/2 -translate-x-1/2 z-20 w-[min(92vw,560px)] pointer-events-none">
               <div className="bg-slate-950/90 border border-emerald-500/50 rounded-xl px-4 py-2.5 shadow-2xl animate-slide-up">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[10px] uppercase tracking-widest text-emerald-400">Tutorial · {snap.tutorial.step}/{snap.tutorial.total}</span>
@@ -541,7 +541,7 @@ export default function GameClient() {
           )}
 
           {settings.controls === "keyboard" && showKeys && snap && (
-            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 hidden md:flex gap-1.5 text-[10px] text-slate-300 bg-slate-950/70 px-3 py-1.5 rounded-lg border border-slate-700 pointer-events-none">
+            <div role="group" aria-label="Atalhos do teclado" className="absolute bottom-[72px] left-1/2 -translate-x-1/2 z-10 hidden md:flex gap-1.5 text-[10px] text-slate-300 bg-slate-950/70 px-3 py-1.5 rounded-lg border border-slate-700 pointer-events-none">
               {snap.controlHints.map((h) => <span key={h} className="px-1">{h}</span>)}
               <button onClick={() => setShowKeys(false)} className="text-slate-500 hover:text-white cursor-pointer pointer-events-auto">✕</button>
             </div>
@@ -754,7 +754,7 @@ function QuickStats({ snap }: { snap: Snapshot }) {
 
 function Toggle({ label, desc, on, onChange }: { label: string; desc?: string; on: boolean; onChange: (v: boolean) => void }) {
   return (
-    <button onClick={() => onChange(!on)} className="flex items-center justify-between gap-3 py-2 text-left cursor-pointer w-full">
+    <button onClick={() => onChange(!on)} aria-pressed={on} className="flex items-center justify-between gap-3 py-2 text-left cursor-pointer w-full">
       <span>
         <span className="text-sm text-slate-200">{label}</span>
         {desc && <span className="block text-[10px] text-slate-500">{desc}</span>}
@@ -769,10 +769,10 @@ function Toggle({ label, desc, on, onChange }: { label: string; desc?: string; o
 function SettingsModal({ settings, onChange, onClose, audioOn }: { settings: GameSettings; onChange: (p: Partial<GameSettings>) => void; onClose: () => void; audioOn: boolean }) {
   return (
     <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/70 p-3" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="bg-slate-950 border border-amber-700/60 rounded-2xl w-full max-w-md max-h-[88vh] overflow-y-auto p-4 shadow-2xl">
+      <div role="dialog" aria-modal="true" aria-label="Configurações" onClick={(e) => e.stopPropagation()} className="bg-slate-950 border border-amber-700/60 rounded-2xl w-full max-w-md max-h-[88vh] overflow-y-auto p-4 shadow-2xl">
         <div className="flex justify-between items-center mb-2">
           <h3 className="font-display text-xl text-amber-300">⚙️ Configurações</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-white text-xl cursor-pointer px-2">✕</button>
+          <button onClick={onClose} aria-label="Fechar configurações" className="text-slate-400 hover:text-white text-xl cursor-pointer px-2">✕</button>
         </div>
 
         <section className="border-t border-slate-800 py-2">
@@ -780,15 +780,15 @@ function SettingsModal({ settings, onChange, onClose, audioOn }: { settings: Gam
           <Toggle label="Tela cheia" desc={settings.fullscreen ? "Modo tela cheia" : "Modo janela"} on={settings.fullscreen} onChange={(v) => onChange({ fullscreen: v })} />
           <Toggle label="Mostrar contador de FPS" on={settings.showFps} onChange={(v) => onChange({ showFps: v })} />
           <label className="block text-sm text-slate-200 mt-2 mb-1">Quantidade de FPS</label>
-          <div className="grid grid-cols-5 gap-1">
-            {([30, 60, 90, 120, 0] as FpsCap[]).map((f) => (
-              <button key={f} onClick={() => onChange({ fpsCap: f })}
+          <div className="grid grid-cols-4 gap-1">
+            {([30, 60, 90, 120, 144, 165, 240, 0] as FpsCap[]).map((f) => (
+              <button key={f} onClick={() => onChange({ fpsCap: f })} aria-label={f === 0 ? "FPS sem limite" : `${f} FPS`} aria-pressed={settings.fpsCap === f}
                 className={`py-1.5 rounded text-xs font-bold border cursor-pointer ${settings.fpsCap === f ? "bg-amber-500 text-slate-950 border-amber-300" : "bg-slate-800 border-slate-600 text-slate-200"}`}>
                 {f === 0 ? "∞" : f}
               </button>
             ))}
           </div>
-          <p className="mt-2 text-[10px] leading-relaxed text-slate-500">120 é uma meta: depende da tela e do aparelho. O modo Auto prioriza fluidez usando resolução interna leve e sprites em cache.</p>
+          <p className="mt-2 text-[10px] leading-relaxed text-slate-500">Sem limite permite acompanhar telas acima de 120 Hz. O FPS depende da tela, do navegador e do aparelho.</p>
           <label className="block text-sm text-slate-200 mt-3 mb-1">Qualidade gráfica</label>
           <div className="grid grid-cols-3 gap-1">
             {(["leve", "auto", "alta"] as Quality[]).map((q) => (
@@ -798,6 +798,7 @@ function SettingsModal({ settings, onChange, onClose, audioOn }: { settings: Gam
               </button>
             ))}
           </div>
+          <Toggle label="Movimento das árvores" desc="Balanço suave das copas; desative para reduzir movimento" on={settings.treeMotion} onChange={(v) => onChange({ treeMotion: v })} />
         </section>
 
         <section className="border-t border-slate-800 py-2">
@@ -830,6 +831,7 @@ function SettingsModal({ settings, onChange, onClose, audioOn }: { settings: Gam
           <label className="block text-xs text-slate-200 mt-2">Volume dos efeitos</label>
           <input type="range" min={0} max={1} step={0.05} value={settings.sfxVol}
             onChange={(e) => onChange({ sfxVol: Number(e.target.value) })} className="w-full accent-amber-500" />
+          <Toggle label="Sons das criaturas" desc="Rugidos e chamados quando os monstros estão próximos" on={settings.creatureSounds} onChange={(v) => onChange({ creatureSounds: v })} />
           <Toggle label="Voz do tema no lobby" desc="Narra o tema do jogo no menu" on={settings.voice} onChange={(v) => onChange({ voice: v })} />
         </section>
 

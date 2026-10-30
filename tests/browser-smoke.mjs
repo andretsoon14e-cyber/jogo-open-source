@@ -57,6 +57,27 @@ try {
   await page.evaluate(() => document.fonts.ready);
   assert.equal(await page.evaluate(() => document.fonts.check('700 16px "Pixelify Sans"')), true, "fonte do título não carregou");
   assert.equal(await page.evaluate(() => document.fonts.check('400 16px "Nunito"')), true, "fonte da interface não carregou");
+  await page.getByRole("button", { name: "Configurações" }).click();
+  const config = page.getByRole("dialog", { name: "Configurações" });
+  await config.waitFor();
+  assert.equal(await config.getByRole("button", { name: "120 FPS" }).getAttribute("aria-pressed"), "true", "limite antigo não foi preservado");
+  await config.getByRole("button", { name: "FPS sem limite" }).click();
+  assert.equal(await config.getByRole("button", { name: "FPS sem limite" }).getAttribute("aria-pressed"), "true");
+  await page.screenshot({ path: screenshotPath("configuracoes") });
+  const windToggle = config.getByRole("button", { name: /Movimento das árvores/ });
+  await windToggle.click();
+  assert.equal(await windToggle.getAttribute("aria-pressed"), "false");
+  await windToggle.click();
+  const soundsToggle = config.getByRole("button", { name: /Sons das criaturas/ });
+  await soundsToggle.click();
+  assert.equal(await soundsToggle.getAttribute("aria-pressed"), "false");
+  await soundsToggle.click();
+  await page.waitForFunction(() => {
+    const settings = JSON.parse(localStorage.getItem("umbra-settings-v1") ?? "{}");
+    return settings.fpsCap === 0 && settings.treeMotion === true && settings.creatureSounds === true;
+  });
+  await page.screenshot({ path: screenshotPath("configuracoes-audio") });
+  await config.getByRole("button", { name: "Pronto" }).click();
   if (process.env.EXPECT_NO_DATABASE === "1") {
     await page.getByRole("button", { name: /Multiplayer/ }).click();
     await page.getByRole("button", { name: /Criar e jogar/ }).click();
@@ -68,6 +89,12 @@ try {
   await page.locator("canvas").waitFor();
   await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "Inventário · I" }).waitFor();
+  const tutorial = page.getByRole("region", { name: "Tutorial" });
+  const hints = page.getByRole("group", { name: "Atalhos do teclado" });
+  await tutorial.waitFor(); await hints.waitFor();
+  const tutorialRect = await tutorial.boundingBox(), hintsRect = await hints.boundingBox();
+  assert.ok(tutorialRect.y + tutorialRect.height <= hintsRect.y, "tutorial sobrepõe os atalhos do teclado");
+  assert.ok(hintsRect.y + hintsRect.height <= 820 - 68, "atalhos sobrepõem a barra de ferramentas");
   await page.keyboard.down("w");
   await page.waitForTimeout(600);
   await page.keyboard.up("w");
@@ -148,6 +175,12 @@ try {
   });
   assert.ok(bounds.left >= 0 && bounds.right <= bounds.viewport, `título transborda no celular: ${JSON.stringify(bounds)}`);
   await phone.screenshot({ path: screenshotPath("mobile-menu") });
+  await phone.getByRole("button", { name: "Configurações" }).click();
+  const phoneConfig = phone.getByRole("dialog", { name: "Configurações" });
+  await phoneConfig.waitFor();
+  assert.equal(await phoneConfig.getByRole("button", { name: "FPS sem limite" }).getAttribute("aria-pressed"), "true");
+  assert.equal(await phoneConfig.evaluate((el) => el.scrollWidth > el.clientWidth + 2), false, "configurações transbordam no celular");
+  await phoneConfig.getByRole("button", { name: "Fechar configurações" }).click();
   await phone.setViewportSize({ width: 390, height: 844 });
   await phone.getByRole("button", { name: "Jogar sozinho" }).click();
   await phone.getByRole("button", { name: "Continuar" }).first().click();

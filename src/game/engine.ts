@@ -3,10 +3,12 @@
    ========================================================= */
 
 import { drawSign, drawFlag } from "@/game/art";
-import { drawSprite, drawCharacter, drawToolSprite, spriteSize, getBaked, SPRITES, SCALE } from "@/game/sprites";
+import { drawSprite, drawSwaySprite, drawCharacter, drawToolSprite, spriteSize, getBaked, SPRITES, SCALE } from "@/game/sprites";
 import { Terrain, drawWaterAnim } from "@/game/terrain";
 import { MusicManager } from "@/game/music";
+import { Sfx } from "@/game/sfx";
 import { GameSettings, DEFAULT_SETTINGS } from "@/game/settings";
+import { FrameLimiter } from "@/game/frame-limiter";
 import { SITES, GLACIER, EQUIPMENT, type EquipmentKey } from "@/game/world-content";
 
 export type Difficulty = "dificil" | "muito-dificil" | "impossivel";
@@ -213,58 +215,14 @@ const FENCE_DEF: Record<FenceStyle, { name: string; desc: string; hp: number; co
   hedge: { name: "Cerca viva", desc: "Treliça coberta por folhas; recupera vida lentamente durante o dia.", hp: 310, cost: { wood: 8, fiber: 12, food: 2 }, lockLevel: 2 },
 };
 
-/* ---------------- audio ---------------- */
-class Sfx {
-  ctx: AudioContext | null = null;
-  vol = 0.35;
-  ensure() {
-    if (!this.ctx) {
-      try { this.ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)(); } catch { /* noop */ }
-    }
-    if (this.ctx && this.ctx.state === "suspended") this.ctx.resume().catch(() => {});
-  }
-  tone(f: number, dur: number, type: OscillatorType, vol: number, slide = 0) {
-    if (!this.ctx) return;
-    const t = this.ctx.currentTime;
-    const o = this.ctx.createOscillator(), g = this.ctx.createGain();
-    o.type = type; o.frequency.setValueAtTime(f, t);
-    if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, f + slide), t + dur);
-    g.gain.setValueAtTime(vol * this.vol, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    o.connect(g); g.connect(this.ctx.destination);
-    o.start(t); o.stop(t + dur + 0.02);
-  }
-  noise(dur: number, vol: number) {
-    if (!this.ctx) return;
-    const t = this.ctx.currentTime;
-    const n = Math.floor(this.ctx.sampleRate * dur);
-    const buf = this.ctx.createBuffer(1, n, this.ctx.sampleRate);
-    const d = buf.getChannelData(0);
-    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
-    const s = this.ctx.createBufferSource(); s.buffer = buf;
-    const g = this.ctx.createGain(); g.gain.value = vol * this.vol;
-    s.connect(g); g.connect(this.ctx.destination); s.start(t);
-  }
-  chop() { this.tone(180, 0.09, "square", 0.5, -60); this.noise(0.06, 0.3); }
-  mine() { this.tone(520, 0.05, "square", 0.35, -200); this.noise(0.08, 0.45); }
-  swing() { this.noise(0.05, 0.18); }
-  hit() { this.tone(140, 0.12, "sawtooth", 0.6, -70); this.noise(0.08, 0.4); }
-  hurt() { this.tone(220, 0.25, "sawtooth", 0.55, -140); }
-  pickup() { this.tone(660, 0.07, "sine", 0.4, 220); this.tone(990, 0.09, "sine", 0.25, 120); }
-  build() { this.tone(330, 0.12, "triangle", 0.5, 80); this.tone(440, 0.18, "triangle", 0.35, 110); }
-  eat() { this.tone(300, 0.08, "sine", 0.4, 60); this.tone(380, 0.1, "sine", 0.3, 60); }
-  roll() { this.noise(0.12, 0.22); }
-  die() { this.tone(300, 0.6, "sawtooth", 0.6, -260); }
-  quest() { this.tone(523, 0.12, "sine", 0.45); this.tone(659, 0.12, "sine", 0.45); this.tone(784, 0.25, "sine", 0.45); }
-  night() { this.tone(110, 0.8, "sawtooth", 0.25, -40); }
-  ui() { this.tone(500, 0.05, "sine", 0.3, 100); }
-}
-
 /* ---------------- helpers ---------------- */
 const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
 const dist2 = (ax: number, ay: number, bx: number, by: number) => {
   const dx = ax - bx, dy = ay - by; return dx * dx + dy * dy;
 };
+
+// Shadows are reused across the many visible trees and objects.
+const shadowCache = new Map<number, HTMLCanvasElement>();
 
 interface SaveData {
   v: number; seed: number;
@@ -306,6 +264,7 @@ export class Engine {
   nodes: RNode[] = [];
   nodeBuckets = new Map<number, RNode[]>();
   depletedNodes = new Set<RNode>();
+  shakingNodes = new Set<RNode>();
   monsters: Monster[] = [];
   drops: Drop[] = [];
   projectiles: Projectile[] = [];
@@ -412,6 +371,7 @@ export class Engine {
     this.ctx = ctx;
     this.diff = DIFF[opts.difficulty];
     this.settings = { ...DEFAULT_SETTINGS, ...(opts.settings ?? {}) };
+    this.sfx.vol = Math.max(0, Math.min(1, this.settings.sfxVol)) * 0.5;
     this.music = opts.music ?? null;
     if (this.music) {
       this.music.setEnabled(this.settings.music);
@@ -1154,6 +1114,7 @@ export class Engine {
     const power = 5 + this.tools[tool] * 4;
     n.hp -= power;
     n.wob = 0.001 + Math.random() * 0.1;
+    this.shakingNodes.add(n);
     const colors: Record<NodeType, string> = {
       tree: "#8a5a2b", pine: "#6b4a22", rock: "#9a9a9a", ore: "#c9a26a", crystal: "#7de0e8", bush: "#71b840", berry: "#d04560",
     };
@@ -1679,7 +1640,7 @@ export class Engine {
         // regenerate world with saved seed
         this.opts.seed = d.seed;
         this.nodes = []; this.tiles = new Uint8Array(W * H);
-        this.nodeBuckets.clear(); this.depletedNodes.clear();
+        this.nodeBuckets.clear(); this.depletedNodes.clear(); this.shakingNodes.clear();
         this.genWorld(d.seed);
       }
       this.px = d.px; this.py = d.py; this.hp = d.hp; this.maxHp = d.maxHp;
@@ -1979,7 +1940,10 @@ export class Engine {
             const a = Math.random() * Math.PI * 2;
             m.vx = Math.cos(a) * m.speed * 0.3; m.vy = Math.sin(a) * m.speed * 0.3;
           }
-          if (dp < aggro || m.siege) { m.state = "chase"; }
+          if (dp < aggro || m.siege) {
+            m.state = "chase";
+            if (this.settings.creatureSounds && dp < 560) this.sfx.creature(m.type, 1 - dp / 600);
+          }
           break;
         }
         case "chase": {
@@ -1993,6 +1957,7 @@ export class Engine {
             m.state = "windup";
             m.t = m.type === "hulk" ? 0.6 : m.type === "brute" ? 0.5 : m.type === "imp" ? 0.22 : 0.32;
             m.vx *= 0.15; m.vy *= 0.15;
+            if (this.settings.creatureSounds && dp < 560) this.sfx.creature(m.type, 1 - dp / 600);
           }
           if (!m.siege && dp > 1000) m.state = "idle";
           break;
@@ -2371,15 +2336,16 @@ export class Engine {
     if (this.running) return;
     this.running = true;
     this.lastT = performance.now();
+    const limiter = new FrameLimiter(this.lastT, this.settings.fpsCap);
     const loop = (t: number) => {
       if (this.destroyed) return;
       this.rafId = requestAnimationFrame(loop);
-      const cap = this.settings.fpsCap;
-      if (cap > 0 && t - this.lastT < 1000 / cap - 1.2) return;
-      let dt = (t - this.lastT) / 1000;
+      if (!limiter.shouldRender(t, this.settings.fpsCap)) return;
+      const elapsed = Math.max(0, (t - this.lastT) / 1000);
       this.lastT = t;
-      if (dt > 0.1) dt = 0.1;
-      this.fpsAcc += dt;
+      const dt = Math.min(elapsed, 0.1);
+      // Report actual wall-clock FPS even after a background-tab pause.
+      this.fpsAcc += elapsed;
       this.fpsFrames++;
       if (this.fpsAcc >= 0.5) {
         this.fps = Math.round(this.fpsFrames / this.fpsAcc);
@@ -2541,6 +2507,12 @@ export class Engine {
     this.rollCd = Math.max(0, this.rollCd - dt);
     this.invulnT = Math.max(0, this.invulnT - dt);
     this.hurtFlash = Math.max(0, this.hurtFlash - dt);
+
+    // Update only recently hit nodes, not every tree on the island.
+    for (const n of this.shakingNodes) {
+      n.wob += dt * 2.5;
+      if (n.wob >= 1) { n.wob = 0; this.shakingNodes.delete(n); }
+    }
 
     // Only depleted nodes need a respawn timer; there can be thousands of
     // intact trees, so do not iterate the whole island every frame.
@@ -2925,34 +2897,49 @@ export class Engine {
     }
     if (Math.abs(VILLAGE.x + ox) < this.viewW + 330 && Math.abs(VILLAGE.y + oy) < this.viewH + 330)
       hole(VILLAGE.x + ox, VILLAGE.y + oy, 280, 0.8);
+    // Combine the moonlight tint with the light mask at 1/3 resolution.
+    // This avoids a second full-screen translucent fill on every frame.
+    lc.globalCompositeOperation = "source-over";
+    lc.fillStyle = `rgba(40,50,120,${total * 0.18})`;
+    lc.fillRect(0, 0, this.lightCv.width, this.lightCv.height);
     const c = this.ctx;
-    c.imageSmoothingEnabled = true;
+    c.imageSmoothingEnabled = this.settings.quality !== "leve";
     c.drawImage(this.lightCv, 0, 0, this.lightCv.width, this.lightCv.height, 0, 0, this.viewW, this.viewH);
     c.imageSmoothingEnabled = false;
-    // moonlight tint
-    c.fillStyle = `rgba(40,50,120,${total * 0.18})`;
-    c.fillRect(0, 0, this.viewW, this.viewH);
   }
 
   drawShadow(x: number, y: number, r: number) {
-    const c = this.ctx;
-    c.fillStyle = "rgba(0,0,0,0.25)";
-    c.beginPath(); c.ellipse(x, y, r, r * 0.4, 0, 0, Math.PI * 2); c.fill();
+    let shadow = shadowCache.get(r);
+    if (!shadow) {
+      shadow = document.createElement("canvas");
+      shadow.width = Math.ceil(r * 2 + 2);
+      shadow.height = Math.ceil(r * 0.8 + 2);
+      const painter = shadow.getContext("2d");
+      if (!painter) return;
+      painter.fillStyle = "rgba(0,0,0,0.25)";
+      painter.beginPath(); painter.ellipse(r + 1, r * 0.4 + 1, r, r * 0.4, 0, 0, Math.PI * 2); painter.fill();
+      shadowCache.set(r, shadow);
+    }
+    this.ctx.drawImage(shadow, x - r - 1, y - r * 0.4 - 1);
   }
 
   drawNode(n: RNode, ox: number, oy: number, tnow: number) {
     const c = this.ctx;
     const x = n.x + ox, y = n.y + oy;
-    const wob = n.wob > 0 && n.wob < 1 ? Math.sin(n.wob * Math.PI * 6) * 3 * (1 - n.wob) : 0;
+    const wob = this.shakingNodes.has(n) ? Math.sin(n.wob * Math.PI * 6) * 3 * (1 - n.wob) : 0;
     const hpr = n.hp / n.maxHp;
     if (n.hp <= 0) { drawSprite(c, "stump", x, y + 4); return; }
     const dark = this.tileAt(n.x, n.y) === T_DARK;
     if (n.type === "tree" || n.type === "pine") {
-      const sway = Math.round(Math.sin(tnow * 1.1 + n.x * 0.01) * 1.5 + wob);
       const name = n.skin ?? (n.type === "tree" ? (dark ? "tree_dark" : "tree") : dark ? "pine_dark" : "pine");
       this.drawShadow(x, y + 4, 23);
       const behind = Math.abs(this.px - n.x) < 42 && this.py < n.y && this.py > n.y - 110;
-      drawSprite(c, name, x, y + 4, { dx: sway, flip: (Math.floor(n.x) & 1) === 1, alpha: behind ? 0.45 : 1 });
+      const options = { flip: (Math.floor(n.x) & 1) === 1, alpha: behind ? 0.45 : 1 };
+      const breeze = this.settings.treeMotion ? Math.sin(tnow * 0.9 + n.x * 0.01 + n.y * 0.005) * 0.035 : 0;
+      const bend = breeze + wob * 0.012;
+      // The trunk stays planted; the few bend frames are cached once per tree.
+      if (bend) drawSwaySprite(c, name, x, y + 4, bend, options);
+      else drawSprite(c, name, x, y + 4, options);
     } else {
       this.drawShadow(x, y + 3, 14);
       drawSprite(c, n.skin ?? n.type, x, y + 4, { dx: Math.round(wob) });
@@ -3573,12 +3560,14 @@ export class Engine {
     c.save();
     c.globalAlpha = alpha;
     if (onScreen && dark < 0.35) {
+      // Keep the label out of the day/zone panel at the top of the screen.
+      const labelY = by - 87 < 60 ? by + 30 : by - 87;
       c.font = "bold 13px system-ui, sans-serif";
       c.textAlign = "center";
       c.fillStyle = "#04210c";
-      c.fillText("SUA BASE", bx + 1, by - 86);
+      c.fillText("SUA BASE", bx + 1, labelY + 1);
       c.fillStyle = "#b6ffc9";
-      c.fillText("SUA BASE", bx, by - 87);
+      c.fillText("SUA BASE", bx, labelY);
     } else if (!onScreen) {
       const ang = Math.atan2(BASE.y - this.py, BASE.x - this.px);
       const cx = this.viewW / 2, cy = this.viewH / 2;
@@ -3923,5 +3912,6 @@ export class Engine {
     this.canvas.removeEventListener("contextmenu", this.onCtx);
     this.canvas.removeEventListener("wheel", this.onWheel);
     if (this.state === "playing" || this.state === "paused") this.saveGame();
+    this.sfx.destroy();
   }
 }

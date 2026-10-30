@@ -625,6 +625,45 @@ export function drawSprite(ctx: CanvasRenderingContext2D, name: string, x: numbe
   } else ctx.drawImage(cv, px, py);
 }
 
+// Tree movement is quantized and baked once per sprite/side/frame. Rendering a
+// forest then uses one untransformed drawImage per tree instead of shearing
+// hundreds of sprites on every frame.
+const swayCache = new Map<string, { canvas: HTMLCanvasElement; padding: number }>();
+export function drawSwaySprite(ctx: CanvasRenderingContext2D, name: string, x: number, y: number, bend: number, o: Pick<DrawOpts, "flip" | "alpha"> = {}) {
+  const frame = Math.max(-6, Math.min(6, Math.round(bend / 0.012)));
+  if (frame === 0) { drawSprite(ctx, name, x, y, o); return; }
+  const sp = S[name];
+  if (!sp) return;
+  const flip = !!o.flip;
+  const key = `${name}|${flip ? 1 : 0}|${frame}`;
+  let variant = swayCache.get(key);
+  const m = metrics(name);
+  if (!variant) {
+    const base = getBaked(name, sp, flip);
+    const shear = frame * 0.012;
+    const pivotY = (m.ay + m.pad) * SCALE;
+    const padding = Math.ceil(Math.abs(shear) * Math.max(pivotY, base.height - pivotY)) + 1;
+    const canvas = document.createElement("canvas");
+    canvas.width = base.width + padding * 2;
+    canvas.height = base.height;
+    const painter = canvas.getContext("2d");
+    if (!painter) { drawSprite(ctx, name, x, y, o); return; }
+    painter.imageSmoothingEnabled = false;
+    painter.setTransform(1, 0, shear, 1, padding - shear * pivotY, 0);
+    painter.drawImage(base, 0, 0);
+    variant = { canvas, padding };
+    swayCache.set(key, variant);
+  }
+  const px = Math.round(x - (m.ax + m.pad) * SCALE) - variant.padding;
+  const py = Math.round(y - (m.ay + m.pad) * SCALE);
+  if (o.alpha !== undefined && o.alpha < 1) {
+    const prev = ctx.globalAlpha;
+    ctx.globalAlpha = prev * o.alpha;
+    ctx.drawImage(variant.canvas, px, py);
+    ctx.globalAlpha = prev;
+  } else ctx.drawImage(variant.canvas, px, py);
+}
+
 export function spriteSize(name: string, scale = SCALE) {
   const sp = S[name];
   if (!sp) return { w: 0, h: 0 };

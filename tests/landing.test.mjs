@@ -177,6 +177,94 @@ test("o sprite lateral é espelhado de verdade, inclusive nas diagonais esquerda
   }
 });
 
+test("vento usa quadros em cache, mantém a base fixa e pode ser desligado", () => {
+  const game = makeEngine(13);
+  try {
+    const tree = game.nodes.find((n) => (n.type === "tree" || n.type === "pine") && n.hp > 0);
+    assert.ok(tree);
+    const originalDrawImage = ctx.drawImage;
+    const originalDrawShadow = game.drawShadow;
+    const originalCreateElement = document.createElement;
+    const draws = [];
+    game.drawShadow = noop;
+    // Offscreen baking uses a different context from the world canvas.
+    const offscreen = new Proxy({}, { get: () => noop, set: () => true });
+    document.createElement = () => ({ width: 0, height: 0, getContext: () => offscreen });
+    ctx.drawImage = (...args) => draws.push(args);
+    try {
+      const zero = -(tree.x * 0.01 + tree.y * 0.005) / 0.9;
+      const peak = zero + Math.PI / (2 * 0.9);
+      game.drawNode(tree, 0, 0, zero);
+      game.drawNode(tree, 0, 0, peak);
+      game.drawNode(tree, 0, 0, peak + 2 * Math.PI / 0.9);
+      const [still, moved, repeated] = draws;
+      assert.notEqual(still[0], moved[0], "a copa não balançou");
+      assert.equal(moved[0], repeated[0], "o quadro de vento deve ser reutilizado");
+      assert.equal(still[2], moved[2], "a altura da base não deve mudar");
+      assert.equal(still[1] - moved[1], (moved[0].width - still[0].width) / 2, "o tronco deve permanecer ancorado");
+      draws.length = 0;
+      game.applySettings({ ...game.settings, treeMotion: false });
+      game.drawNode(tree, 0, 0, zero);
+      game.drawNode(tree, 0, 0, peak);
+      assert.equal(draws[0][0], draws[1][0], "sem vento o sprite deve ficar parado");
+    } finally {
+      ctx.drawImage = originalDrawImage;
+      game.drawShadow = originalDrawShadow;
+      document.createElement = originalCreateElement;
+    }
+    game.harvest(tree);
+    assert.ok(game.shakingNodes.has(tree));
+    game.skipCutscene();
+    game.updateSpawns = noop;
+    game.updateMonsters = noop;
+    game.update(0.5, { mx: 0, my: 0 });
+    assert.equal(game.shakingNodes.has(tree), false, "balanço do golpe deve terminar");
+  } finally {
+    game.destroy();
+  }
+});
+
+test("identificação da base não cobre o painel do dia", () => {
+  const game = makeEngine(20);
+  const originalFillText = ctx.fillText;
+  const labels = [];
+  ctx.fillText = (text, x, y) => { if (text === "SUA BASE") labels.push({ x, y }); };
+  try {
+    game.skipCutscene();
+    game.time = 280;
+    game.camX = BASE.x - game.viewW / 2;
+    game.camY = BASE.y - 90;
+    game.drawBasePointer();
+    assert.equal(labels.length, 2);
+    assert.ok(labels.every((label) => label.y >= 60), "rótulo sobrepõe o painel superior");
+  } finally {
+    ctx.fillText = originalFillText;
+    game.destroy();
+  }
+});
+
+test("criaturas próximas emitem sons apenas quando a opção está ligada", () => {
+  const game = makeEngine(21);
+  try {
+    game.skipCutscene();
+    game.spawnMonster(game.px + 80, game.py, "hulk");
+    const monster = game.monsters.at(-1);
+    let calls = [];
+    game.sfx.creature = (type, proximity) => calls.push([type, proximity]);
+    game.updateMonsters(1 / 60);
+    assert.equal(calls[0][0], "hulk");
+    assert.ok(calls[0][1] > 0 && calls[0][1] < 1);
+    game.applySettings({ ...game.settings, creatureSounds: false, sfxVol: 0 });
+    assert.equal(game.sfx.vol, 0);
+    calls = [];
+    monster.state = "idle";
+    game.updateMonsters(1 / 60);
+    assert.equal(calls.length, 0);
+  } finally {
+    game.destroy();
+  }
+});
+
 test("um save antigo no avião é recuperado sem perder recursos", () => {
   storage.clear();
   storage.set("ilha-save-dificil-single", JSON.stringify({

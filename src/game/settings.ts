@@ -1,5 +1,5 @@
 export type ControlScheme = "kb-mouse" | "keyboard" | "gamepad" | "touch";
-export type FpsCap = 0 | 30 | 60 | 90 | 120;
+export type FpsCap = 0 | 30 | 60 | 90 | 120 | 144 | 165 | 240;
 export type Quality = "auto" | "alta" | "leve";
 
 export interface GameSettings {
@@ -14,11 +14,13 @@ export interface GameSettings {
   voice: boolean;
   sensitivity: number;
   quality: Quality;
+  treeMotion: boolean;
+  creatureSounds: boolean;
 }
 
 export const DEFAULT_SETTINGS: GameSettings = {
   fullscreen: false,
-  fpsCap: 120,
+  fpsCap: 0,
   showFps: true,
   autoSave: true,
   controls: "kb-mouse",
@@ -28,6 +30,8 @@ export const DEFAULT_SETTINGS: GameSettings = {
   voice: true,
   sensitivity: 1,
   quality: "auto",
+  treeMotion: true,
+  creatureSounds: true,
 };
 
 export const SETTINGS_KEY = "umbra-settings-v1";
