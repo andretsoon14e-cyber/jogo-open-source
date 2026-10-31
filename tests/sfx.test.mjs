@@ -63,3 +63,22 @@ test("sons de criaturas variam por tipo e não se acumulam em hordas", () => {
   assert.equal(ctx.closed, true);
   assert.equal(sfx.ctx, null);
 });
+
+test("rajadas de vento reutilizam ruído, terminam sozinhas e respeitam pausa e volume", () => {
+  const sfx = new Sfx();
+  const ctx = new FakeAudioContext(); sfx.ctx = ctx;
+  sfx.wind();
+  assert.equal(ctx.buffers, 1);
+  assert.equal(ctx.sources.length, 1);
+  assert.deepEqual(ctx.sources[0].started, [0, 0, 1], "fonte limitada a um segundo");
+  for (let i = 0; i < 100; i++) sfx.wind();
+  assert.equal(ctx.sources.length, 1, "rajadas não acumulam fontes por quadro");
+  ctx.currentTime = 20; sfx.wind();
+  assert.equal(ctx.sources.length, 2);
+  assert.equal(ctx.buffers, 1, "o mesmo buffer de ruído é reutilizado");
+  ctx.currentTime = 40; sfx.vol = 0; sfx.wind();
+  ctx.state = "suspended"; sfx.vol = 0.35; sfx.wind();
+  assert.equal(ctx.sources.length, 2, "volume zero e áudio suspenso não criam nós");
+  sfx.destroy();
+  assert.equal(ctx.closed, true);
+});

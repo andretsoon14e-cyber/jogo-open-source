@@ -155,7 +155,11 @@ kbd {
 .leaf {
   position: absolute;
   top: -10vh;
-  font-size: 15px;
+  width: 11px;
+  height: 7px;
+  background: #bc894f;
+  box-shadow: inset 3px -2px #75804a, 2px 2px #705439;
+  clip-path: polygon(0 40%, 35% 0, 100% 0, 70% 100%, 30% 100%);
   animation: leaf-fall 14s linear infinite;
   opacity: 0;
 }
@@ -185,8 +189,22 @@ canvas { display: block; }
 
 .lobby-art {
   animation: slow-pan 38s ease-in-out infinite alternate;
-  filter: saturate(1.05) brightness(0.92);
+  filter: saturate(0.9) brightness(0.8);
 }
+/* Reuse the wood-and-jade palette of the field journal for the main actions. */
+.menu-button {
+  min-height: 45px; padding: 10px 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;
+  font-family: "Pixelify Sans", sans-serif; font-weight: 700; letter-spacing: .025em;
+  color: #f5e7bd; background: rgba(77, 49, 34, .94); border: 2px solid #bd9864;
+  box-shadow: inset 0 2px #95704c, 0 3px #28201b;
+  transition: color .16s, border-color .16s, background .16s, transform .16s;
+}
+.menu-button:hover { color: #fff8dc; background: #745238; border-color: #edcd88; }
+.menu-button:focus-visible { outline: 2px solid #fff0ad; outline-offset: 3px; }
+.menu-button:active { transform: translateY(2px); box-shadow: inset 0 2px #95704c, 0 1px #28201b; }
+.menu-button:disabled { opacity: .5; cursor: default; }
+.menu-button-primary { color: #f7f2d1; background: #388265; border-color: #b1d7a4; box-shadow: inset 0 2px #7db998, 0 3px #1c4538; }
+.menu-button-primary:hover { background: #479c78; border-color: #d5f0bd; }
 @keyframes slow-pan {
   from { transform: scale(1.06) translate3d(-1.2%, -0.8%, 0); }
   to { transform: scale(1.14) translate3d(1.2%, 0.8%, 0); }
@@ -242,3 +260,5 @@ button.journal-slot:hover{background:#e0c185;border-color:#99733e}
 @media(max-width:470px){.journal-backdrop{padding:9px}.journal-frame{border-width:3px;max-height:95dvh}.journal-workshop{grid-template-columns:120px 1fr;gap:9px}.journal-workshop .journal-page{padding:12px 8px}.recipe-detail{padding:15px 10px!important}.recipe-art{min-height:116px}.recipe-art img{width:100px!important;height:100px!important}.journal-ribbon{font-size:16px;padding:7px 3px;margin-top:-24px}.journal-slot{min-height:43px}.journal-workshop .journal-slot img{width:33px!important;height:39px!important}.journal-tabs button svg{display:none}.journal-heading h2{font-size:21px}.journal-book-grid{grid-template-columns:1fr}.journal-book-grid>aside{display:flex;overflow:auto;gap:4px;padding:8px}.journal-book-grid>aside .journal-ribbon{display:none}.journal-book-grid .journal-row{min-width:135px;font-size:10px;min-height:48px;border-bottom:0}.journal-costs span{font-size:10px}.journal-stat b{font-size:17px}.book-art{height:160px}}
 
 .outcome-card{max-width:480px}.outcome-card .journal-heading{justify-content:center;padding:12px}
+/* Keep all four journal tabs inside the smallest phone width. */
+@media(max-width:470px){.journal-tabs button{min-width:0;font-size:12px;padding:8px 2px}.journal-tabs button span{min-width:0;overflow-wrap:anywhere}}

@@ -7,6 +7,7 @@
 import { CHARACTER_WIDTH, CHARACTER_HEIGHT, CHARACTER_HEAD_HEIGHT, makeCharacterSprite } from "./character-art";
 import { EXPANSION_SPRITES } from "./expansion-art";
 import { craftOrcThumbnail, drawCraftHero, hasCraftHero, hasCraftOrcs } from "./craftpix";
+import { drawReferenceIcon, referenceIconUrl } from "./reference-art";
 
 export const SCALE = 3;
 
@@ -335,6 +336,11 @@ function makeTool(kind: "axe" | "pick" | "sword"): PixelSprite {
 S.tool_axe = makeTool("axe");
 S.tool_pick = makeTool("pick");
 S.tool_sword = makeTool("sword");
+// Compact fallback if the optional bow reference has not been imported.
+S.tool_bow = {
+  legend: { w: "#704725", h: "#bc8952", s: "#e7d5a5" },
+  rows: [".ww.............", ".whw............", ".s.hww..........", "..s..hww........", "...s...hw.......", "....s...hw......", ".....s...hw.....", "......s...hw....", ".......s...hw...", "........s...hw..", ".........s..hw..", "..........s.hw..", "...........shw..", "............sw..", "............ww..", "................"],
+};
 
 /* nodes */
 S.tree = {
@@ -609,7 +615,7 @@ export function getBaked(key: string, sp: PixelSprite, flip = false, scale = SCA
 
 export interface DrawOpts {
   flip?: boolean; alpha?: number; tint?: string | null; scale?: number; dy?: number; dx?: number;
-  action?: "walk" | "run" | "attack"; carryTool?: "axe" | "pick" | "sword"; toolLevel?: number;
+  action?: "walk" | "run" | "attack"; carryTool?: "axe" | "pick" | "sword" | "bow"; toolLevel?: number;
   craftPix?: boolean; heroLevel?: number; attackProgress?: number;
 }
 
@@ -704,7 +710,7 @@ export function drawCharacter(ctx: CanvasRenderingContext2D, lookId: string, x: 
   const { view, flip } = viewFromAngle(dir);
   const action = o.action ?? (walking ? "walk" : "idle");
   const scale = o.scale ?? SCALE;
-  const imported = lookId === "player" && o.craftPix === true && hasCraftHero();
+  const imported = (lookId === "player" || lookId === "rian") && o.craftPix === true && hasCraftHero();
   const originalSword = imported && o.carryTool === "sword" && (o.toolLevel ?? 1) <= 3;
   const phase = Math.floor(cycle * 1.3) & 3;
   const step = action === "attack" ? 5 : action === "run" ? (phase < 2 ? 3 : 4) : walking ? [1, 0, 2, 0][phase] : 0;
@@ -721,26 +727,30 @@ export function drawCharacter(ctx: CanvasRenderingContext2D, lookId: string, x: 
     ctx.save();
     ctx.translate(view === "side" ? -facing * 11 : 0, bob);
     if (view !== "up") ctx.globalAlpha *= 0.9;
-    const hx = view === "side" ? -facing * 2 : -9;
-    const hy = -20;
-    const angle = view === "side" && flip ? -2.1 : -1.04;
-    ctx.strokeStyle = "#2b201a"; ctx.lineWidth = 9;
-    ctx.beginPath(); ctx.moveTo(hx - 1, hy - 2); ctx.lineTo(hx + Math.cos(angle) * 23, hy + Math.sin(angle) * 23); ctx.stroke();
-    ctx.strokeStyle = "#95613d"; ctx.lineWidth = 5;
-    ctx.beginPath(); ctx.moveTo(hx - 1, hy - 2); ctx.lineTo(hx + Math.cos(angle) * 23, hy + Math.sin(angle) * 23); ctx.stroke();
-    drawToolSprite(ctx, o.carryTool, hx, hy, angle, 1.65, 1, o.toolLevel ?? 1);
-    // These two leather loops sit ON TOP of the handle: visibly attached.
-    for (const d of [9, 20]) {
-      const lx = hx + Math.cos(angle) * d, ly = hy + Math.sin(angle) * d;
-      ctx.fillStyle = "#33251e"; ctx.fillRect(Math.round(lx - 5), Math.round(ly - 3), 10, 6);
-      ctx.fillStyle = "#bb8a50"; ctx.fillRect(Math.round(lx - 4), Math.round(ly - 2), 8, 3);
-      ctx.fillStyle = "#f1d18a"; ctx.fillRect(Math.round(lx + 1), Math.round(ly - 2), 2, 3);
+    // The grip stays on the torso rather than sticking through the hair.
+    // Prefer the matching supplied tool icon; preserve the tiered fallback.
+    const detailed = o.craftPix === true && drawReferenceIcon(ctx, o.carryTool, -18, -39, 38);
+    if (detailed) {
+      ctx.fillStyle = "#4a3023"; ctx.fillRect(-1, -19, 8, 4);
+      ctx.fillStyle = "#c69658"; ctx.fillRect(0, -18, 6, 2);
+    } else if (o.carryTool === "bow") {
+      drawSprite(ctx, "tool_bow", 0, -4, { scale: 2 });
+      ctx.fillStyle = "#4a3023"; ctx.fillRect(-1, -19, 8, 4);
+      ctx.fillStyle = "#c69658"; ctx.fillRect(0, -18, 6, 2);
+    } else {
+      const hx = view === "side" ? -facing * 2 : -7;
+      const hy = -18;
+      const angle = view === "side" && flip ? -2.1 : -1.04;
+      drawToolSprite(ctx, o.carryTool, hx, hy, angle, 1.3, 1, o.toolLevel ?? 1);
+      const lx = hx + Math.cos(angle) * 11, ly = hy + Math.sin(angle) * 11;
+      ctx.fillStyle = "#4a3023"; ctx.fillRect(Math.round(lx - 4), Math.round(ly - 2), 8, 4);
+      ctx.fillStyle = "#c69658"; ctx.fillRect(Math.round(lx - 3), Math.round(ly - 1), 6, 2);
     }
     ctx.restore();
   };
   if (view !== "up" && !originalSword) drawCarry();
   if (imported) {
-    drawCraftHero(ctx, view, flip, o.heroLevel ?? 1, action, cycle, o.attackProgress ?? 0, scale, originalSword);
+    drawCraftHero(ctx, view, flip, o.heroLevel ?? 1, action, cycle, o.attackProgress ?? 0, scale, originalSword, lookId === "rian" ? "rian" : "player");
   } else {
     const sp = charSprite(lookId, view, step);
     const cv = getBaked(`char:${lookId}:${view}:${step}`, sp, flip, scale, o.tint ?? null);
@@ -752,14 +762,26 @@ export function drawCharacter(ctx: CanvasRenderingContext2D, lookId: string, x: 
 
 /** Portrait (head only) as a data URL — for React speech bubbles. */
 const portraitCache = new Map<string, string>();
-export function getPortraitUrl(lookId: string): string {
-  const hit = portraitCache.get(lookId);
+export function getPortraitUrl(lookId: string, useCraftPix = true): string {
+  const imported = (lookId === "player" || lookId === "rian") && useCraftPix && hasCraftHero();
+  const key = `${lookId}:${imported ? "craft" : "fallback"}`;
+  const hit = portraitCache.get(key);
   if (hit) return hit;
-  const sp = charSprite(lookId, "down", 0);
-  const headSp: PixelSprite = { rows: sp.rows.slice(0, CHARACTER_HEAD_HEIGHT), legend: sp.legend };
-  const cv = rasterize(headSp, false, 4, null);
+  let cv: HTMLCanvasElement;
+  if (imported) {
+    cv = document.createElement("canvas"); cv.width = 48; cv.height = 40;
+    const ctx = cv.getContext("2d");
+    if (ctx) {
+      ctx.imageSmoothingEnabled = false; ctx.translate(24, 72);
+      drawCraftHero(ctx, "down", false, 1, "idle", 0, 0, 3, false, lookId === "rian" ? "rian" : "player");
+    }
+  } else {
+    const sp = charSprite(lookId, "down", 0);
+    const headSp: PixelSprite = { rows: sp.rows.slice(0, CHARACTER_HEAD_HEIGHT), legend: sp.legend };
+    cv = rasterize(headSp, false, 4, null);
+  }
   const url = cv.toDataURL();
-  portraitCache.set(lookId, url);
+  portraitCache.set(key, url);
   return url;
 }
 
@@ -809,9 +831,10 @@ export function getSpriteUrl(name: string, useCraftPix = true): string {
   thumbnailCache.set(key, url);
   return url;
 }
-export function getCharacterUrl(id = "player", view: View = "down", tool: "axe" | "pick" | "sword" = "axe", useCraftPix = true, level = 1): string {
+export function getCharacterUrl(id = "player", view: View = "down", tool: "axe" | "pick" | "sword" | "bow" = "axe", useCraftPix = true, level = 1): string {
   const imported = id === "player" && useCraftPix && hasCraftHero();
-  const key = `portrait-body:${id}:${view}:${tool}:${imported ? `craft:${level}` : "original"}`;
+  const referenceTool = useCraftPix && !!referenceIconUrl(tool);
+  const key = `portrait-body:${id}:${view}:${tool}:${imported ? `craft:${level}` : "original"}:${referenceTool ? "reference" : "fallback"}`;
   const hit = thumbnailCache.get(key);
   if (hit) return hit;
   const cv = document.createElement("canvas");
@@ -819,7 +842,7 @@ export function getCharacterUrl(id = "player", view: View = "down", tool: "axe" 
   const ctx = cv.getContext("2d");
   if (ctx) {
     ctx.imageSmoothingEnabled = false;
-    drawCharacter(ctx, id, 48, 98, view === "up" ? -Math.PI / 2 : view === "down" ? Math.PI / 2 : 0, false, 0, { carryTool: tool, toolLevel: tool === "sword" ? level : 1, craftPix: imported, heroLevel: level });
+    drawCharacter(ctx, id, 48, 98, view === "up" ? -Math.PI / 2 : view === "down" ? Math.PI / 2 : 0, false, 0, { carryTool: tool, toolLevel: tool === "sword" || tool === "bow" ? level : 1, craftPix: useCraftPix, heroLevel: level });
   }
   const url = cv.toDataURL();
   thumbnailCache.set(key, url);

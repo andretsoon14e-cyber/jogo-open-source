@@ -100,6 +100,35 @@ test("a praia tem saída e caminho até a base em várias sementes", () => {
   }
 });
 
+test("locais das referências têm aproximação por terra em várias sementes", () => {
+  for (let seed = 1; seed <= 20; seed++) {
+    const game = makeEngine(seed);
+    const queue = new Int32Array(SIZE * SIZE), visited = new Uint8Array(SIZE * SIZE);
+    let head = 0, tail = 0;
+    const start = Math.floor(BASE.y / TILE) * SIZE + Math.floor(BASE.x / TILE);
+    queue[tail++] = start; visited[start] = 1;
+    while (head < tail) {
+      const current = queue[head++], x = current % SIZE, y = Math.floor(current / SIZE);
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= SIZE || ny >= SIZE) continue;
+        const index = ny * SIZE + nx;
+        if (!visited[index] && game.tiles[index] !== 0) { visited[index] = 1; queue[tail++] = index; }
+      }
+    }
+    for (const prop of game.worldProps.filter((item) => item.sprite.startsWith("reference_"))) {
+      let reachable = false;
+      for (let dy = -64; dy <= 64; dy += 16) for (let dx = -64; dx <= 64; dx += 16) {
+        if (Math.hypot(dx, dy) >= 86) continue;
+        const x = Math.floor((prop.x + dx) / TILE), y = Math.floor((prop.y + dy) / TILE);
+        if (visited[y * SIZE + x]) reachable = true;
+      }
+      assert.ok(reachable, `${prop.sprite}: sem aproximação por terra na semente ${seed}`);
+    }
+    game.destroy();
+  }
+});
+
 test("teclado, controle e toque movimentam o personagem após a cutscene", () => {
   storage.clear();
   for (const mode of ["keyboard", "gamepad", "touch"]) {
@@ -606,4 +635,235 @@ test("partículas da introdução têm a mesma taxa em 30, 60, 120 e 240 FPS", (
     } finally { game.destroy(); }
   }
   assert.deepEqual(emitted, [90, 90, 90, 90]);
+});
+
+test("espada e arco são opções funcionais, seguras e persistentes mesmo sem artes opcionais", () => {
+  storage.clear();
+  const game = makeEngine(77);
+  try {
+    game.skipCutscene(); game.escort.active = false; game.updateSpawns = noop;
+    game.tileAt = () => 2; game.structures = []; game.monsters = []; game.projectiles = []; game.animals = [];
+    game.px = 1100; game.py = 1100; game.pdir = 0; game.hp = 100;
+    game.applySettings({ ...game.settings, craftPix: false });
+    game.setCombatWeapon("bow");
+    assert.equal(game.heldTool, "sword");
+    game.spawnMonster(1270, 1100, "imp");
+    const monster = game.monsters[0]; monster.hp = 6; monster.speed = 0; monster.t = 100;
+    game.allies = [{ id: "rian", name: "Rian", color: "#fff", x: 1170, y: 1100, vx: 0, vy: 0, atkCd: 0, downT: 0, dir: 0 }];
+    game.tryAttack();
+    assert.equal(game.projectiles[0]?.kind, "player");
+    for (let i = 0; i < 7; i++) game.updateMonsters(0.1);
+    assert.equal(game.kills, 1, "a flecha deve acertar o monstro à distância");
+    assert.equal(game.hp, 100, "flechas amigas não atingem o jogador");
+    assert.equal(game.allies[0].downT, 0, "flechas amigas não atingem Rian");
+
+    game.monsters = []; game.projectiles = []; game.attackCd = 0;
+    game.animals = [{ kind: "rabbit", x: 1230, y: 1100, vx: 0, vy: 0, t: 99, hp: 8, dir: 0, flee: 0 }];
+    game.tryAttack();
+    for (let i = 0; i < 7; i++) game.updateMonsters(0.1);
+    assert.equal(game.animals.length, 0, "a flecha do jogador também permite caçar");
+    assert.ok(game.drops.some((d) => d.res === "food"));
+
+    game.saveGame(true);
+    const key = game.saveKey(), saved = JSON.parse(localStorage.getItem(key));
+    assert.equal(saved.combatWeapon, "bow");
+    const reloaded = makeEngine(77, true);
+    assert.equal(reloaded.combatWeapon, "bow");
+    reloaded.destroy();
+    delete saved.combatWeapon;
+    localStorage.setItem(key, JSON.stringify(saved));
+    const old = makeEngine(77, true);
+    assert.equal(old.combatWeapon, "sword", "save antigo mantém o ataque original");
+    old.destroy();
+
+    game.setCombatWeapon("sword"); game.attackCd = 0; game.monsters = []; game.projectiles = []; game.animals = [];
+    game.spawnMonster(1130, 1100, "imp");
+    const melee = game.monsters[0], hp = melee.hp;
+    game.tryAttack();
+    assert.ok(melee.hp < hp, "trocar para espada restaura o golpe corpo a corpo");
+    assert.equal(game.projectiles.length, 0);
+  } finally { game.destroy(); storage.clear(); }
+});
+
+test("vento só é agendado durante a exploração e respeita a configuração", () => {
+  const game = makeEngine(7);
+  try {
+    simplifySimulation(game); game.escort.active = false;
+    let gusts = 0; game.sfx.wind = () => { gusts++; };
+    game.update(0.1, { mx: 0, my: 0 });
+    assert.equal(gusts, 1);
+    game.update(0.1, { mx: 0, my: 0 });
+    assert.equal(gusts, 1, "não verificar áudio a cada quadro");
+    game.applySettings({ ...game.settings, windSounds: false });
+    game.update(2, { mx: 0, my: 0 });
+    assert.equal(gusts, 1, "opção desligada não cria rajadas");
+    game.applySettings({ ...game.settings, windSounds: true });
+    game.state = "paused"; game.frame(2);
+    assert.equal(gusts, 1, "o mundo pausado não agenda rajadas");
+  } finally { game.destroy(); }
+});
+
+test("o território cresce com recursos e estruturas sem perder cercas, portões ou saves antigos", () => {
+  storage.clear();
+  const game = makeEngine(77); simplifySimulation(game); game.escort.active = false;
+  game.px = BASE.x; game.py = BASE.y;
+  game.inv = { wood: 100000, stone: 100000, fiber: 100000, food: 100000, iron: 100000, crystal: 100000 };
+  assert.equal(game.territoryLevel, 1);
+  assert.equal(game.territoryRadius(), 480);
+  assert.match(game.territoryUpgrade().reason, /nível 4/);
+  assert.equal(game.upgradeTerritory(), false);
+  const structure = (type, x, y) => ({ type, x, y, hp: 100, maxHp: 100, prodT: 0, open: false, rotation: 0, fenceStyle: "palisade" });
+  game.structures.push(structure("workbench", BASE.x - 50, BASE.y), structure("campfire", BASE.x + 40, BASE.y));
+  assert.ok(game.build("wall")); assert.ok(game.confirmPlace()); game.cancelPlace();
+  assert.ok(game.build("gate")); assert.ok(game.confirmPlace());
+  const firstRing = game.structures.filter((s) => s.type === "wall" || s.type === "gate").map((s) => ({ x: s.x, y: s.y, type: s.type, hp: s.hp }));
+  const cost = game.territoryUpgrade().cost, wood = game.inv.wood, stone = game.inv.stone;
+  assert.ok(game.upgradeTerritory());
+  assert.equal(game.territoryLevel, 2); assert.equal(game.territoryRadius(), 640); assert.equal(game.fenceRing, 2);
+  assert.equal(game.inv.wood, wood - cost.wood); assert.equal(game.inv.stone, stone - cost.stone);
+  assert.deepEqual(game.structures.filter((s) => s.type === "wall" || s.type === "gate").map((s) => ({ x: s.x, y: s.y, type: s.type, hp: s.hp })), firstRing);
+  assert.ok(game.build("wall"));
+  const newPositions = game.fencePositions("wall");
+  for (const p of newPositions) game.tiles[Math.floor(p.y / TILE) * SIZE + Math.floor(p.x / TILE)] = 0;
+  assert.ok(game.confirmPlace(), "muralha externa pode fazer fundação sobre água"); game.cancelPlace();
+  for (const p of newPositions) {
+    assert.ok(Math.abs(Math.hypot(p.x - BASE.x, p.y - BASE.y) - 510.4) < 1);
+    assert.equal(game.tileAt(p.x, p.y), 7, "fundação não ficou transitável");
+  }
+  assert.ok(game.build("gate")); assert.ok(game.confirmPlace(), "cada perímetro pode ter seu próprio portão");
+  assert.equal(game.structures.filter((s) => s.type === "gate").length, 2);
+  game.setFenceRing(1); assert.equal(game.fenceRing, 1);
+  game.setFenceRing(3); assert.equal(game.fenceRing, 1, "anel bloqueado não pode ser selecionado");
+  game.setFenceRing(2);
+  game.saveGame(true);
+  const loaded = makeEngine(1, true);
+  assert.equal(loaded.territoryLevel, 2); assert.equal(loaded.fenceRing, 2);
+  assert.equal(loaded.structures.filter((s) => s.type === "gate").length, 2);
+  assert.ok(firstRing.every((first) => loaded.structures.some((s) => s.type === first.type && s.x === first.x && s.y === first.y && s.hp === first.hp)));
+  assert.ok(newPositions.every((p) => loaded.tileAt(p.x, p.y) !== 0), "fundação perdida ao carregar");
+  assert.match(loaded.territoryUpgrade().reason, /Forja/);
+  loaded.structures.push(structure("forge", BASE.x + 130, BASE.y));
+  assert.ok(loaded.upgradeTerritory()); assert.equal(loaded.territoryRadius(), 800);
+  assert.match(loaded.territoryUpgrade().reason, /Torre/);
+  loaded.structures.push(structure("tower", BASE.x + 190, BASE.y));
+  assert.ok(loaded.upgradeTerritory()); assert.equal(loaded.territoryRadius(), 960);
+  assert.equal(loaded.upgradeTerritory(), false, "não existe expansão infinita");
+  const saved = JSON.parse(storage.get(game.saveKey())); delete saved.territoryLevel; delete saved.fenceRing;
+  storage.set(game.saveKey(), JSON.stringify(saved));
+  const legacy = makeEngine(77, true);
+  assert.equal(legacy.territoryLevel, 1); assert.equal(legacy.fenceRing, 1);
+  assert.ok(firstRing.every((first) => legacy.structures.some((s) => s.type === first.type && s.x === first.x && s.y === first.y)));
+  legacy.destroy(); loaded.destroy(); game.destroy();
+});
+
+test("uma expansão não consome recursos sem requisitos ou saldo suficiente", () => {
+  storage.clear();
+  const game = makeEngine(71); simplifySimulation(game); game.escort.active = false; game.px = BASE.x; game.py = BASE.y;
+  game.structures = [
+    { type: "workbench", x: BASE.x - 90, y: BASE.y, hp: 100, maxHp: 100, prodT: 0, open: false, rotation: 0, fenceStyle: "palisade" },
+    { type: "campfire", x: BASE.x + 90, y: BASE.y, hp: 100, maxHp: 100, prodT: 0, open: false, rotation: 0, fenceStyle: "palisade" },
+    { type: "farm", x: BASE.x, y: BASE.y + 90, hp: 100, maxHp: 100, prodT: 0, open: false, rotation: 0, fenceStyle: "palisade" },
+  ];
+  game.inv = { wood: 99, stone: 80, fiber: 0, food: 0, iron: 0, crystal: 0 };
+  const before = { ...game.inv };
+  assert.equal(game.territoryUpgrade().reason, "");
+  assert.equal(game.upgradeTerritory(), false);
+  assert.deepEqual(game.inv, before); assert.equal(game.territoryLevel, 1);
+  game.inv.wood = 100;
+  game.px = BASE.x + 600;
+  assert.match(game.territoryUpgrade().reason, /Volte à base/);
+  assert.equal(game.upgradeTerritory(), false);
+  game.destroy();
+});
+
+test("portão do quarto anel atravessa o rio e reconstrói a ponte no save", () => {
+  storage.clear();
+  const game = makeEngine(2); simplifySimulation(game); game.escort.active = false;
+  game.territoryLevel = 4; game.fenceRing = 4; game.px = BASE.x; game.py = BASE.y;
+  game.inv = { wood: 10000, stone: 10000, fiber: 10000, food: 10000, iron: 10000, crystal: 10000 };
+  assert.ok(game.build("gate")); game.fenceSlot = 137; game.mouseValid = false; game.updatePlacement();
+  const gate = game.fencePosition(game.fenceSlot), angle = Math.atan2(gate.y - BASE.y, gate.x - BASE.x);
+  assert.equal(game.tileAt(gate.x, gate.y), 0, "fixture deve atravessar um rio verdadeiro");
+  const wet = [gate];
+  for (const sign of [-1, 1]) for (let i = 1; i <= 12; i++) {
+    const p = { x: gate.x + Math.cos(angle) * sign * i * TILE / 2, y: gate.y + Math.sin(angle) * sign * i * TILE / 2 };
+    if (game.tileAt(p.x, p.y) === 0) wet.push(p);
+    else if (game.tileAt(p.x, p.y) !== 7 && i >= 2) break;
+  }
+  assert.ok(game.confirmPlace());
+  assert.ok(wet.every((p) => game.tileAt(p.x, p.y) === 7));
+  game.saveGame(true);
+  const loaded = makeEngine(2, true);
+  assert.ok(wet.every((p) => loaded.tileAt(p.x, p.y) === 7), "ponte precisa reaparecer ao carregar");
+  assert.equal(loaded.structures.filter((s) => s.type === "gate").length, 1);
+  loaded.destroy(); game.destroy();
+});
+
+test("lacunas isoladas no perímetro podem ser fechadas com cerca simples e preço proporcional", () => {
+  storage.clear();
+  const game = makeEngine(70); simplifySimulation(game); game.escort.active = false; game.px = BASE.x; game.py = BASE.y;
+  game.inv = { wood: 100000, stone: 100000, fiber: 100000, food: 100000, iron: 100000, crystal: 100000 };
+  game.structures = [];
+  for (let i = 0; i < 63; i++) {
+    if (i === 0 || i === 3) continue;
+    const p = game.fencePosition(i, 1);
+    game.structures.push({ type: i === 1 ? "gate" : "wall", ...p, hp: 100, maxHp: 100, prodT: 0, open: false, rotation: 0, fenceStyle: "palisade" });
+  }
+  assert.equal(game.wallPurchaseSize(), 1);
+  const before = { ...game.inv }, cost = game.costFor("wall");
+  assert.ok(game.build("wall")); assert.equal(game.fencePositions("wall").length, 1);
+  assert.ok(game.confirmPlace());
+  assert.equal(game.structures.length, 62); assert.equal(game.inv.wood, before.wood - cost.wood);
+  assert.equal(game.wallPurchaseSize(), 1);
+  assert.ok(game.confirmPlace()); assert.equal(game.structures.length, 63);
+  assert.equal(new Set(game.structures.map((s) => `${s.x}:${s.y}`)).size, 63);
+  game.destroy();
+});
+
+test("patrulhas surgem fora do perímetro mais distante de um reino ampliado", () => {
+  storage.clear();
+  const game = makeEngine(5); simplifySimulation(game); game.escort.active = false; game.territoryLevel = 4;
+  game.px = BASE.x; game.py = BASE.y; game.tileAt = () => 2; game.monsters = [];
+  for (let i = 0; i < 4; i++) game.spawnWave(5);
+  assert.ok(game.monsters.length > 0);
+  assert.ok(game.monsters.every((m) => Math.hypot(m.x - BASE.x, m.y - BASE.y) > game.fenceSpec(4).fenceRadius));
+  game.destroy();
+});
+
+test("o último espaço fica reservado para o portão caso o anel ainda não tenha um", () => {
+  storage.clear();
+  const game = makeEngine(70); simplifySimulation(game); game.escort.active = false; game.px = BASE.x; game.py = BASE.y;
+  game.inv = { wood: 100000, stone: 100000, fiber: 100000, food: 100000, iron: 100000, crystal: 100000 };
+  game.structures = [];
+  for (let i = 1; i < 63; i++) game.structures.push({ type: "wall", ...game.fencePosition(i, 1), hp: 100, maxHp: 100, prodT: 0, open: false, rotation: 0, fenceStyle: "palisade" });
+  assert.match(game.structLock("wall"), /portão/); assert.equal(game.build("wall"), false);
+  assert.ok(game.build("gate")); assert.ok(game.confirmPlace());
+  assert.equal(game.structures.filter((s) => s.type === "gate").length, 1);
+  assert.equal(game.structures.length, 63); game.destroy();
+});
+
+test("limite de casas cresce junto com o território", () => {
+  storage.clear();
+  const game = makeEngine(61); simplifySimulation(game);
+  const house = (i) => ({ type: "house", x: BASE.x + i * 40, y: BASE.y, hp: 100, maxHp: 100, prodT: 0, open: false, rotation: 0, fenceStyle: "palisade" });
+  game.structures = [{ ...house(0), type: "workbench" }, ...Array.from({ length: 5 }, (_, i) => house(i))];
+  assert.match(game.structLock("house"), /Máximo de 5 casas/);
+  game.territoryLevel = 2; assert.equal(game.structLock("house"), "");
+  game.structures.push(...Array.from({ length: 5 }, (_, i) => house(i + 5)));
+  assert.match(game.structLock("house"), /Máximo de 10 casas/);
+  game.destroy();
+});
+
+test("trechos de anéis diferentes se conectam separadamente e portões abertos interrompem a ligação", () => {
+  storage.clear();
+  const game = makeEngine(80); simplifySimulation(game); game.territoryLevel = 2; game.dpr = 0.8;
+  const piece = (ring, slot, type = "wall", open = false) => ({ type, ...game.fencePosition(slot, ring), hp: 100, maxHp: 100, prodT: 0, open, rotation: 0, fenceStyle: "palisade" });
+  game.structures = [piece(1, 0), piece(1, 1), piece(2, 0), piece(2, 1, "gate")];
+  const links = []; game.drawFenceLink = (_ctx, _style, x1, y1, x2, y2) => links.push([x1, y1, x2, y2]);
+  game.drawFenceConnections(-BASE.x + 640, -BASE.y + 360);
+  assert.equal(links.length, 2); assert.notDeepEqual(links[0], links[1]);
+  game.structures[3].open = true; links.length = 0;
+  game.drawFenceConnections(-BASE.x + 640, -BASE.y + 360);
+  assert.equal(links.length, 1);
+  game.destroy();
 });

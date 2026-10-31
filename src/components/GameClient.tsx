@@ -10,6 +10,8 @@ import { GAME_TITLE, GAME_TAGLINE } from "@/game/identity";
 import { getPortraitUrl } from "@/game/sprites";
 import { Icon, type IconName } from "@/components/Icons";
 import FieldJournal, { OutcomePanel } from "@/components/FieldJournal";
+import ReferenceRoom from "@/components/ReferenceRoom";
+import { loadReferenceArt, referenceMenuUrl, type ReferenceScene } from "@/game/reference-art";
 import {
   GameSettings, DEFAULT_SETTINGS, loadSettings, saveSettings, applyFullscreen, CONTROL_LABEL,
   ControlScheme, FpsCap, Quality,
@@ -37,6 +39,7 @@ export default function GameClient() {
   const [playerName, setPlayerName] = useState("Sobrevivente");
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [panel, setPanel] = useState<GamePanel>("none");
+  const [referenceScene, setReferenceScene] = useState<ReferenceScene | null>(null);
   const [toast, setToast] = useState<{ text: string; who?: string } | null>(null);
   const [gameState, setGameState] = useState<string>("cutscene");
   const [showQuests, setShowQuests] = useState(false);
@@ -53,6 +56,7 @@ export default function GameClient() {
   const [isTouch, setIsTouch] = useState(false);
   const [runOn, setRunOn] = useState(false);
   const [audioOn, setAudioOn] = useState(false);
+  const [menuArt, setMenuArt] = useState("");
   const [showKeys, setShowKeys] = useState(true);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -87,6 +91,15 @@ export default function GameClient() {
 
   useEffect(() => { applyFullscreen(settings.fullscreen); }, [settings.fullscreen]);
 
+  // The optional backdrop uses the supplied landscape preview only after it
+  // has loaded successfully; missing art retains the original gradient.
+  useEffect(() => {
+    if (!settings.craftPix || !storageReady) return;
+    let alive = true;
+    void loadReferenceArt().then(() => { if (alive) setMenuArt(referenceMenuUrl()); });
+    return () => { alive = false; };
+  }, [settings.craftPix, storageReady]);
+
   // música: lobby em todos os menus, engine controla a trilha no jogo
   useEffect(() => {
     if (!storageReady) return;
@@ -120,12 +133,15 @@ export default function GameClient() {
       setGameState(ev.state);
       if (ev.state === "gameover" || ev.state === "victory") setPanel("none");
     } else if (ev.type === "panel") setPanel(ev.panel);
+    else if (ev.type === "reference") setReferenceScene(ev.scene);
     else if (ev.type === "toast") {
       setToast({ text: ev.text, who: ev.who });
       if (toastTimer.current) clearTimeout(toastTimer.current);
       toastTimer.current = setTimeout(() => setToast(null), ev.who ? 5200 : 3600);
     }
   }, []);
+  const closeReference = useCallback(() => engineRef.current?.closePanel(), []);
+  const forgeFromReference = useCallback(() => engineRef.current?.openPanel("forge"), []);
 
   /* ---------- engine lifecycle ---------- */
   useEffect(() => {
@@ -284,7 +300,7 @@ export default function GameClient() {
   if (screen === "menu") {
     return (
       <div className="min-h-screen relative overflow-hidden flex flex-col items-center justify-center px-4 py-8">
-        <LobbyBackdrop />
+        <LobbyBackdrop art={settings.craftPix ? menuArt : ""} />
         <div className="relative z-10 flex flex-col items-center gap-5 text-center">
           <div className="relative">
             <div className="absolute inset-0 blur-3xl bg-amber-500/25 animate-breathe" />
@@ -306,14 +322,14 @@ export default function GameClient() {
               onChange={(e) => setPlayerName(e.target.value.slice(0, 16))}
               className="bg-slate-950/80 border border-amber-700/50 rounded-lg px-4 py-2.5 text-amber-100 outline-none focus:border-amber-400 text-center font-semibold"
             />
-            <MenuBtn onClick={() => setScreen("difficulty")} primary>▶️ Jogar sozinho</MenuBtn>
-            <MenuBtn onClick={() => { setMpError(""); setScreen("mplobby"); }}>👥 Multiplayer (rede local)</MenuBtn>
-            <MenuBtn onClick={() => setScreen("scores")}>🏆 Melhores pontuações</MenuBtn>
-            <MenuBtn onClick={() => setShowSettings(true)}>⚙️ Configurações</MenuBtn>
-            <MenuBtn onClick={() => setScreen("help")}>❓ Como jogar</MenuBtn>
+            <MenuBtn onClick={() => setScreen("difficulty")} primary><Icon name="play" size={17} /> Jogar sozinho</MenuBtn>
+            <MenuBtn onClick={() => { setMpError(""); setScreen("mplobby"); }}><Icon name="users" size={17} /> Multiplayer (rede local)</MenuBtn>
+            <MenuBtn onClick={() => setScreen("scores")}><Icon name="trophy" size={17} /> Melhores pontuações</MenuBtn>
+            <MenuBtn onClick={() => setShowSettings(true)}><Icon name="settings" size={17} /> Configurações</MenuBtn>
+            <MenuBtn onClick={() => setScreen("help")}><Icon name="help" size={17} /> Como jogar</MenuBtn>
           </div>
           <p className="text-[10px] text-slate-500 max-w-sm">
-            {settings.music ? "🎵 Música ativada" : "🔇 Música desativada"} · {CONTROL_LABEL[settings.controls]}
+            {settings.music ? "Música ativada" : "Música desativada"} · {CONTROL_LABEL[settings.controls]}
             {audioOn ? "" : " · toque em qualquer lugar para ativar o áudio"}
           </p>
         </div>
@@ -447,7 +463,7 @@ export default function GameClient() {
             ["🌙 Noite e hordas", "Pequenos demônios (imps) vêm em bando e mordem forte; brutamontes e colossos são raros, lentos e devastadores. Eles avançam na sua cerca e no portão."],
             ["🚪 Portão e cerca", "O portão deixa você passar e pode ser aberto/fechado com E. Fechado, eles precisam quebrar. Se a cerca cair, eles entram e caçam você."],
             ["🔧 Reparo", "Perto de uma cerca danificada, E consome madeira e repara 45% da vida da estrutura. Reconstrua durante a batalha."],
-            ["🪓 Ferramentas", "Ataque com J ou clique (esquema teclado+mouse). 1 machado · 2 picareta · 3 espada. Ferro pede picareta nv.2, cristal nv.3."],
+            ["🪓 Ferramentas", "Ataque com J ou clique (esquema teclado+mouse). 1 machado · 2 picareta · 3 arma. No inventário, escolha espada ou arco; ambos usam o nível de combate. Ferro pede picareta nv.2, cristal nv.3."],
             ["🏗️ Base e reino", "Fogueira salva o jogo, bancada libera o resto, forja melhora armas, fazenda/serraria/pedreira produzem, casas aumentam a vida."],
             ["🗺️ Mapa", "M abre o mapa com os lugares e a base pulsando em verde. À noite ele escurece: leia perto de fogo ou no vilarejo."],
             ["🎮 Controles", "Escolha em ⚙️ Configurações: teclado+mouse, só teclado (teclas na tela), controle ou toque. A sensitividade ajusta a câmera."],
@@ -476,7 +492,7 @@ export default function GameClient() {
       {toast && gameState !== "gameover" && gameState !== "victory" && (
         <div className="absolute top-24 left-1/2 -translate-x-1/2 z-30 pointer-events-none animate-toast max-w-[92vw]">
           <div className={`flex items-center gap-3 px-4 py-2.5 rounded-2xl shadow-2xl border-2 ${toast.who ? "bg-[#fbf6ea] border-[#2a2230] text-[#2a2230]" : "bg-slate-900/92 border-amber-600/60 text-amber-50"}`}>
-            {toast.who && <Portrait who={toast.who} />}
+            {toast.who && <Portrait who={toast.who} craftPix={settings.craftPix} />}
             <div className="min-w-0">
               {toast.who && <div className="font-display text-[11px] tracking-wider text-amber-700 uppercase leading-none mb-0.5">{toast.who === "rian" ? "Rian" : toast.who}</div>}
               <div className="font-ui text-[13px] leading-snug">{toast.text}</div>
@@ -572,15 +588,20 @@ export default function GameClient() {
         </div>
       )}
 
-      {panel !== "none" && snap && (
+      {panel === "reference" && referenceScene && snap && <ReferenceRoom scene={referenceScene} craftPix={settings.craftPix} heroLevel={snap.tools.sword} single={mode === "single"} onClose={closeReference} onForge={forgeFromReference} />}
+      {panel !== "none" && panel !== "reference" && snap && (
         <FieldJournal panel={panel} snap={snap} craftPix={settings.craftPix}
           onClose={() => engineRef.current?.closePanel()}
           onPanel={(next) => engineRef.current?.openPanel(next)}
+          onReferenceForge={() => engineRef.current?.openReferenceScene("forge")}
           onBuild={(id) => engineRef.current?.build(id as never)}
           onUpgrade={(tool) => engineRef.current?.upgrade(tool)}
           onCraftEquipment={(id) => engineRef.current?.craftEquipment(id)}
           onFenceStyle={(style) => engineRef.current?.setFenceStyle(style)}
+          onFenceRing={(ring) => engineRef.current?.setFenceRing(ring)}
+          onExpandTerritory={() => engineRef.current?.upgradeTerritory()}
           onTool={(tool) => { engineRef.current?.setTool(tool); engineRef.current?.emitSnapshot(); }}
+          onCombatWeapon={(weapon) => engineRef.current?.setCombatWeapon(weapon)}
           onEat={() => { engineRef.current?.eatFood(); engineRef.current?.emitSnapshot(); }}
         />
       )}
@@ -639,11 +660,11 @@ export default function GameClient() {
 
 /* ================= componentes ================= */
 
-function LobbyBackdrop() {
+function LobbyBackdrop({ art = "" }: { art?: string }) {
   return (
-    <div className="absolute inset-0 bg-menu overflow-hidden">
-      {/* The exported ZIP did not include the original lobby image; keep the existing gradient until it is supplied. */}
-      <div className="absolute inset-0 bg-gradient-to-b from-slate-950/70 via-slate-950/35 to-slate-950/85" />
+    <div className="absolute inset-0 bg-menu overflow-hidden" aria-hidden="true">
+      {art && <div className="absolute inset-0 lobby-art bg-center bg-cover" style={{ backgroundImage: `url("${art}")`, imageRendering: "pixelated" }} />}
+      <div className="absolute inset-0 bg-gradient-to-b from-slate-950/80 via-slate-950/60 to-slate-950/90" />
       <div className="absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-emerald-950/90 via-emerald-950/40 to-transparent" />
       <div className="absolute bottom-0 inset-x-0 h-24 bg-gradient-to-t from-black/90 to-transparent" />
       <div className="absolute top-10 right-10 w-28 h-28 rounded-full bg-amber-300/20 blur-2xl animate-breathe" />
@@ -658,7 +679,7 @@ function LobbyBackdrop() {
       </div>
       <div className="absolute inset-0">
         {Array.from({ length: 7 }).map((_, i) => (
-          <span key={i} className="leaf" style={{ left: `${(i * 29 + 6) % 100}%`, animationDelay: `${i * 1.9}s`, animationDuration: `${11 + (i % 4) * 3}s` }}>🍂</span>
+          <span key={i} className="leaf" style={{ left: `${(i * 29 + 6) % 100}%`, animationDelay: `${i * 1.9}s`, animationDuration: `${11 + (i % 4) * 3}s` }} />
         ))}
       </div>
       <div className="absolute top-16 left-0 right-0 flex justify-center opacity-60">
@@ -685,11 +706,8 @@ function Shell({ children, onBack }: { children: React.ReactNode; onBack?: () =>
 function MenuBtn({ children, onClick, primary, disabled }: { children: React.ReactNode; onClick: () => void; primary?: boolean; disabled?: boolean }) {
   return (
     <button onClick={onClick} disabled={disabled}
-      className={`rounded-xl py-3 px-4 font-bold transition-all cursor-pointer active:scale-95 disabled:opacity-50 ${
-        primary
-          ? "bg-gradient-to-b from-amber-400 to-amber-600 text-slate-950 shadow-lg shadow-amber-900/40 hover:from-amber-300"
-          : "bg-slate-900/80 border border-slate-600 text-slate-100 hover:border-amber-500 backdrop-blur-sm"
-      }`}>
+      className={`menu-button ${primary ? "menu-button-primary" : ""}`}>
+
       {children}
     </button>
   );
@@ -705,11 +723,15 @@ function HudBtn({ icon, label, onClick }: { icon: IconName; label: string; onCli
   );
 }
 
-function Portrait({ who }: { who: string }) {
+function Portrait({ who, craftPix }: { who: string; craftPix: boolean }) {
   const [url, setUrl] = useState<string>("");
   // Portraits are generated with a browser canvas, unavailable during SSR.
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { try { setUrl(getPortraitUrl(who === "player" ? "player" : who)); } catch { setUrl(""); } }, [who]);
+  useEffect(() => {
+    const refresh = () => { try { setUrl(getPortraitUrl(who, craftPix)); } catch { setUrl(""); } };
+    refresh();
+    window.addEventListener("craftpix-ready", refresh);
+    return () => window.removeEventListener("craftpix-ready", refresh);
+  }, [who, craftPix]);
   if (!url) return null;
   // eslint-disable-next-line @next/next/no-img-element
   return <img src={url} alt="" width={44} height={36} className="shrink-0 rounded-md border-2 border-[#2a2230] bg-[#86ad4f]" style={{ imageRendering: "pixelated" }} />;
@@ -798,8 +820,8 @@ function SettingsModal({ settings, onChange, onClose, audioOn }: { settings: Gam
               </button>
             ))}
           </div>
-          <Toggle label="Movimento das árvores" desc="Balanço suave das copas; desative para reduzir movimento" on={settings.treeMotion} onChange={(v) => onChange({ treeMotion: v })} />
-          <Toggle label="Artes CraftPix" desc="Usa os pacotes importados quando disponíveis; desative para voltar ao visual anterior" on={settings.craftPix} onChange={(v) => onChange({ craftPix: v })} />
+          <Toggle label="Movimento das árvores" desc="Balanço das copas e folhas ao vento; desative para reduzir movimento" on={settings.treeMotion} onChange={(v) => onChange({ treeMotion: v })} />
+          <Toggle label="Artes CraftPix e referências" desc="Usa os pacotes CraftPix e referências locais quando disponíveis; desative para voltar ao visual anterior" on={settings.craftPix} onChange={(v) => onChange({ craftPix: v })} />
         </section>
 
         <section className="border-t border-slate-800 py-2">
@@ -833,6 +855,7 @@ function SettingsModal({ settings, onChange, onClose, audioOn }: { settings: Gam
           <input type="range" min={0} max={1} step={0.05} value={settings.sfxVol}
             onChange={(e) => onChange({ sfxVol: Number(e.target.value) })} className="w-full accent-amber-500" />
           <Toggle label="Sons das criaturas" desc="Rugidos e chamados quando os monstros estão próximos" on={settings.creatureSounds} onChange={(v) => onChange({ creatureSounds: v })} />
+          <Toggle label="Som do vento" desc="Rajadas suaves durante a exploração; respeita o volume de efeitos" on={settings.windSounds} onChange={(v) => onChange({ windSounds: v })} />
           <Toggle label="Voz do tema no lobby" desc="Narra o tema do jogo no menu" on={settings.voice} onChange={(v) => onChange({ voice: v })} />
         </section>
 

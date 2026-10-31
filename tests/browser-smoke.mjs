@@ -23,6 +23,9 @@ const context = await browser.newContext({ viewport: { width: 1366, height: 820 
 if (process.env.WITHOUT_CRAFTPIX === "1") {
   await context.route("**/craftpix/**", (route) => route.fulfill({ status: 404, body: "" }));
 }
+if (process.env.WITHOUT_REFERENCIAS === "1") {
+  await context.route("**/referencias/**", (route) => route.fulfill({ status: 404, body: "" }));
+}
 const page = await context.newPage();
 observePage(page);
 await page.addInitScript(() => {
@@ -79,9 +82,13 @@ try {
   await soundsToggle.click();
   assert.equal(await soundsToggle.getAttribute("aria-pressed"), "false");
   await soundsToggle.click();
+  const windSounds = config.getByRole("button", { name: /Som do vento/ });
+  await windSounds.click();
+  assert.equal(await windSounds.getAttribute("aria-pressed"), "false");
+  await windSounds.click();
   await page.waitForFunction(() => {
     const settings = JSON.parse(localStorage.getItem("umbra-settings-v1") ?? "{}");
-    return settings.fpsCap === 0 && settings.treeMotion === true && settings.creatureSounds === true && settings.craftPix === true;
+    return settings.fpsCap === 0 && settings.treeMotion === true && settings.creatureSounds === true && settings.windSounds === true && settings.craftPix === true;
   });
   await page.screenshot({ path: screenshotPath("configuracoes-audio") });
   await config.getByRole("button", { name: "Pronto" }).click();
@@ -109,6 +116,18 @@ try {
   let dialog = page.getByRole("dialog", { name: "Mochila & equipamento" });
   await dialog.waitFor();
   await dialog.getByText("Arreio do Explorador", { exact: true }).waitFor();
+  const bowButton = dialog.getByRole("button", { name: /^Arco/ });
+  const swordButton = dialog.getByRole("button", { name: /^Espada/ });
+  const portrait = dialog.locator(".character-paper img");
+  await portrait.waitFor();
+  const beforeBowPortrait = await portrait.getAttribute("src");
+  await bowButton.click();
+  await page.waitForFunction((before) => document.querySelector('.character-paper img')?.getAttribute('src') !== before, beforeBowPortrait);
+  assert.equal(await bowButton.getAttribute("aria-pressed"), "true", "arco não foi equipado");
+  assert.equal(await swordButton.getAttribute("aria-pressed"), "false");
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("ilha-save-dificil-single") ?? "{}").combatWeapon === "bow");
+  await swordButton.click();
+  assert.equal(await swordButton.getAttribute("aria-pressed"), "true");
   await dialog.getByRole("button", { name: "Construir", exact: true }).click();
   dialog = page.getByRole("dialog", { name: "Oficina da Clareira" });
   await dialog.waitFor();
@@ -172,6 +191,7 @@ try {
 
   const mobile = await browser.newContext({ viewport: { width: 320, height: 844 }, isMobile: true, hasTouch: true });
   if (process.env.WITHOUT_CRAFTPIX === "1") await mobile.route("**/craftpix/**", (route) => route.fulfill({ status: 404, body: "" }));
+  if (process.env.WITHOUT_REFERENCIAS === "1") await mobile.route("**/referencias/**", (route) => route.fulfill({ status: 404, body: "" }));
   const phone = await mobile.newPage();
   observePage(phone);
   await phone.addInitScript((save) => {
@@ -195,13 +215,19 @@ try {
   const phoneConfig = phone.getByRole("dialog", { name: "Configurações" });
   await phoneConfig.waitFor();
   assert.equal(await phoneConfig.getByRole("button", { name: "FPS sem limite" }).getAttribute("aria-pressed"), "true");
+  await phoneConfig.getByRole("button", { name: /Som do vento/ }).click();
+  assert.equal(await phoneConfig.getByRole("button", { name: /Som do vento/ }).getAttribute("aria-pressed"), "false");
   assert.equal(await phoneConfig.evaluate((el) => el.scrollWidth > el.clientWidth + 2), false, "configurações transbordam no celular");
   await phoneConfig.getByRole("button", { name: "Fechar configurações" }).click();
   await phone.setViewportSize({ width: 390, height: 844 });
   await phone.getByRole("button", { name: "Jogar sozinho" }).click();
   await phone.getByRole("button", { name: "Continuar" }).first().click();
   await phone.getByRole("button", { name: "Inventário · I" }).click();
-  await phone.getByRole("dialog", { name: "Mochila & equipamento" }).waitFor();
+  const phoneInventory = phone.getByRole("dialog", { name: "Mochila & equipamento" });
+  await phoneInventory.waitFor();
+  await phoneInventory.getByRole("button", { name: /^Arco/ }).click();
+  assert.equal(await phoneInventory.getByRole("button", { name: /^Arco/ }).getAttribute("aria-pressed"), "true");
+  await phone.waitForFunction(() => JSON.parse(localStorage.getItem("ilha-save-dificil-single") ?? "{}").combatWeapon === "bow");
   await phone.waitForTimeout(400);
   await phone.screenshot({ path: screenshotPath("mobile") });
   const overflow = await phone.getByRole("dialog").evaluate((el) => el.scrollWidth > el.clientWidth + 2);

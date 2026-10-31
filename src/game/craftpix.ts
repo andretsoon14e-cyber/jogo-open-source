@@ -8,6 +8,7 @@ type Plant = "tree" | "fruit" | "palm" | "bush" | "crate";
 export interface CraftPixStatus { hero: boolean; orcs: boolean; plants: boolean; }
 const status: CraftPixStatus = { hero: false, orcs: false, plants: false };
 const heroes: HTMLImageElement[] = [];
+let rianHero: HTMLCanvasElement | null = null;
 const orcs: HTMLImageElement[] = [];
 let plants: HTMLImageElement | null = null;
 let loading: Promise<CraftPixStatus> | null = null;
@@ -19,6 +20,29 @@ function image(name: string, width: number, height: number): Promise<HTMLImageEl
     result.onerror = () => reject(new Error(`Atlas indisponível: ${name}`));
     result.src = `/craftpix/${name}.png`;
   });
+}
+
+/** Recolor the supplied hero's hair once for Rian; the animation and outline
+ * remain the same. Fixed exact-color replacements avoid touching skin tones. */
+function makeRianHero(source: HTMLImageElement): HTMLCanvasElement | null {
+  try {
+    const canvas = document.createElement("canvas"); canvas.width = source.naturalWidth; canvas.height = source.naturalHeight;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return null;
+    ctx.drawImage(source, 0, 0);
+    const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const replacements: Record<number, [number, number, number]> = {
+      0x4d3945: [35, 57, 72], 0x684f5a: [51, 84, 100], 0x3b2c33: [24, 37, 49],
+      0x876c7d: [83, 114, 126], 0x2b2023: [18, 29, 39],
+    };
+    for (let i = 0; i < pixels.data.length; i += 4) {
+      if (!pixels.data[i + 3]) continue;
+      const replacement = replacements[(pixels.data[i] << 16) | (pixels.data[i + 1] << 8) | pixels.data[i + 2]];
+      if (replacement) { pixels.data[i] = replacement[0]; pixels.data[i + 1] = replacement[1]; pixels.data[i + 2] = replacement[2]; }
+    }
+    ctx.putImageData(pixels, 0, 0);
+    return canvas;
+  } catch { return null; }
 }
 
 /** Each pack can fail independently; missing/corrupt art always falls back. */
@@ -34,7 +58,7 @@ export function loadCraftPix(): Promise<CraftPixStatus> {
       const flags = manifest as { hero?: unknown; orcs?: unknown; plants?: unknown };
       const tasks: Promise<void>[] = [];
       if (flags.hero === true) tasks.push(Promise.all([1, 2, 3].map((n) => image(`hero-${n}`, 384, 1088))).then((loaded) => {
-        heroes.splice(0, heroes.length, ...loaded); status.hero = true;
+        heroes.splice(0, heroes.length, ...loaded); rianHero = makeRianHero(loaded[1]); status.hero = true;
       }).catch(() => {}));
       if (flags.orcs === true) tasks.push(Promise.all([1, 2, 3].map((n) => image(`orc-${n}`, 512, 768))).then((loaded) => {
         orcs.splice(0, orcs.length, ...loaded); status.orcs = true;
@@ -78,8 +102,8 @@ export function orcFrame(view: View, flip: boolean, action: MonsterAction, time:
 }
 
 /** Coordinates are relative to the feet; original pixels are never smoothed. */
-export function drawCraftHero(ctx: CanvasRenderingContext2D, view: View, flip: boolean, level: number, action: Action, cycle: number, attackProgress: number, scale: number, sword = false): boolean {
-  const atlas = heroes[Math.min(3, Math.max(1, Math.floor(level))) - 1];
+export function drawCraftHero(ctx: CanvasRenderingContext2D, view: View, flip: boolean, level: number, action: Action, cycle: number, attackProgress: number, scale: number, sword = false, variant: "player" | "rian" = "player"): boolean {
+  const atlas = variant === "rian" ? (rianHero ?? heroes[1]) : heroes[Math.min(3, Math.max(1, Math.floor(level))) - 1];
   if (!atlas) return false;
   const frame = heroFrame(view, flip, action, cycle, performance.now() / 1000, attackProgress);
   if (sword && action === "attack") {

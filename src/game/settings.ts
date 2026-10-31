@@ -16,6 +16,7 @@ export interface GameSettings {
   quality: Quality;
   treeMotion: boolean;
   creatureSounds: boolean;
+  windSounds: boolean;
   craftPix: boolean;
 }
 
@@ -33,6 +34,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   quality: "auto",
   treeMotion: true,
   creatureSounds: true,
+  windSounds: true,
   craftPix: true,
 };
 

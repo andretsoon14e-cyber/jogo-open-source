@@ -13,7 +13,10 @@
     "db:push": "drizzle-kit push",
     "test:db": "tsx tests/database.integration.mjs",
     "import:craftpix": "node scripts/import-craftpix.mjs",
-    "test:craftpix-browser": "node tests/craftpix-browser.mjs"
+    "import:referencias": "node scripts/import-references.mjs",
+    "test:craftpix-browser": "node tests/craftpix-browser.mjs",
+    "test:referencias-browser": "node tests/reference-browser.mjs",
+    "test:referencias-ui": "node tests/reference-ui.mjs"
   },
   "dependencies": {
     "dotenv": "17.3.1",

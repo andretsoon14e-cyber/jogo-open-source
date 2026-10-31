@@ -4,6 +4,7 @@ export class Sfx {
   vol = 0.35;
   private noiseBuffer: AudioBuffer | null = null;
   private nextCreatureAt = 0;
+  private nextWindAt = 0;
 
   ensure() {
     if (!this.ctx && typeof window !== "undefined") {
@@ -91,6 +92,24 @@ export class Sfx {
     hissGain.gain.linearRampToValueAtTime(0, t + duration);
     hiss.connect(hissFilter); hissFilter.connect(hissGain); hissGain.connect(ctx.destination);
     hiss.start(t, 0, duration);
+  }
+
+  /** An occasional soft gust. It reuses the noise buffer, finishes on its
+   * own, and never creates nodes while muted or the browser is suspended. */
+  wind() {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== "running" || this.vol <= 0 || ctx.currentTime < this.nextWindAt) return;
+    const t = ctx.currentTime;
+    this.nextWindAt = t + 7 + Math.random() * 5;
+    const source = this.noiseSource(ctx);
+    const filter = ctx.createBiquadFilter();
+    filter.type = "bandpass"; filter.frequency.value = 420; filter.Q.value = 0.45;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0, t);
+    gain.gain.linearRampToValueAtTime(this.vol * 0.12, t + 0.4);
+    gain.gain.linearRampToValueAtTime(0, t + 0.98);
+    source.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
+    source.start(t, 0, 1);
   }
 
   chop() { this.tone(180, 0.09, "square", 0.5, -60); this.noise(0.06, 0.3); }

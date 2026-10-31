@@ -3,19 +3,24 @@
 import { memo, useEffect, useState } from "react";
 import { getCharacterUrl, getSpriteUrl } from "@/game/sprites";
 import { hasCraftOrcs } from "@/game/craftpix";
+import { hasReferenceScene, referenceIconUrl, referenceObjectUrl } from "@/game/reference-art";
 import { GAME_TITLE } from "@/game/identity";
 import { BESTIARY, EQUIPMENT, SITES, type EquipmentKey } from "@/game/world-content";
-import { RES_LABEL, TOOL_LABEL, type GamePanel, type Snapshot, type ResKey, type ToolKey, type FenceStyle } from "@/game/engine";
+import { RES_LABEL, TOOL_LABEL, type GamePanel, type Snapshot, type ResKey, type ToolKey, type CombatWeapon, type FenceStyle } from "@/game/engine";
 import { Icon } from "./Icons";
 
-export const SpriteThumb = memo(function SpriteThumb({ name, size = 46, character = false, view = "down", tool = "axe", craftPix = true, level = 1 }: { name: string; size?: number; character?: boolean; view?: "up" | "down" | "side"; tool?: ToolKey; craftPix?: boolean; level?: number }) {
+export const SpriteThumb = memo(function SpriteThumb({ name, size = 46, character = false, view = "down", tool = "axe", craftPix = true, level = 1 }: { name: string; size?: number; character?: boolean; view?: "up" | "down" | "side"; tool?: ToolKey | "bow"; craftPix?: boolean; level?: number }) {
   const [url, setUrl] = useState("");
   // Sprites are generated with a browser canvas, unavailable during SSR.
   useEffect(() => {
-    const refresh = () => setUrl(character ? getCharacterUrl(name, view, tool, craftPix, level) : getSpriteUrl(name, craftPix));
+    const refresh = () => {
+      const object = name === "fence_stone" ? "castle_wall" : name === "gate_stone" ? "castle_gate" : name === "tower" ? "castle_tower" : null;
+      setUrl(character ? getCharacterUrl(name, view, tool, craftPix, level) : (craftPix && object && referenceObjectUrl(object)) || (craftPix && referenceIconUrl(name)) || getSpriteUrl(name, craftPix));
+    };
     refresh();
     window.addEventListener("craftpix-ready", refresh);
-    return () => window.removeEventListener("craftpix-ready", refresh);
+    window.addEventListener("reference-art-ready", refresh);
+    return () => { window.removeEventListener("craftpix-ready", refresh); window.removeEventListener("reference-art-ready", refresh); };
   }, [name, character, view, tool, craftPix, level]);
   if (!url) return <span style={{ width: size, height: size }} className="inline-block" />;
   // eslint-disable-next-line @next/next/no-img-element
@@ -23,36 +28,40 @@ export const SpriteThumb = memo(function SpriteThumb({ name, size = 46, characte
 });
 
 interface Props {
-  panel: Exclude<GamePanel, "none">;
+  panel: Exclude<GamePanel, "none" | "reference">;
   snap: Snapshot;
   craftPix: boolean;
   onClose: () => void;
-  onPanel: (panel: Exclude<GamePanel, "none">) => void;
+  onPanel: (panel: Exclude<GamePanel, "none" | "reference">) => void;
+  onReferenceForge: () => void;
   onBuild: (id: string) => void;
   onUpgrade: (tool: ToolKey) => void;
   onCraftEquipment: (id: EquipmentKey) => void;
   onFenceStyle: (style: FenceStyle) => void;
+  onFenceRing: (ring: number) => void;
+  onExpandTerritory: () => void;
   onTool: (tool: ToolKey) => void;
+  onCombatWeapon: (weapon: CombatWeapon) => void;
   onEat: () => void;
 }
 
 const resourceNames: ResKey[] = ["wood", "stone", "fiber", "food", "iron", "crystal"];
 const titleFor = { build: "Oficina da Clareira", forge: "Forja & melhorias", inventory: "Mochila & equipamento", bestiary: "O Diário da Ilha" };
 
-function Costs({ cost, inv }: { cost: Partial<Record<ResKey, number>>; inv: Record<ResKey, number> }) {
+function Costs({ cost, inv, craftPix }: { cost: Partial<Record<ResKey, number>>; inv: Record<ResKey, number>; craftPix: boolean }) {
   return <div className="journal-costs">{Object.entries(cost).map(([k,n]) => (
     <div key={k} className={`flex items-center gap-2 ${inv[k as ResKey] >= (n ?? 0) ? "text-[#426844]" : "text-[#a34332]"}`}>
-      <SpriteThumb name={`it_${k}`} size={23} />
+      <SpriteThumb name={`it_${k}`} size={23} craftPix={craftPix} />
       <span className="text-xs"><b>{n}</b> {RES_LABEL[k as ResKey]} <span className="opacity-60">/ {inv[k as ResKey]}</span></span>
     </div>
   ))}</div>;
 }
 
-function InventoryGrid({ snap, compact = false, onEat }: { snap: Snapshot; compact?: boolean; onEat?: () => void }) {
+function InventoryGrid({ snap, craftPix, compact = false, onEat }: { snap: Snapshot; craftPix: boolean; compact?: boolean; onEat?: () => void }) {
   return <div>
     <div className={`grid gap-1.5 ${compact ? "grid-cols-3" : "grid-cols-3 sm:grid-cols-6"}`}>
       {resourceNames.map((key) => <div key={key} className="journal-slot flex flex-col items-center justify-center relative p-2" title={RES_LABEL[key]}>
-        <SpriteThumb name={`it_${key}`} size={compact ? 34 : 44} />
+        <SpriteThumb name={`it_${key}`} size={compact ? 34 : 44} craftPix={craftPix} />
         <span className="absolute top-1 right-1.5 font-display text-sm font-bold text-[#4f3325]">{snap.inv[key]}</span>
         {!compact && <span className="text-[9px] mt-1 opacity-60">{RES_LABEL[key]}</span>}
       </div>)}
@@ -96,11 +105,11 @@ export default function FieldJournal(props: Props) {
           <div className="grid grid-cols-3 gap-1.5">
             {snap.buildOptions.map((b) => <button key={b.id} title={b.name} className={`journal-slot relative ${b.id === recipe.id ? "selected" : ""}`} onClick={() => setSelected(b.id)}>
               <SpriteThumb name={b.id === "campfire" ? "campfire0" : b.id === "wall" ? `fence_${snap.fenceStyle}` : b.id === "gate" ? `gate_${snap.fenceStyle}` : b.id} size={52} />
-              {b.id === "wall" && <b className="absolute bottom-0 right-1 font-display text-[#6c492c] text-xs">×2</b>}
+              {b.id === "wall" && <b className="absolute bottom-0 right-1 font-display text-[#6c492c] text-xs">×{snap.fencePieces}</b>}
               {b.locked && <span className="absolute right-1 top-0.5 text-xs opacity-60">•</span>}
             </button>)}
           </div>
-          <p className="text-[10px] leading-relaxed mt-4 text-[#866741]">Selecione uma receita. O preço da cerca inclui <b>duas peças</b> que se encaixam no círculo.</p>
+          <p className="text-[10px] leading-relaxed mt-4 text-[#866741]">Selecione uma receita. Cercas vêm em <b>pares</b>; lacunas isoladas podem ser fechadas com uma peça.</p>
           <div className="mt-4 border-t border-[#9f7c4c]/30 pt-3"><span className="journal-eyebrow">SEU REINO</span><p className="font-display text-xl">Nível {snap.baseLevel}</p><p className="text-xs opacity-65">{snap.walls} trechos · portão {snap.gateState}</p></div>
         </aside>
         <main className="journal-page recipe-detail">
@@ -113,16 +122,22 @@ export default function FieldJournal(props: Props) {
               <small className="text-[9px] opacity-65">{style.hp} vida{style.locked ? " · bloqueada" : ""}</small>
             </button>)}
           </div>}
+          {(recipe.id === "wall" || recipe.id === "gate") && <div className="my-3">
+            <p className="text-center text-xs font-bold text-[#785939] mb-1">Perímetro de construção</p>
+            <div role="group" aria-label="Escolher perímetro" className="flex justify-center flex-wrap gap-1">
+              {Array.from({ length: snap.territory.level }, (_, i) => <button type="button" key={i} aria-pressed={snap.fenceRing === i + 1} onClick={() => props.onFenceRing(i + 1)} className={`journal-button small ${snap.fenceRing === i + 1 ? "" : "muted"}`}>Anel {i + 1}</button>)}
+            </div>
+          </div>}
           <h3 className="font-display text-2xl text-center">{recipe.name}</h3>
           <p className="text-xs leading-relaxed text-center text-[#785939] my-2">{recipe.desc}</p>
-          <div className="border-y border-[#ad8b5e]/35 py-3 my-4"><Costs cost={recipe.cost} inv={snap.inv} /></div>
+          <div className="border-y border-[#ad8b5e]/35 py-3 my-4"><Costs cost={recipe.cost} inv={snap.inv} craftPix={props.craftPix} /></div>
           <button className="journal-button w-full" disabled={recipe.locked || !recipe.affordable} onClick={() => props.onBuild(recipe.id)}>
-            {recipe.locked ? recipe.lockReason : !recipe.affordable ? "Faltam materiais" : recipe.id === "wall" ? "Preparar 2 cercas" : "Preparar construção"}
+            {recipe.locked ? recipe.lockReason : !recipe.affordable ? "Faltam materiais" : recipe.id === "wall" ? `Preparar ${snap.fencePieces} ${snap.fencePieces === 1 ? "cerca" : "cercas"}` : "Preparar construção"}
           </button>
           <p className="mt-2 text-center text-[10px] opacity-65">Os materiais só são gastos ao confirmar no chão.</p>
         </main>
         <aside className="journal-page journal-side">
-          <h3 className="journal-ribbon">Materiais</h3><InventoryGrid snap={snap} compact />
+          <h3 className="journal-ribbon">Materiais</h3><InventoryGrid snap={snap} craftPix={props.craftPix} compact />
           <div className="mt-5 text-[11px] leading-relaxed text-[#785939]">
             <h4 className="font-display text-base mb-1">Como colocar</h4>
             <p>Mouse ou direção do personagem para posicionar.</p>
@@ -130,32 +145,53 @@ export default function FieldJournal(props: Props) {
             <p className="mt-2">Cercas: <b>Q/E · LB/RB · setas na tela</b> giram pelo perímetro.</p>
           </div>
         </aside>
+        <section className="journal-page col-span-full mt-1" aria-label="Expansão do território">
+          <h3 className="journal-ribbon">Expandir território</h3>
+          <p className="text-xs text-[#785939] leading-relaxed mb-3">Território {snap.territory.level}/{snap.territory.maxLevel} · raio {snap.territory.radius / 32} blocos{snap.territory.nextRadius ? ` → ${snap.territory.nextRadius / 32} blocos` : " · espaço máximo"}. A expansão abre mais espaço para casas e um novo perímetro de cercas e muralhas, sem remover os anteriores.</p>
+          {snap.territory.nextRadius && <div className="mb-3"><Costs cost={snap.territory.cost} inv={snap.inv} craftPix={props.craftPix} /></div>}
+          {snap.territory.reason && <p className="text-xs text-[#8d4c36] mb-2">{snap.territory.reason}</p>}
+          <button type="button" className="journal-button w-full" disabled={snap.territory.locked || !snap.territory.affordable} onClick={props.onExpandTerritory}>Ampliar território</button>
+        </section>
       </div>}
 
       {panel === "forge" && <div className="journal-workshop">
         <aside className="journal-page"><h3 className="journal-ribbon">Ferramentas</h3>
-          {(["axe","pick","sword"] as ToolKey[]).map((tool) => <button key={tool} className={`journal-row ${upgradeTool === tool ? "active" : ""}`} onClick={() => setUpgradeTool(tool)}><SpriteThumb name={`tool_${tool}`} size={46} /><span>{TOOL_LABEL[tool]}<small>Nível {snap.tools[tool]}</small></span></button>)}
+          {(["axe","pick","sword"] as ToolKey[]).map((tool) => <button key={tool} className={`journal-row ${upgradeTool === tool ? "active" : ""}`} onClick={() => setUpgradeTool(tool)}><SpriteThumb name={`tool_${tool}`} size={46} craftPix={props.craftPix} /><span>{TOOL_LABEL[tool]}<small>Nível {snap.tools[tool]}</small></span></button>)}
         </aside>
-        <main className="journal-page recipe-detail"><span className="journal-eyebrow">TRABALHO DE FERREIRO</span><div className="recipe-art"><SpriteThumb name={`tool_${upgradeTool}`} size={126} /></div>
+        <main className="journal-page recipe-detail"><span className="journal-eyebrow">TRABALHO DE FERREIRO</span><div className="recipe-art"><SpriteThumb name={`tool_${upgradeTool}`} size={126} craftPix={props.craftPix} /></div>
           <h3 className="font-display text-2xl text-center">{TOOL_LABEL[upgradeTool]}</h3><p className="text-center font-display text-lg text-[#488267]">Nível {upgrade.level} → {Math.min(5,upgrade.nextLevel)}</p>
-          <div className="my-4 py-3 border-y border-[#ad8b5e]/35"><Costs cost={upgrade.cost} inv={snap.inv} /></div>
+          <div className="my-4 py-3 border-y border-[#ad8b5e]/35"><Costs cost={upgrade.cost} inv={snap.inv} craftPix={props.craftPix} /></div>
           <button className="journal-button w-full" disabled={upgrade.locked || !upgrade.affordable} onClick={() => props.onUpgrade(upgradeTool)}>{upgrade.locked ? upgrade.lockReason : upgrade.affordable ? "Forjar melhoria" : "Faltam materiais"}</button>
+          {props.craftPix && hasReferenceScene("forge") && <button className="journal-button muted w-full mt-2" onClick={props.onReferenceForge}>Visitar interior da forja</button>}
           <p className="text-[11px] opacity-65 mt-3 text-center">Metais e lâminas mudam conforme o nível. A partir do nível 4, Bren precisa estar na sua equipe.</p>
         </main>
-        <aside className="journal-page journal-side"><h3 className="journal-ribbon">Inventário</h3><InventoryGrid snap={snap} compact /><div className="flex justify-center mt-5"><SpriteThumb name="forge" size={100} /></div></aside>
+        <aside className="journal-page journal-side"><h3 className="journal-ribbon">Inventário</h3><InventoryGrid snap={snap} craftPix={props.craftPix} compact /><div className="flex justify-center mt-5"><SpriteThumb name="forge" size={100} /></div></aside>
       </div>}
 
       {panel === "inventory" && <div className="p-4 sm:p-6 grid md:grid-cols-[220px_1fr] gap-5">
-        <aside className="journal-page text-center"><h3 className="journal-ribbon">Explorador</h3><div className="character-paper"><SpriteThumb name="player" character size={160} view={characterView} tool={snap.heldTool} craftPix={props.craftPix} level={snap.tools.sword} /></div>
+        <aside className="journal-page text-center"><h3 className="journal-ribbon">Explorador</h3><div className="character-paper"><SpriteThumb name="player" character size={160} view={characterView} tool={snap.heldTool === "sword" && snap.combatWeapon === "bow" ? "bow" : snap.heldTool} craftPix={props.craftPix} level={snap.tools.sword} /></div>
           <div className="flex justify-center gap-1 mb-3">{([["down","Frente"],["up","Costas"],["side","Lado"]] as const).map(([key,label]) => <button key={key} className={`journal-button small ${characterView === key ? "" : "muted"}`} onClick={() => setCharacterView(key)}>{label}</button>)}</div>
           <p className="font-display text-lg">Seu equipamento</p><p className="text-[11px] opacity-65">A ferramenta fora de uso fica presa no arreio das costas.</p>
-          <div className="grid grid-cols-3 gap-1 mt-4">{(["axe","pick","sword"] as ToolKey[]).map((t) => <button key={t} title={`Equipar ${TOOL_LABEL[t]}`} className={`journal-slot ${snap.heldTool === t ? "selected" : ""}`} onClick={() => props.onTool(t)}><SpriteThumb name={`tool_${t}`} size={40} /><small className="text-[9px]">Nv. {snap.tools[t]}</small></button>)}</div>
+          <div className="grid grid-cols-3 gap-1 mt-4">{(["axe","pick","sword"] as ToolKey[]).map((t) => {
+            const bow = t === "sword" && snap.combatWeapon === "bow";
+            return <button key={t} title={`Equipar ${bow ? "Arco" : TOOL_LABEL[t]}`} className={`journal-slot ${snap.heldTool === t ? "selected" : ""}`} onClick={() => props.onTool(t)}><SpriteThumb name={`tool_${bow ? "bow" : t}`} size={40} craftPix={props.craftPix} /><small className="text-[9px]">Nv. {snap.tools[t]}</small></button>;
+          })}</div>
         </aside>
-        <main><div className="journal-page"><h3 className="journal-ribbon">Inventário</h3><InventoryGrid snap={snap} onEat={props.onEat} /></div>
+        <main><div className="journal-page"><h3 className="journal-ribbon">Inventário</h3><InventoryGrid snap={snap} craftPix={props.craftPix} onEat={props.onEat} /></div>
+          <div className="journal-page mt-4">
+            <h3 className="journal-ribbon">Arma de combate</h3>
+            <p className="text-xs text-[#795b3b] mb-3">Escolha a arma do espaço 3. O arco dispara à distância e compartilha o nível de melhoria da espada.</p>
+            <div className="grid grid-cols-2 gap-2">
+              {(["sword", "bow"] as CombatWeapon[]).map((weapon) => <button key={weapon} type="button" aria-pressed={snap.combatWeapon === weapon} onClick={() => props.onCombatWeapon(weapon)} className={`journal-slot flex items-center justify-center gap-2 p-2 ${snap.combatWeapon === weapon ? "selected" : ""}`}>
+                <SpriteThumb name={`tool_${weapon}`} size={42} craftPix={props.craftPix} />
+                <span className="text-left"><b className="font-display">{weapon === "bow" ? "Arco" : "Espada"}</b><small className="block text-[10px] opacity-65">{weapon === "bow" ? "Longo alcance" : "Corpo a corpo"}</small></span>
+              </button>)}
+            </div>
+          </div>
           <div className="grid sm:grid-cols-3 gap-3 mt-4">{EQUIPMENT.map((gear) => <article className="journal-page equipment-card" key={gear.id}><div className="flex justify-center"><SpriteThumb name={gear.sprite} size={64} /></div>
             <h4 className="font-display text-lg text-center">{gear.name}</h4><p className="text-[10px] leading-relaxed my-2 min-h-12 text-[#795b3b]">{gear.desc}</p>
             <span className="text-[10px] font-bold text-[#3d7759]">{gear.effect}</span>
-            {snap.equipment[gear.id] ? <div className="mt-3 font-display text-[#3d7759] text-center">✓ Equipado</div> : <><div className="my-2"><Costs cost={gear.cost} inv={snap.inv} /></div><button className="journal-button small w-full" onClick={() => props.onCraftEquipment(gear.id)}>Fabricar & equipar</button></>}
+            {snap.equipment[gear.id] ? <div className="mt-3 font-display text-[#3d7759] text-center">✓ Equipado</div> : <><div className="my-2"><Costs cost={gear.cost} inv={snap.inv} craftPix={props.craftPix} /></div><button className="journal-button small w-full" onClick={() => props.onCraftEquipment(gear.id)}>Fabricar & equipar</button></>}
           </article>)}</div>
         </main>
       </div>}
@@ -177,7 +213,7 @@ export default function FieldJournal(props: Props) {
             </> : <>
               <span className="journal-eyebrow">EXPEDIÇÃO · {snap.discoveredSites.includes(site.id) ? "LOCAL DESCOBERTO" : "RUMOR DA ILHA"}</span><h3 className="font-display text-3xl mt-1">{site.name}</h3>
               <div className="book-art"><SpriteThumb name={site.sprite} size={180} /></div><p className="font-display text-lg text-center">{site.subtitle}</p><p className="text-sm leading-relaxed mt-3 text-[#775739]">{site.lore}</p>
-              <div className="mt-4 py-3 border-t border-[#ad8b5e]/40"><p className="font-display text-lg">Suprimentos do altar</p><Costs cost={site.reward} inv={snap.inv} /></div><p className="text-[11px] text-[#4c7e5c] mt-3">Local marcado no mapa (M). Aproxime-se da entrada e use E para investigar. A recompensa só pode ser recolhida uma vez.</p>
+              <div className="mt-4 py-3 border-t border-[#ad8b5e]/40"><p className="font-display text-lg">Suprimentos do altar</p><Costs cost={site.reward} inv={snap.inv} craftPix={props.craftPix} /></div><p className="text-[11px] text-[#4c7e5c] mt-3">Local marcado no mapa (M). Aproxime-se da entrada e use E para investigar. A recompensa só pode ser recolhida uma vez.</p>
             </>}
           </main>
         </div>

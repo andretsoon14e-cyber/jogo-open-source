@@ -19,6 +19,8 @@ for (let tier = 1; tier <= 3; tier++) {
   for (let a = 0; a < 4; a++) for (let row = 0; row < 4; row++) for (let frame = 0; frame < 12; frame++) {
     const color = `rgb(${40 + tier * 40},${40 + row * 40},${40 + a * 40})`;
     blocks.push([frame * 32 + 8, (a * 4 + row) * 32 + 8, 16, 20, color]);
+    // One exact hair color verifies Rian's cached palette variant.
+    blocks.push([frame * 32 + 11, (a * 4 + row) * 32 + 9, 7, 5, "#684f5a"]);
   }
   for (let a = 0; a < 3; a++) for (let row = 0; row < 4; row++) for (let frame = 0; frame < 12; frame++) {
     blocks.push([frame * 32 + 8, 512 + (a * 4 + row) * 32 + 8, 16, 20, "#ef40c0"]);
@@ -73,6 +75,12 @@ try {
         return canvas.toDataURL();
       };
       const importedAvatar = avatar(true), fallbackAvatar = avatar(false);
+      const person = (look) => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        api.drawCharacter(ctx, look, 100, 100, 0, false, 0, { craftPix: true, heroLevel: 2 });
+        return canvas.toDataURL();
+      };
+      const rianDifferent = person("rian") !== person("player");
       const heroDraws = [];
       const originalDrawImage = ctx.drawImage.bind(ctx);
       ctx.drawImage = (...args) => {
@@ -144,13 +152,14 @@ try {
         sameAnchor: plantDraws[0][1] - plantDraws[1][1] === (plantDraws[1][0].width - plantDraws[0][0].width) / 2,
       } : null;
       game.destroy();
-      return { status, avatarChanged: importedAvatar !== fallbackAvatar, heroDraws, attackOverlays, drewPlant, kills, plantCache, spawningWithArt, spawningWithoutArt, damageApplied };
+      return { status, avatarChanged: importedAvatar !== fallbackAvatar, rianDifferent, heroDraws, attackOverlays, drewPlant, kills, plantCache, spawningWithArt, spawningWithoutArt, damageApplied };
     });
     const expected = scenario === "missing" ? { hero: false, orcs: false, plants: false }
       : scenario === "broken-hero" ? { hero: false, orcs: true, plants: true }
         : { hero: true, orcs: true, plants: true };
     assert.deepEqual(result.status, expected, scenario);
     assert.equal(result.avatarChanged, expected.hero, `${scenario}: fallback do personagem`);
+    assert.equal(result.rianDifferent, true, `${scenario}: Rian permanece distinto do jogador`);
     if (expected.hero) {
       assert.equal(result.heroDraws.length, 4);
       assert.deepEqual(result.heroDraws[0].slice(1, 4), [512, 32, 32], "espada original na animação parada");
@@ -180,14 +189,14 @@ try {
     const game = new window.CraftPixTest.Engine({ canvas: document.querySelector("canvas"), mode: "single", difficulty: "dificil", playerName: "Teste", seed: 7, continueSave: false, onUi: () => {}, settings: { craftPix: false } });
     game.skipCutscene(); game.interactHint = "E: Salvar na fogueira";
     game.structures = [{ type: "gate", x: 3328, y: 2816, hp: 100, maxHp: 100, open: false, rotation: 0, fenceStyle: "palisade", prodT: 0 }];
-    game.spawnMonster(3330, 2816, "orc");
+    game.spawnMonster(game.px + 20, game.py, "orc"); // Exercise the stacked warning + interaction hint.
     const results = [];
     for (const [width, height] of [[320, 240], [390, 844], [699, 500], [700, 500], [1280, 720], [1920, 1080]]) {
       game.viewW = width; game.viewH = height;
       const layer = document.createElement("canvas"); layer.width = width; layer.height = height;
       game.ctx = layer.getContext("2d"); game.renderHud();
       const pixels = game.ctx.getImageData(0, 0, width, height).data;
-      const top = Math.min(104, height), bottom = Math.max(top, height - (width < 700 ? 142 : 190));
+      const top = Math.min(120, height), bottom = Math.max(top, height - (width < 700 ? 142 : 190));
       let escaped = 0;
       for (let y = top; y < bottom; y++) for (let x = 0; x < width; x++) if (pixels[(y * width + x) * 4 + 3]) escaped++;
       results.push({ width, height, escaped });

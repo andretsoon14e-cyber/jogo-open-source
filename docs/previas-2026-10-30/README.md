@@ -11,4 +11,4 @@ Capturas do jogo atual feitas no Chromium automatizado. Os ícones de emoji pode
 
 Num teste isolado neste ambiente, a cena de floresta em qualidade Leve teve intervalo médio de 6,25 ms por quadro no Chromium headless (aproximadamente 160 FPS). Isso não garante a mesma taxa em outro aparelho, monitor ou navegador.
 
-Estas prévias mostram a versão anterior à integração opcional de parte das artes CraftPix. Os arqueiros das referências ainda serão integrados como aliados; as demais imagens já enviadas servirão como referência para os itens e cenários pendentes.
+Estas prévias do repositório mostram a versão anterior à integração opcional de parte das artes CraftPix e das imagens de referência. A versão atual inclui o arqueiro aliado, a vila ampliada e a expansão progressiva com muralhas descritos no README principal. As capturas mais recentes que contêm essas artes foram entregues separadamente e permanecem locais enquanto os termos de redistribuição são verificados; as cenas de muralha são demonstrações controladas dentro do motor.

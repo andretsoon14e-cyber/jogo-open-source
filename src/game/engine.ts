@@ -5,6 +5,7 @@
 import { drawSign, drawFlag } from "@/game/art";
 import { drawSprite, drawSwaySprite, drawCharacter, drawToolSprite, spriteSize, getBaked, SPRITES, SCALE, viewFromAngle } from "@/game/sprites";
 import { drawCraftOrc, drawCraftPlant, hasCraftHero, hasCraftOrcs, loadCraftPix } from "@/game/craftpix";
+import { drawReferenceArcher, drawReferenceIcon, drawReferenceObject, drawReferencePlant, hasReferenceArcher, hasReferenceObject, hasReferenceScene, loadReferenceArt, type ReferenceObject, type ReferenceScene } from "@/game/reference-art";
 import { Terrain, drawWaterAnim } from "@/game/terrain";
 import { MusicManager } from "@/game/music";
 import { Sfx } from "@/game/sfx";
@@ -17,6 +18,7 @@ export type Mode = "single" | "multi";
 export type GameState = "cutscene" | "playing" | "paused" | "gameover" | "victory";
 export type ResKey = "wood" | "stone" | "fiber" | "food" | "iron" | "crystal";
 export type ToolKey = "axe" | "pick" | "sword";
+export type CombatWeapon = "sword" | "bow";
 export type FenceStyle = "rustic" | "palisade" | "stone" | "hedge";
 
 export const RES_LABEL: Record<ResKey, string> = {
@@ -28,7 +30,7 @@ export const RES_ICON: Record<ResKey, string> = {
 export const TOOL_LABEL: Record<ToolKey, string> = { axe: "Machado", pick: "Picareta", sword: "Espada" };
 export const TOOL_ICON: Record<ToolKey, string> = { axe: "🪓", pick: "⛏️", sword: "⚔️" };
 
-export type GamePanel = "build" | "forge" | "inventory" | "bestiary" | "none";
+export type GamePanel = "build" | "forge" | "inventory" | "bestiary" | "reference" | "none";
 
 export interface BuildOption {
   id: string; name: string; icon: string; desc: string;
@@ -75,9 +77,13 @@ export interface Snapshot {
   claimedSites: string[];
   equipment: Record<EquipmentKey, boolean>;
   heldTool: ToolKey;
+  combatWeapon: CombatWeapon;
   renderScale: number;
   fenceStyle: FenceStyle;
   fenceStyles: { id: FenceStyle; name: string; desc: string; hp: number; cost: Partial<Record<ResKey, number>>; locked: boolean }[];
+  territory: { level: number; maxLevel: number; radius: number; nextRadius: number | null; cost: Partial<Record<ResKey, number>>; locked: boolean; reason: string; affordable: boolean };
+  fenceRing: number;
+  fencePieces: number;
 }
 export interface TutorialView {
   id: string; title: string; text: string; keys: string[]; step: number; total: number;
@@ -86,6 +92,7 @@ export type UiEvent =
   | { type: "snapshot"; snap: Snapshot }
   | { type: "state"; state: GameState }
   | { type: "panel"; panel: GamePanel }
+  | { type: "reference"; scene: ReferenceScene }
   | { type: "toast"; text: string; who?: string };
 
 export interface EngineOptions {
@@ -118,9 +125,23 @@ const WPX = W * TILE, HPX = H * TILE;
 
 const T_WATER = 0, T_SAND = 1, T_GRASS = 2, T_DARK = 3, T_PATH = 4, T_ROCK = 5, T_CAVE = 6, T_BRIDGE = 7, T_SNOW = 8, T_ICE = 9, T_RUIN = 10, T_SNOW_PATH = 11, T_NECRO = 12;
 
+// Keep the original generation radii for stable resource indices in old saves.
 const VILLAGE = { x: 58 * TILE, y: 122 * TILE, r: 13 * TILE };
+const VILLAGE_AREA_RADIUS = 760;
 const BASE = { x: 104 * TILE, y: 88 * TILE, r: 15 * TILE };
 const CAVE = { x: 98 * TILE, y: 30 * TILE, r: 13 * TILE };
+const REFERENCE_LABELS: Record<ReferenceScene, string> = { forge: "forja", chapel: "capela", market: "mercado", camp: "acampamento", sewer: "esgoto" };
+const REFERENCE_SCALE: Record<ReferenceObject, number> = { forge: 0.8, house: 1.1, chest: 1, chapel: 1.25, market: 1.25, camp: 1, sewer: 0.75, castle_wall: 1, castle_tower: 1, castle_gate: 1, castle_grate: 1 };
+// A wider village keeps generous gaps between the larger houses and the trail.
+const VILLAGE_HOUSES = [[-550, -230], [-550, 130], [-410, 490], [-50, 500], [310, 500]] as const;
+// Solid footprints cover the tent and houses, with room to approach their
+// entrances. The escort's route stays clear; players already inside can exit.
+const STATIC_BUILDINGS: { name: ReferenceObject; x: number; y: number; halfWidth: number; depth: number }[] = [
+  { name: "chapel", x: VILLAGE.x + 145, y: VILLAGE.y - 200, halfWidth: 112, depth: 26 },
+  { name: "market", x: VILLAGE.x + 220, y: VILLAGE.y + 35, halfWidth: 82, depth: 23 },
+  { name: "camp", x: BASE.x - 130, y: BASE.y - 120, halfWidth: 78, depth: 155 },
+  ...VILLAGE_HOUSES.map(([x, y]) => ({ name: "house" as const, x: VILLAGE.x + x, y: VILLAGE.y + y, halfWidth: 108, depth: 210 })),
+];
 const CRASH = { x: 97 * TILE, y: 171 * TILE };
 // Wake up beside the wreck, never inside it. The landing is made walkable
 // after procedural generation, for every seed and for older saves.
@@ -140,9 +161,14 @@ const DAY_LEN = MORNING_LEN + AFTERNOON_LEN;
 const DUSK_LEN = 55, NIGHT_LEN = 420, DAWN_LEN = 90;
 const CYCLE = DAY_LEN + DUSK_LEN + NIGHT_LEN + DAWN_LEN;
 const NIGHT_DARK = 0.94;
-// 31 double-wall purchases (62 posts) + one gate close the entire ring.
-const FENCE_SLOTS = 63;
-const FENCE_RADIUS = BASE.r * 0.73;
+// Each larger territory adds a separate perimeter. Odd slot counts allow
+// double-wall purchases plus one gate without leaving a gap.
+const TERRITORIES = [
+  { radius: BASE.r, fenceRadius: BASE.r * 0.73, slots: 63, level: 0, requires: null, cost: {} },
+  { radius: 640, fenceRadius: 510.4, slots: 91, level: 4, requires: "workbench", cost: { wood: 100, stone: 80 } },
+  { radius: 800, fenceRadius: 670.4, slots: 121, level: 8, requires: "forge", cost: { wood: 180, stone: 180, iron: 30 } },
+  { radius: 960, fenceRadius: 830.4, slots: 149, level: 12, requires: "tower", cost: { wood: 280, stone: 300, iron: 80, crystal: 10 } },
+] as const;
 
 interface DiffCfg { resMult: number; mHp: number; mDmg: number; spawn: number; permadeath: boolean; lossOnDeath: number; }
 const DIFF: Record<Difficulty, DiffCfg> = {
@@ -169,7 +195,7 @@ interface Monster {
   skin: string;
   defeated?: boolean;
 }
-interface Projectile { x: number; y: number; vx: number; vy: number; t: number; dmg: number; }
+interface Projectile { x: number; y: number; vx: number; vy: number; t: number; dmg: number; kind?: "ally" | "player"; }
 type StructType = "campfire" | "wall" | "gate" | "workbench" | "house" | "farm" | "sawmill" | "quarry" | "forge" | "tower" | "raft";
 interface Structure { type: StructType; x: number; y: number; prodT: number; hp: number; maxHp: number; open: boolean; rotation: number; fenceStyle: FenceStyle; }
 interface Particle { x: number; y: number; vx: number; vy: number; t: number; max: number; c: string; s: number; grav: number; }
@@ -187,7 +213,7 @@ interface Escort { active: boolean; wp: { x: number; y: number; line: string }[]
 interface QuestDef { id: string; name: string; desc: string; target: number; reward: string; }
 const QUESTS: QuestDef[] = [
   { id: "q1", name: "Primeiros Passos", desc: "Colete madeira e pedra (total)", target: 60, reward: "Desbloqueia a Bancada" },
-  { id: "q2", name: "Caçador", desc: "Derrote monstros", target: 20, reward: "Maya, a Caçadora, se junta" },
+  { id: "q2", name: "Caçador", desc: "Derrote monstros", target: 20, reward: "Maya e um arqueiro aliado se juntam" },
   { id: "q3", name: "Construtor", desc: "Construa estruturas", target: 7, reward: "Tito, o Construtor (-20% custos)" },
   { id: "q4", name: "Ferreiro", desc: "Colete ferro", target: 40, reward: "Bren, o Ferreiro (melhorias nv.4+)" },
   { id: "q5", name: "Explorador", desc: "Visite vilarejo, caverna e floresta sombria", target: 3, reward: "+40 de vida máxima" },
@@ -203,7 +229,7 @@ const STRUCT_DEF: Record<StructType, { name: string; icon: string; desc: string;
   farm: { name: "Fazenda", icon: "🌱", desc: "Produz comida durante o dia", cost: { wood: 35, fiber: 20 }, lvl: 1 },
   sawmill: { name: "Serraria", icon: "🪚", desc: "Produz madeira lentamente", cost: { wood: 65, stone: 30 }, lvl: 2 },
   quarry: { name: "Pedreira", icon: "⚒️", desc: "Produz pedra lentamente", cost: { wood: 50, stone: 65 }, lvl: 2 },
-  house: { name: "Casa", icon: "🏠", desc: "+12 vida máxima (até 5 casas)", cost: { wood: 85, stone: 45, fiber: 20 }, lvl: 2 },
+  house: { name: "Casa", icon: "🏠", desc: "+12 vida máxima; o limite aumenta com o território", cost: { wood: 85, stone: 45, fiber: 20 }, lvl: 2 },
   forge: { name: "Forja", icon: "🔨", desc: "Permite melhorar ferramentas e armas", cost: { wood: 35, stone: 70, iron: 12 }, lvl: 3 },
   tower: { name: "Torre de Vigia", icon: "🗼", desc: "Revela monstros no minimapa", cost: { wood: 75, stone: 55, iron: 10 }, lvl: 2 },
   raft: { name: "Balsa de Fuga", icon: "⛵", desc: "Sua passagem para fora da ilha (construa na praia)", cost: { wood: 600, stone: 280, fiber: 260, iron: 160, crystal: 60 }, lvl: 4 },
@@ -243,6 +269,9 @@ interface SaveData {
   creatureKills?: Record<string, number>;
   equipment?: Partial<Record<EquipmentKey, boolean>>;
   fenceStyle?: FenceStyle;
+  combatWeapon?: CombatWeapon;
+  territoryLevel?: number;
+  fenceRing?: number;
 }
 
 /* =========================================================
@@ -285,6 +314,9 @@ export class Engine {
   placeRotation = 0;
   fenceSlot = 0;
   fenceStyle: FenceStyle = "palisade";
+  territoryLevel = 1;
+  fenceRing = 1;
+  private fenceSpaceCache: { ring: number; structures: Structure[]; length: number; references: string; pieces: 1 | 2; reserveGate: boolean } | null = null;
   lastTutId = "";
   animalT = 0;
   worldProps: WorldProp[] = [];
@@ -303,7 +335,9 @@ export class Engine {
   attackT = 0; attackCd = 0; rollT = 0; rollCd = 0; invulnT = 0; hurtFlash = 0;
   walkCycle = 0; moving = false; running_ = false;
   heldTool: ToolKey = "axe";
+  combatWeapon: CombatWeapon = "sword";
   swingTool: ToolKey = "axe";
+  swingBow = false;
   mapOpen = false;
   settings: GameSettings = { ...DEFAULT_SETTINGS };
   music: MusicManager | null = null;
@@ -351,6 +385,7 @@ export class Engine {
   lastT = 0; acc = 0; snapT = 0; saveT = 0; mpT = 0; rafId = 0;
   cutParticleAcc = 0;
   prodToastT = 0;
+  windCheckT = 0;
 
   // minimap
   mini: HTMLCanvasElement | null = null;
@@ -378,7 +413,7 @@ export class Engine {
     this.diff = DIFF[opts.difficulty];
     this.settings = { ...DEFAULT_SETTINGS, ...(opts.settings ?? {}) };
     // Optional assets load asynchronously; procedural art works immediately.
-    if (this.settings.craftPix) void loadCraftPix();
+    if (this.settings.craftPix) { void loadCraftPix(); void loadReferenceArt(); }
     this.sfx.vol = Math.max(0, Math.min(1, this.settings.sfxVol)) * 0.5;
     this.music = opts.music ?? null;
     if (this.music) {
@@ -548,6 +583,7 @@ export class Engine {
     // or change node ordering, so existing saves keep their resource progress.
     this.prepareLandingAndRoute();
     this.expandWorld();
+    this.prepareExpandedVillage();
     this.rebuildNodeBuckets();
     this.buildMinimap();
     this.terrain = new Terrain(this.tiles, W, H, TILE);
@@ -660,7 +696,13 @@ export class Engine {
         }
       }
     }
+    // Optional buildings appear only after their images load; their solid
+    // footprints are enabled at the same time so fallbacks stay unobstructed.
     this.worldProps.push(
+      { sprite: "reference_market", x: VILLAGE.x + 220, y: VILLAGE.y + 35 },
+      { sprite: "reference_chapel", x: VILLAGE.x + 145, y: VILLAGE.y - 200 },
+      { sprite: "reference_camp", x: BASE.x - 130, y: BASE.y - 120 },
+      { sprite: "reference_sewer", x: CAVE.x + 160, y: CAVE.y + 195 },
       { sprite: "ice_deity", x: GLACIER.x + 80, y: GLACIER.y - 200 },
       { sprite: "winter_totem", x: GLACIER.x - 130, y: GLACIER.y - 45 },
       { sprite: "winter_totem", x: GLACIER.x + 210, y: GLACIER.y + 90 },
@@ -700,6 +742,28 @@ export class Engine {
     }
   }
 
+  /** Make room for the larger houses after generation, without changing RNG
+   * consumption or deleting/reordering resource nodes referenced by saves. */
+  private prepareExpandedVillage() {
+    for (const [dx, dy] of VILLAGE_HOUSES) {
+      const hx = VILLAGE.x + dx, hy = VILLAGE.y + dy;
+      for (let y = Math.floor((hy - 290) / TILE); y <= Math.ceil((hy + 70) / TILE); y++) {
+        for (let x = Math.floor((hx - 140) / TILE); x <= Math.ceil((hx + 140) / TILE); x++) {
+          if (x > 0 && y > 0 && x < W - 1 && y < H - 1 && this.tiles[y * W + x] === T_WATER) this.tiles[y * W + x] = T_GRASS;
+        }
+      }
+    }
+    this.nodes.forEach((node, index) => {
+      const overlaps = VILLAGE_HOUSES.some(([dx, dy]) => Math.abs(node.x - (VILLAGE.x + dx)) < 140 && node.y > VILLAGE.y + dy - 290 && node.y < VILLAGE.y + dy + 70);
+      if (!overlaps) return;
+      for (let attempt = 0; attempt < 12; attempt++) {
+        const angle = (index + attempt) * 2.39996, radius = 850 + (index % 4) * 36;
+        const x = VILLAGE.x + Math.cos(angle) * radius, y = VILLAGE.y + Math.sin(angle) * radius;
+        if (this.tileAt(x, y) !== T_WATER) { node.x = x; node.y = y; break; }
+      }
+    });
+  }
+
   private rebuildNodeBuckets() {
     this.nodeBuckets.clear();
     for (const n of this.nodes) {
@@ -733,7 +797,8 @@ export class Engine {
   placeChests() {
     this.chests = [
       { x: CRASH.x + 110, y: CRASH.y - 60, opened: false, loot: { wood: 10, fiber: 6, food: 4 }, label: "Bagagem do avião" },
-      { x: BASE.x + 20, y: BASE.y - 40, opened: false, loot: { wood: 24, stone: 12, food: 3 }, label: "Kit do Rian" },
+      // Keep the enlarged chest beside, rather than underneath, the base flag.
+      { x: BASE.x + 100, y: BASE.y - 40, opened: false, loot: { wood: 24, stone: 12, food: 3 }, label: "Kit do Rian" },
       { x: VILLAGE.x + 70, y: VILLAGE.y + 30, opened: false, loot: { stone: 10, fiber: 8, food: 6 }, label: "Baú do vilarejo" },
       { x: CAVE.x + 40, y: CAVE.y + CAVE.r * 0.6, opened: false, loot: { iron: 10, crystal: 2 }, label: "Baú da caverna" },
       { x: 150 * TILE, y: 102 * TILE, opened: false, loot: { iron: 6, food: 3, fiber: 10 }, label: "Baú sombrio" },
@@ -797,6 +862,7 @@ export class Engine {
       this.togglePause(); e.preventDefault(); return;
     }
     if (this.state !== "playing") return;
+    if (this.activePanel === "reference") { this.keys.clear(); return; }
     if (k === "i") { this.openPanel("inventory"); e.preventDefault(); return; }
     if (k === "n") { this.openPanel("bestiary"); e.preventDefault(); return; }
     if (this.activePanel !== "none" || this.softPause) { this.keys.clear(); return; }
@@ -948,7 +1014,7 @@ export class Engine {
   applySettings(next: GameSettings) {
     const resized = this.settings.quality !== next.quality;
     this.settings = { ...next };
-    if (next.craftPix) void loadCraftPix();
+    if (next.craftPix) { void loadCraftPix(); void loadReferenceArt(); }
     this.applyQuality();
     if (resized) this.resize();
     this.music?.setEnabled(next.music);
@@ -970,6 +1036,10 @@ export class Engine {
     const dead = (v: number) => (Math.abs(v) < 0.18 ? 0 : v);
     const mx = dead(p.axes[0] ?? 0), my = dead(p.axes[1] ?? 0);
     const btn = (i: number) => !!p.buttons[i]?.pressed;
+    if (this.activePanel === "reference") {
+      this.lastPadButtons = p.buttons.map((button) => button.pressed);
+      return { mx: 0, my: 0 };
+    }
     const was = (i: number) => !!this.lastPadButtons[i];
     const pressed = (i: number) => btn(i) && !was(i);
     if (this.state === "cutscene") {
@@ -992,8 +1062,13 @@ export class Engine {
   }
 
   /* ---------------- UI control from React ---------------- */
+  private rememberHeldPadButtons() {
+    const pad = typeof navigator !== "undefined" && navigator.getGamepads ? navigator.getGamepads()?.[0] : null;
+    if (pad) this.lastPadButtons = pad.buttons.map((button) => button.pressed);
+  }
   openPanel(panel: Exclude<GamePanel, "none">) {
     if (this.state !== "playing") return;
+    if (this.activePanel === "reference") this.rememberHeldPadButtons();
     this.mapOpen = false;
     this.activePanel = panel;
     this.keys.clear();
@@ -1001,7 +1076,16 @@ export class Engine {
     this.opts.onUi({ type: "panel", panel });
     this.sfx.ui();
   }
-  closePanel() { this.activePanel = "none"; this.keys.clear(); this.softPause = false; this.opts.onUi({ type: "panel", panel: "none" }); }
+  openReferenceScene(scene: ReferenceScene) {
+    if (!this.settings.craftPix || !hasReferenceScene(scene) || this.state !== "playing") return false;
+    this.openPanel("reference");
+    this.opts.onUi({ type: "reference", scene });
+    return true;
+  }
+  closePanel() {
+    if (this.activePanel === "reference") this.rememberHeldPadButtons();
+    this.activePanel = "none"; this.keys.clear(); this.softPause = false; this.opts.onUi({ type: "panel", panel: "none" });
+  }
   setUiPause(v: boolean) {
     this.softPause = (v || this.activePanel !== "none" || this.mapOpen) && this.opts.mode === "single";
     if (v) this.keys.clear();
@@ -1014,7 +1098,16 @@ export class Engine {
   }
   setTool(t: ToolKey) {
     this.heldTool = t;
-    this.toast(`${TOOL_ICON[t]} ${TOOL_LABEL[t]} na mão`);
+    this.toast(t === "sword" && this.combatWeapon === "bow" ? "🏹 Arco na mão" : `${TOOL_ICON[t]} ${TOOL_LABEL[t]} na mão`);
+  }
+  setCombatWeapon(weapon: CombatWeapon) {
+    if (weapon !== "sword" && weapon !== "bow") return;
+    this.combatWeapon = weapon;
+    this.heldTool = "sword";
+    this.toast(weapon === "bow" ? "🏹 Arco equipado" : "⚔️ Espada equipada");
+    this.sfx.ui();
+    this.emitSnapshot();
+    this.saveGame();
   }
   cycleTool(dir = 1) {
     const order: ToolKey[] = ["axe", "pick", "sword"];
@@ -1062,11 +1155,17 @@ export class Engine {
   tryAttack() {
     if (this.activePanel !== "none" || this.softPause || this.state !== "playing") return;
     if (this.attackCd > 0 || this.rollT > 0) return;
-    this.attackCd = 0.38;
+    this.swingBow = this.heldTool === "sword" && this.combatWeapon === "bow";
+    this.attackCd = this.swingBow ? 0.68 : 0.38;
     this.attackT = 0.22;
     this.swingTool = this.heldTool;
     this.stamina = Math.max(0, this.stamina - 4);
     this.sfx.swing();
+    if (this.swingBow) {
+      const dx = Math.cos(this.pdir), dy = Math.sin(this.pdir);
+      this.projectiles.push({ kind: "player", x: this.px + dx * 24, y: this.py + dy * 24, vx: dx * 520, vy: dy * 520, t: 0.9, dmg: 7 + this.tools.sword * 4 });
+      return;
+    }
     const reach = 58;
     const fp = this.facingPoint(34);
     let hitSomething = false;
@@ -1238,6 +1337,11 @@ export class Engine {
         if (s.type === "raft") { this.tryEscape(); return; }
       }
     }
+    if (this.settings.craftPix) for (const prop of this.worldProps) {
+      if (!prop.sprite.startsWith("reference_") || dist2(prop.x, prop.y, this.px, this.py) >= 86 * 86) continue;
+      const scene = prop.sprite.slice("reference_".length) as ReferenceScene;
+      if (hasReferenceObject(scene) && this.openReferenceScene(scene)) return;
+    }
     const rian = this.allies.find((a) => a.id === "rian");
     if (rian && dist2(rian.x, rian.y, this.px, this.py) < 64 * 64) {
       const tut = this.tutorial();
@@ -1283,6 +1387,40 @@ export class Engine {
   }
 
   /* ---------------- build & upgrade ---------------- */
+  territoryRadius() { return TERRITORIES[this.territoryLevel - 1].radius; }
+  fenceSpec(ring = this.fenceRing) { return TERRITORIES[clamp(Math.floor(ring), 1, TERRITORIES.length) - 1]; }
+  territoryUpgrade() {
+    const next = TERRITORIES[this.territoryLevel];
+    if (!next) return { nextRadius: null, cost: {} as Partial<Record<ResKey, number>>, reason: "Espaço máximo alcançado", affordable: false };
+    const multiplier = this.diff.resMult * (this.allies.some((a) => a.id === "tito") ? 0.8 : 1);
+    const cost: Partial<Record<ResKey, number>> = {};
+    const raw: Partial<Record<ResKey, number>> = next.cost;
+    for (const key of Object.keys(raw) as ResKey[]) cost[key] = Math.ceil((raw[key] ?? 0) * multiplier);
+    let reason = "";
+    if (this.baseLevel() < next.level) reason = `Requer reino nível ${next.level}`;
+    else if (next.requires && !this.structures.some((s) => s.type === next.requires)) reason = `Construa ${STRUCT_DEF[next.requires].name} primeiro`;
+    else if (dist2(this.px, this.py, BASE.x, BASE.y) > this.territoryRadius() ** 2) reason = "Volte à base para ampliar o terreno";
+    return { nextRadius: next.radius, cost, reason, affordable: this.canAfford(cost) };
+  }
+  upgradeTerritory(): boolean {
+    if (this.state !== "playing") return false;
+    const next = this.territoryUpgrade();
+    if (next.reason || !next.affordable) { this.toast(next.reason || "Recursos insuficientes!"); return false; }
+    this.payCost(next.cost);
+    this.territoryLevel++;
+    this.fenceRing = this.territoryLevel;
+    this.fenceSlot = 0;
+    this.sfx.build();
+    this.toast(`Território ampliado! O perímetro ${this.territoryLevel} já pode receber muralhas.`);
+    this.emitSnapshot(); this.saveGame();
+    return true;
+  }
+  setFenceRing(ring: number) {
+    if (!Number.isInteger(ring) || ring < 1 || ring > this.territoryLevel) return;
+    this.fenceRing = ring; this.fenceSlot = 0; this.mouseValid = false;
+    if (this.placing === "wall" || this.placing === "gate") this.updatePlacement();
+    this.sfx.ui(); this.emitSnapshot(); this.saveGame();
+  }
   setFenceStyle(style: FenceStyle) {
     const def = FENCE_DEF[style];
     if (this.baseLevel() < def.lockLevel) { this.toast(`Requer reino nível ${def.lockLevel}.`); return; }
@@ -1290,13 +1428,32 @@ export class Engine {
     if (this.placing === "wall" || this.placing === "gate") this.updatePlacement();
     this.sfx.ui(); this.emitSnapshot();
   }
+  /** If isolated sockets remain, allow a single wall rather than leaving an
+   * unclosable hole after the ring's one gate was already built. */
+  wallPurchaseSize(): 1 | 2 {
+    const references = this.settings.craftPix ? ["camp", "house", "market", "chapel", "forge", "castle_tower"].map((name) => hasReferenceObject(name as ReferenceObject) ? "1" : "0").join("") : "off";
+    const cached = this.fenceSpaceCache;
+    if (cached && cached.ring === this.fenceRing && cached.structures === this.structures && cached.length === this.structures.length && cached.references === references) return cached.pieces;
+    const { slots } = this.fenceSpec();
+    const free = Array.from({ length: slots }, (_, i) => { const p = this.fencePosition(i); return !this.placeCheck("wall", p.x, p.y); });
+    const pair = free.some((available, i) => available && free[(i + 1) % slots]);
+    const radius = this.fenceSpec().fenceRadius;
+    const hasGate = this.structures.some((s) => s.type === "gate" && Math.abs(Math.hypot(s.x - BASE.x, s.y - BASE.y) - radius) < 12);
+    const reserveGate = !pair && free.some(Boolean) && !hasGate;
+    const pieces: 1 | 2 = !pair && free.some(Boolean) && hasGate ? 1 : 2;
+    this.fenceSpaceCache = { ring: this.fenceRing, structures: this.structures, length: this.structures.length, references, pieces, reserveGate };
+    return pieces;
+  }
   fenceStyleCost(style = this.fenceStyle): Partial<Record<ResKey, number>> {
     const def = FENCE_DEF[style];
     const m = this.diff.resMult * (this.allies.some((a) => a.id === "tito") ? 0.8 : 1);
-    const built = this.structures.filter((s) => s.type === "wall").length;
-    const grown = 1 + Math.floor(built / 2) * 0.18;
+    const radius = this.fenceSpec().fenceRadius;
+    const built = this.structures.filter((s) => s.type === "wall" && Math.abs(Math.hypot(s.x - BASE.x, s.y - BASE.y) - radius) < 12).length;
+    // Keep the original early-game pricing; larger rings grow more gently so
+    // building a kingdom remains feasible rather than multiplying forever.
+    const grown = this.fenceRing === 1 ? 1 + Math.floor(built / 2) * 0.18 : Math.min(3, 1 + Math.floor(built / 2) * 0.08);
     const out: Partial<Record<ResKey, number>> = {};
-    for (const k of Object.keys(def.cost) as ResKey[]) out[k] = Math.ceil((def.cost[k] ?? 0) * m * grown * 2);
+    for (const k of Object.keys(def.cost) as ResKey[]) out[k] = Math.ceil((def.cost[k] ?? 0) * m * grown * this.wallPurchaseSize());
     return out;
   }
   costFor(type: StructType): Partial<Record<ResKey, number>> {
@@ -1333,7 +1490,7 @@ export class Engine {
     this.spawnParticles(s.x, s.y - 12, s.type === "gate" ? "#c9a26a" : "#a8895e", 7, 140);
     if (s.hp <= 0) {
       const i = this.structures.indexOf(s);
-      if (i >= 0) this.structures.splice(i, 1);
+      if (i >= 0) { this.structures.splice(i, 1); this.fenceSpaceCache = null; }
       const label = s.type === "gate" ? "🚪 O PORTÃO CAIU! Eles estão entrando!" : "🧱 Sua cerca foi quebrada!";
       this.toast(label);
       this.spawnParticles(s.x, s.y, "#c9a26a", 22, 240);
@@ -1343,13 +1500,17 @@ export class Engine {
   }
   underAttackNow(): boolean {
     for (const m of this.monsters) {
-      if (m.siege && dist2(m.x, m.y, BASE.x, BASE.y) < (BASE.r * 1.7) * (BASE.r * 1.7)) return true;
+      if (m.siege && dist2(m.x, m.y, BASE.x, BASE.y) < (this.territoryRadius() + 350) ** 2) return true;
       if (dist2(m.x, m.y, this.px, this.py) < 260 * 260) return true;
     }
     return false;
   }
   structLock(type: StructType): string {
     const def = STRUCT_DEF[type];
+    if (type === "wall") {
+      this.wallPurchaseSize();
+      if (this.fenceSpaceCache?.reserveGate) return "Coloque o portão antes de fechar as lacunas";
+    }
     if (def.lvl >= 2 && type !== "workbench" && !this.structures.some((s) => s.type === "workbench"))
       return "Requer Bancada";
     if (type === "workbench" && !this.questDone[0]) return "Complete a missão Primeiros Passos";
@@ -1357,18 +1518,19 @@ export class Engine {
       if (!this.structures.some((s) => s.type === "forge")) return "Requer Forja";
       if (this.baseLevel() < 10) return "Requer base nível 10";
     }
-    if (type === "house" && this.structures.filter((s) => s.type === "house").length >= 5) return "Máximo de 5 casas";
+    if (type === "house" && this.structures.filter((s) => s.type === "house").length >= 5 * this.territoryLevel) return `Máximo de ${5 * this.territoryLevel} casas neste território`;
     return "";
   }
 
-  /** A 64-slot ring keeps each wall aligned and leaves a gate-sized opening. */
-  fencePosition(index: number) {
-    const slot = ((index % FENCE_SLOTS) + FENCE_SLOTS) % FENCE_SLOTS;
-    const a = (slot / FENCE_SLOTS) * Math.PI * 2;
-    return { x: BASE.x + Math.cos(a) * FENCE_RADIUS, y: BASE.y + Math.sin(a) * FENCE_RADIUS };
+  /** Perimeter sockets have a consistent spacing for every territory size. */
+  fencePosition(index: number, ring = this.fenceRing) {
+    const { slots, fenceRadius } = this.fenceSpec(ring);
+    const slot = ((index % slots) + slots) % slots;
+    const a = (slot / slots) * Math.PI * 2;
+    return { x: BASE.x + Math.cos(a) * fenceRadius, y: BASE.y + Math.sin(a) * fenceRadius };
   }
   fencePositions(type: StructType, slot = this.fenceSlot) {
-    return type === "wall" ? [this.fencePosition(slot), this.fencePosition(slot + 1)] : [this.fencePosition(slot)];
+    return type === "wall" && this.wallPurchaseSize() === 2 ? [this.fencePosition(slot), this.fencePosition(slot + 1)] : [this.fencePosition(slot)];
   }
   rotateStructure(direction = 1) {
     if (!this.placing) return;
@@ -1379,13 +1541,13 @@ export class Engine {
   rotateFence(direction: number) {
     if (this.placing !== "wall" && this.placing !== "gate") return;
     this.mouseValid = false;
-    const sign = direction < 0 ? -1 : 1;
-    let slot = ((this.fenceSlot + direction) % FENCE_SLOTS + FENCE_SLOTS) % FENCE_SLOTS;
+    const sign = direction < 0 ? -1 : 1, { slots } = this.fenceSpec();
+    let slot = ((this.fenceSlot + direction) % slots + slots) % slots;
     // Skip occupied sockets automatically, including both halves of a pair.
     let found = false;
-    for (let tries = 0; tries < FENCE_SLOTS; tries++) {
+    for (let tries = 0; tries < slots; tries++) {
       if (this.fencePositions(this.placing, slot).every((p) => !this.placeCheck(this.placing!, p.x, p.y))) { found = true; break; }
-      slot = (slot + sign + FENCE_SLOTS) % FENCE_SLOTS;
+      slot = (slot + sign + slots) % slots;
     }
     if (!found) {
       this.placing = null;
@@ -1406,12 +1568,12 @@ export class Engine {
     this.placing = type;
     this.placeRotation = 0;
     if (type === "wall" || type === "gate") {
-      const a = Math.atan2(this.py - BASE.y, this.px - BASE.x);
-      this.fenceSlot = ((Math.round(a * FENCE_SLOTS / (2 * Math.PI)) % FENCE_SLOTS) + FENCE_SLOTS) % FENCE_SLOTS;
+      const a = Math.atan2(this.py - BASE.y, this.px - BASE.x), { slots } = this.fenceSpec();
+      this.fenceSlot = ((Math.round(a * slots / (2 * Math.PI)) % slots) + slots) % slots;
       this.mouseValid = false;
-      for (let tries = 0; tries < FENCE_SLOTS; tries++) {
+      for (let tries = 0; tries < slots; tries++) {
         if (this.fencePositions(type).every((p) => !this.placeCheck(type, p.x, p.y))) break;
-        this.fenceSlot = (this.fenceSlot + 1) % FENCE_SLOTS;
+        this.fenceSlot = (this.fenceSlot + 1) % slots;
       }
     }
     this.softPause = false;
@@ -1420,7 +1582,7 @@ export class Engine {
     this.opts.onUi({ type: "panel", panel: "none" });
     this.updatePlacement();
     this.toast(type === "wall" || type === "gate"
-      ? "Arraste o mouse ou use Q/E, ←/→, LB/RB para girar a cerca. Compre 2 trechos por vez; confirme para colocar."
+      ? `Arraste o mouse ou use Q/E, ←/→, LB/RB para girar. ${type === "wall" && this.wallPurchaseSize() === 1 ? "Um trecho para fechar a lacuna." : "Confirme para colocar."}`
       : `${STRUCT_DEF[type].icon} Posicione ${STRUCT_DEF[type].name} — J/clique confirma · ESC cancela`);
     this.sfx.ui();
     this.emitSnapshot();
@@ -1438,13 +1600,14 @@ export class Engine {
     if (!type) return;
     if (type === "wall" || type === "gate") {
       if (this.settings.controls === "kb-mouse" && this.mouseValid) {
-        const a = Math.atan2(this.mouseY + this.camY - BASE.y, this.mouseX + this.camX - BASE.x);
-        this.fenceSlot = ((Math.round(a * FENCE_SLOTS / (2 * Math.PI)) % FENCE_SLOTS) + FENCE_SLOTS) % FENCE_SLOTS;
+        const a = Math.atan2(this.mouseY + this.camY - BASE.y, this.mouseX + this.camX - BASE.x), { slots } = this.fenceSpec();
+        this.fenceSlot = ((Math.round(a * slots / (2 * Math.PI)) % slots) + slots) % slots;
       }
       const positions = this.fencePositions(type);
       this.placeX = positions[0].x; this.placeY = positions[0].y;
       this.placeReason = positions.map((p) => this.placeCheck(type, p.x, p.y)).find(Boolean) ?? "";
-      if (dist2(this.px, this.py, BASE.x, BASE.y) > (BASE.r * 1.5) ** 2) this.placeReason = "Aproxime-se da clareira para construir a cerca";
+      if (type === "wall" && this.fenceSpaceCache?.reserveGate) this.placeReason = "Coloque o portão antes de fechar as lacunas";
+      if (dist2(this.px, this.py, BASE.x, BASE.y) > (this.territoryRadius() + 240) ** 2) this.placeReason = "Aproxime-se da base para construir a cerca";
       return;
     }
     let x: number, y: number;
@@ -1462,19 +1625,40 @@ export class Engine {
     this.placeY = Math.floor(y / g) * g + g / 2;
     this.placeReason = this.placeCheck(type, this.placeX, this.placeY);
   }
+  /** Ground footprints of fixed reference buildings are static structures,
+   * not enemies. If the art is absent, no invisible obstacles are created. */
+  referenceStructureAt(x: number, y: number): boolean {
+    if (!this.settings.craftPix) return false;
+    if (dist2(x, y, VILLAGE.x, VILLAGE.y) > 1000 * 1000 && dist2(x, y, BASE.x, BASE.y) > 450 * 450) return false;
+    return STATIC_BUILDINGS.some((b) => hasReferenceObject(b.name) && Math.abs(x - b.x) < b.halfWidth && y > b.y - b.depth && y < b.y + 8);
+  }
+
+  placedStructureContains(s: Structure, x: number, y: number, radius = 24): boolean {
+    const reference = s.type === "tower" ? "castle_tower" : s.type === "house" || s.type === "forge" ? s.type : null;
+    if (reference && this.settings.craftPix && hasReferenceObject(reference)) {
+      const dx = x - s.x, dy = y - (s.y + 6), cos = Math.cos(s.rotation), sin = Math.sin(s.rotation);
+      const along = dx * cos + dy * sin, depth = -dx * sin + dy * cos;
+      const halfWidth = reference === "house" ? 108 : reference === "forge" ? 88 : 48;
+      const height = reference === "house" ? 210 : reference === "forge" ? 125 : 150;
+      return Math.abs(along) < halfWidth && depth > -height && depth < 8;
+    }
+    return dist2(s.x, s.y, x, y) < radius * radius;
+  }
+
   placeCheck(type: StructType, x: number, y: number): string {
     const t = this.tileAt(x, y);
     if (type === "raft") {
       if (t !== T_SAND && t !== T_WATER) return "A balsa vai na areia da praia";
     } else {
-      if (t === T_WATER) return "Não dá para construir na água";
-      const inBase = dist2(x, y, BASE.x, BASE.y) < BASE.r * BASE.r;
+      if (t === T_WATER && !((type === "wall" || type === "gate") && this.fenceRing > 1)) return "Não dá para construir na água";
+      const inBase = dist2(x, y, BASE.x, BASE.y) < this.territoryRadius() ** 2;
       if (type !== "campfire" && type !== "wall" && type !== "gate" && !inBase) return "Construa dentro da clareira";
     }
     for (const s of this.structures) {
       const minD = (s.type === "wall" || s.type === "gate") && (type === "wall" || type === "gate") ? 27 : 44;
-      if (dist2(s.x, s.y, x, y) < minD * minD) return "Este espaço da cerca está ocupado";
+      if (dist2(s.x, s.y, x, y) < minD * minD || this.placedStructureContains(s, x, y)) return "Este espaço da cerca está ocupado";
     }
+    if (this.referenceStructureAt(x, y)) return "Há uma construção nesse lugar";
     // The ring is intentionally cleared while placing: trees no longer block
     // wall slots. They are harvested only in the footprint after purchase.
     if (type !== "wall" && type !== "gate") {
@@ -1483,8 +1667,32 @@ export class Engine {
       }
     }
     if (dist2(x, y, this.px, this.py) < 18 * 18 && type !== "campfire" && type !== "wall" && type !== "gate") return "Você está no caminho";
-    if (type === "gate" && this.structures.some((s) => s.type === "gate")) return "Já existe um portão na cerca";
+    if (type === "gate" && this.structures.some((s) => s.type === "gate" && Math.abs(Math.hypot(s.x - BASE.x, s.y - BASE.y) - this.fenceSpec().fenceRadius) < 12)) return "Já existe um portão neste perímetro";
     return "";
+  }
+  /** Expanded perimeter segments can lay a small foundation over a river.
+   * Reapply it from saved structures when loading the same generated world. */
+  layFenceFoundations(positions: { x: number; y: number; type?: StructType }[]) {
+    let changed = false;
+    const foundation = (wx: number, wy: number) => {
+      const x = Math.floor(wx / TILE), y = Math.floor(wy / TILE);
+      if (x < 1 || y < 1 || x >= W - 1 || y >= H - 1) return T_GRASS;
+      const index = y * W + x, tile = this.tiles[index];
+      if (tile === T_WATER) { this.tiles[index] = T_BRIDGE; changed = true; }
+      return tile;
+    };
+    for (const p of positions) {
+      const original = foundation(p.x, p.y);
+      if (p.type !== "gate" || (original !== T_WATER && original !== T_BRIDGE)) continue;
+      // A gate on a river also needs a short crossing on both sides; otherwise
+      // its dry socket could still be surrounded by impassable water.
+      const angle = Math.atan2(p.y - BASE.y, p.x - BASE.x);
+      for (const sign of [-1, 1]) for (let i = 1; i <= 12; i++) {
+        const tile = foundation(p.x + Math.cos(angle) * sign * i * TILE / 2, p.y + Math.sin(angle) * sign * i * TILE / 2);
+        if (tile !== T_WATER && tile !== T_BRIDGE && i >= 2) break;
+      }
+    }
+    if (changed) { this.terrain?.invalidateAll(); this.buildMinimap(); }
   }
   confirmPlace(): boolean {
     const type = this.placing;
@@ -1494,8 +1702,9 @@ export class Engine {
     const cost = this.costFor(type);
     if (!this.canAfford(cost)) { this.toast("Recursos insuficientes!"); this.placing = null; this.emitSnapshot(); return false; }
     const positions = type === "wall" || type === "gate" ? this.fencePositions(type) : [{ x: this.placeX, y: this.placeY }];
-    // One transaction, both wall pieces; don't charge or place only one.
+    // Charge only after every piece in the chosen purchase fits.
     if (positions.some((p) => this.placeCheck(type, p.x, p.y))) return false;
+    if ((type === "wall" || type === "gate") && this.fenceRing > 1) this.layFenceFoundations(positions.map((p) => ({ ...p, type })));
     this.payCost(cost);
     const mhp = this.structMaxHp(type);
     for (const p of positions) {
@@ -1507,6 +1716,7 @@ export class Engine {
       }
       this.spawnParticles(p.x, p.y, "#ffd27d", 9, 160);
     }
+    this.fenceSpaceCache = null;
     this.questP[2] = Math.min(QUESTS[2].target, this.questP[2] + 1);
     this.questP[5] = Math.min(QUESTS[5].target, this.baseLevel());
     if (type === "house") this.maxHp += 12;
@@ -1519,12 +1729,12 @@ export class Engine {
       this.toast("👁️ Eles sentiram sua presença... uma patrulha se aproxima!");
       this.sfx.night();
     } else {
-      this.toast(type === "wall" ? "🧱 Dois trechos conectados! Gire para continuar o círculo." : `${STRUCT_DEF[type].icon} ${STRUCT_DEF[type].name} construída!`);
+      this.toast(type === "wall" ? positions.length === 1 ? "🧱 Trecho avulso colocado!" : "🧱 Dois trechos conectados! Gire para continuar o círculo." : `${STRUCT_DEF[type].icon} ${STRUCT_DEF[type].name} construída!`);
     }
     this.checkQuests();
     if (type === "wall" && this.canAfford(this.costFor("wall"))) {
       this.mouseValid = false;
-      this.rotateFence(2);
+      this.rotateFence(positions.length);
     } else this.placing = null;
     this.emitSnapshot();
     return true;
@@ -1563,6 +1773,11 @@ export class Engine {
   }
 
   /* ---------------- quests ---------------- */
+  recruitArcher() {
+    if (this.allies.some((ally) => ally.id === "archer")) return;
+    this.allies.push({ id: "archer", name: "Arqueiro", color: "#b7d68e", x: this.px - 30, y: this.py + 32, vx: 0, vy: 0, atkCd: 0, downT: 0, dir: 0 });
+  }
+
   checkQuests() {
     this.questP[0] = Math.min(QUESTS[0].target, this.gatheredWoodStone);
     this.questP[3] = Math.min(QUESTS[3].target, this.questP[3]);
@@ -1574,7 +1789,10 @@ export class Engine {
         this.addScore(500);
         this.sfx.quest();
         this.toast(`✅ Missão completa: ${QUESTS[i].name} — ${QUESTS[i].reward}`);
-        if (i === 1) this.allies.push({ id: "maya", name: "Maya", color: "#5ad0c9", x: this.px + 30, y: this.py + 30, vx: 0, vy: 0, atkCd: 0, downT: 0, dir: 0 });
+        if (i === 1) {
+          this.allies.push({ id: "maya", name: "Maya", color: "#5ad0c9", x: this.px + 30, y: this.py + 30, vx: 0, vy: 0, atkCd: 0, downT: 0, dir: 0 });
+          this.recruitArcher();
+        }
         if (i === 2) this.allies.push({ id: "tito", name: "Tito", color: "#c9b45a", x: BASE.x, y: BASE.y, vx: 0, vy: 0, atkCd: 0, downT: 0, dir: 0 });
         if (i === 3) this.allies.push({ id: "bren", name: "Bren", color: "#c95a5a", x: BASE.x + 40, y: BASE.y, vx: 0, vy: 0, atkCd: 0, downT: 0, dir: 0 });
         if (i === 4) { this.maxHp += 40; this.hp += 40; }
@@ -1637,7 +1855,8 @@ export class Engine {
         escortIndex: this.escort.i,
         discoveredSites: [...this.discoveredSites], claimedSites: [...this.claimedSites],
         seenCreatures: [...this.seenCreatures], creatureKills: { ...this.creatureKills }, equipment: { ...this.equipment },
-        fenceStyle: this.fenceStyle,
+        fenceStyle: this.fenceStyle, combatWeapon: this.combatWeapon,
+        territoryLevel: this.territoryLevel, fenceRing: this.fenceRing,
       };
       localStorage.setItem(this.saveKey(), JSON.stringify(data));
     } catch { /* ignore */ }
@@ -1658,6 +1877,8 @@ export class Engine {
       this.px = d.px; this.py = d.py; this.hp = d.hp; this.maxHp = d.maxHp;
       this.inv = { ...this.inv, ...d.inv }; this.tools = { ...this.tools, ...d.tools };
       this.time = d.time; this.day = d.day; this.score = d.score; this.kills = d.kills; this.deaths = d.deaths;
+      this.territoryLevel = Number.isInteger(d.territoryLevel) ? clamp(d.territoryLevel!, 1, TERRITORIES.length) : 1;
+      this.fenceRing = Number.isInteger(d.fenceRing) ? clamp(d.fenceRing!, 1, this.territoryLevel) : this.territoryLevel;
       this.structures = d.structures.map((s) => {
         const fenceStyle = s.fenceStyle ?? "palisade";
         const mhp = this.structMaxHp(s.type, fenceStyle);
@@ -1665,12 +1886,15 @@ export class Engine {
         const rotation = s.rotation ?? (ring ? Math.atan2(s.y - BASE.y, s.x - BASE.x) + Math.PI / 2 : 0);
         return { type: s.type, x: s.x, y: s.y, prodT: 0, hp: Math.min(s.hp ?? mhp, mhp), maxHp: mhp, open: !!s.open, rotation, fenceStyle };
       });
+      this.layFenceFoundations(this.structures.filter((s) => (s.type === "wall" || s.type === "gate") && Math.hypot(s.x - BASE.x, s.y - BASE.y) > TERRITORIES[0].fenceRadius + 40));
       this.questP = d.questP; this.questDone = d.questDone;
       this.visited = new Set(d.visited);
       this.gatheredWoodStone = this.questP[0];
-      const cols: Record<string, string> = { rian: "#e8a33d", maya: "#5ad0c9", tito: "#c9b45a", bren: "#c95a5a" };
-      const names: Record<string, string> = { rian: "Rian", maya: "Maya", tito: "Tito", bren: "Bren" };
+      const cols: Record<string, string> = { rian: "#e8a33d", maya: "#5ad0c9", tito: "#c9b45a", bren: "#c95a5a", archer: "#b7d68e" };
+      const names: Record<string, string> = { rian: "Rian", maya: "Maya", tito: "Tito", bren: "Bren", archer: "Arqueiro" };
       this.allies = d.allies.map((id) => ({ id, name: names[id] ?? id, color: cols[id] ?? "#fff", x: this.px + 40, y: this.py, vx: 0, vy: 0, atkCd: 0, downT: 0, dir: 0 }));
+      // Old saves that already completed this quest receive the new ally once.
+      if (this.questDone[1]) this.recruitArcher();
       for (const [i, hp, rs] of d.nodeHp) {
         if (this.nodes[i]) {
           this.nodes[i].hp = hp; this.nodes[i].respawn = rs;
@@ -1697,6 +1921,7 @@ export class Engine {
       this.creatureKills = d.creatureKills ?? {};
       this.equipment = { harness: true, coat: false, charm: false, ...(d.equipment ?? {}) };
       this.fenceStyle = d.fenceStyle ?? "palisade";
+      this.combatWeapon = d.combatWeapon === "bow" ? "bow" : "sword";
       this.lastTutId = this.tutorial()?.id ?? "done";
       return true;
     } catch { return false; }
@@ -1870,7 +2095,7 @@ export class Engine {
   spawnWave(n: number, cx = BASE.x, cy = BASE.y) {
     for (let i = 0; i < n; i++) {
       const a = Math.random() * Math.PI * 2;
-      const d = 380 + Math.random() * 240;
+      const d = this.fenceSpec(this.territoryLevel).fenceRadius + 160 + Math.random() * 240;
       const x = cx + Math.cos(a) * d, y = cy + Math.sin(a) * d;
       if (this.tileAt(x, y) === T_WATER) continue;
       const type: MonType = i === 0 && n >= 5 ? "brute" : Math.random() < 0.7 ? "imp" : "crawler";
@@ -1889,15 +2114,17 @@ export class Engine {
       // spawn in ring around player, biased to dark zones at day
       for (let tryI = 0; tryI < 8; tryI++) {
         const a = Math.random() * Math.PI * 2;
-        const d = 460 + Math.random() * 420;
+        const nearBase = dist2(this.px, this.py, BASE.x, BASE.y) < this.territoryRadius() ** 2;
+        const minimum = nearBase ? Math.max(460, this.fenceSpec(this.territoryLevel).fenceRadius + 120) : 460;
+        const d = minimum + Math.random() * 420;
         const x = this.px + Math.cos(a) * d, y = this.py + Math.sin(a) * d;
         const t = this.tileAt(x, y);
         if (t === T_WATER) continue;
         const darkZone = t === T_DARK || t === T_CAVE || t === T_ROCK || t === T_RUIN || t === T_NECRO || t === T_SNOW || t === T_ICE;
         if (!night && !darkZone) continue;
         // never spawn inside village / base walls proximity
-        if (dist2(x, y, VILLAGE.x, VILLAGE.y) < VILLAGE.r * VILLAGE.r) continue;
-        if (dist2(x, y, BASE.x, BASE.y) < (BASE.r * 0.5) * (BASE.r * 0.5)) continue;
+        if (dist2(x, y, VILLAGE.x, VILLAGE.y) < VILLAGE_AREA_RADIUS ** 2) continue;
+        if (dist2(x, y, BASE.x, BASE.y) < (this.fenceSpec(this.territoryLevel).fenceRadius + 70) ** 2) continue;
         for (let b = 0; b < batch; b++) {
           this.spawnMonster(x + (Math.random() - 0.5) * 90, y + (Math.random() - 0.5) * 90, this.monsterTypeForZone(x, y));
         }
@@ -1909,7 +2136,7 @@ export class Engine {
   blockedByWall(x: number, y: number): boolean {
     for (const s of this.structures) {
       if (s.type === "gate" && s.open) continue;
-      if ((s.type === "wall" || s.type === "gate" || s.type === "house" || s.type === "tower" || s.type === "forge") && dist2(s.x, s.y, x, y) < 25 * 25) return true;
+      if ((s.type === "wall" || s.type === "gate" || s.type === "house" || s.type === "tower" || s.type === "forge") && this.placedStructureContains(s, x, y, 25)) return true;
     }
     return false;
   }
@@ -1942,7 +2169,7 @@ export class Engine {
       const closeToPlayer = dp < (night ? 250 : 170);
       const wallDist = siegeTarget ? Math.sqrt(dist2(siegeTarget.x, siegeTarget.y, m.x, m.y)) : Infinity;
       const nearWall = wallDist < 820;
-      m.siege = !!siegeTarget && (wallDist < 140 || (!closeToPlayer && nearWall && (night || dist2(m.x, m.y, BASE.x, BASE.y) < (BASE.r * 1.9) * (BASE.r * 1.9))));
+      m.siege = !!siegeTarget && (wallDist < 140 || (!closeToPlayer && nearWall && (night || dist2(m.x, m.y, BASE.x, BASE.y) < (this.territoryRadius() * 1.9) ** 2)));
       const tx = m.siege && siegeTarget ? siegeTarget.x : this.px;
       const ty = m.siege && siegeTarget ? siegeTarget.y : this.py;
       const targetDist = m.siege ? Math.sqrt(dist2(m.x, m.y, tx, ty)) : dp;
@@ -2017,11 +2244,15 @@ export class Engine {
         }
       }
       const nx = m.x + m.vx * dt, ny = m.y + m.vy * dt;
-      const blockedX = this.blockedByWall(nx, m.y);
-      const blockedY = this.blockedByWall(m.x, ny);
-      if (this.tileAt(nx, m.y) !== T_WATER && !blockedX) m.x = nx; else m.vx *= -0.5;
-      if (this.tileAt(m.x, ny) !== T_WATER && !blockedY) m.y = ny; else m.vy *= -0.5;
-      if (blockedX || blockedY) {
+      const wallX = this.blockedByWall(nx, m.y), wallY = this.blockedByWall(m.x, ny);
+      // Fixed buildings stop creatures, but do not make them attack an unrelated
+      // player-built fence. Let creatures spawned inside a footprint escape.
+      const insideReference = this.referenceStructureAt(m.x, m.y);
+      const buildingX = !insideReference && this.referenceStructureAt(nx, m.y);
+      const buildingY = !insideReference && this.referenceStructureAt(m.x, ny);
+      if (this.tileAt(nx, m.y) !== T_WATER && !wallX && !buildingX) m.x = nx; else m.vx *= -0.5;
+      if (this.tileAt(m.x, ny) !== T_WATER && !wallY && !buildingY) m.y = ny; else m.vy *= -0.5;
+      if (wallX || wallY) {
         m.siege = true;
         if (m.state === "chase") { m.state = "windup"; m.t = 0.12; }
       }
@@ -2029,8 +2260,37 @@ export class Engine {
     }
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const p = this.projectiles[i];
-      p.t -= dt; p.x += p.vx * dt; p.y += p.vy * dt;
-      if (p.t <= 0 || this.tileAt(p.x, p.y) === T_WATER || this.blockedByWall(p.x, p.y)) { this.projectiles.splice(i, 1); continue; }
+      p.t -= dt;
+      if (p.kind === "ally" || p.kind === "player") {
+        // Substeps prevent fast arrows from tunneling through enemies or walls.
+        // Friendly arrows never test the player or other allies as targets.
+        const steps = Math.max(1, Math.ceil(Math.hypot(p.vx, p.vy) * dt / 8));
+        let consumed = p.t <= 0;
+        for (let step = 0; step < steps && !consumed; step++) {
+          p.x += p.vx * dt / steps; p.y += p.vy * dt / steps;
+          if (this.tileAt(p.x, p.y) === T_WATER || this.blockedByWall(p.x, p.y) || this.referenceStructureAt(p.x, p.y)) { consumed = true; break; }
+          for (const m of this.monsters) {
+            if (m.hp <= 0 || m.defeated || dist2(p.x, p.y, m.x, m.y) > (m.r + 4) * (m.r + 4)) continue;
+            m.hp -= p.dmg; m.flash = 0.12; m.state = "hurt"; m.t = 0.12;
+            const speed = Math.hypot(p.vx, p.vy) || 1;
+            m.vx += p.vx / speed * 100; m.vy += p.vy / speed * 100;
+            this.spawnParticles(m.x, m.y, "#ffd34d", 5, 120);
+            this.floaters.push({ x: m.x, y: m.y - 18, t: 0, text: `${p.dmg}`, c: "#ffeaa0" });
+            this.sfx.hit();
+            if (m.hp <= 0) this.killMonster(m);
+            consumed = true; break;
+          }
+          if (!consumed && p.kind === "player") for (const animal of this.animals) {
+            if (dist2(p.x, p.y, animal.x, animal.y) > 18 * 18) continue;
+            this.hitAnimal(animal, p.dmg);
+            consumed = true; break;
+          }
+        }
+        if (consumed) this.projectiles.splice(i, 1);
+        continue;
+      }
+      p.x += p.vx * dt; p.y += p.vy * dt;
+      if (p.t <= 0 || this.tileAt(p.x, p.y) === T_WATER || this.blockedByWall(p.x, p.y) || this.referenceStructureAt(p.x, p.y)) { this.projectiles.splice(i, 1); continue; }
       if (this.invulnT <= 0 && dist2(p.x, p.y, this.px, this.py) < 22 * 22) {
         this.damagePlayer(p.dmg, p.x, p.y);
         this.projectiles.splice(i, 1);
@@ -2058,9 +2318,10 @@ export class Engine {
     for (const al of this.allies) {
       if (al.downT > 0) { al.downT -= dt; if (al.downT <= 0) { al.x = BASE.x; al.y = BASE.y; } continue; }
       al.atkCd = Math.max(0, al.atkCd - dt);
-      // find monster near
-      let tgt: Monster | null = null; let bd = 230 * 230;
+      // The archer searches farther away but never selects another ally.
+      let tgt: Monster | null = null; let bd = (al.id === "archer" ? 360 : 230) ** 2;
       for (const m of this.monsters) {
+        if (m.hp <= 0 || m.defeated) continue;
         const d = dist2(m.x, m.y, al.x, al.y);
         if (d < bd) { bd = d; tgt = m; }
       }
@@ -2068,6 +2329,13 @@ export class Engine {
       let gy = this.py + 34 + ((al.id.charCodeAt(1) % 3) - 1) * 30;
       if (al.id === "tito" || al.id === "bren") { gx = BASE.x + (al.id === "tito" ? -60 : 60); gy = BASE.y + 20; }
       if (tgt && (al.id === "rian" || al.id === "maya")) { gx = tgt.x; gy = tgt.y; }
+      if (tgt && al.id === "archer" && dist2(al.x, al.y, this.px, this.py) < 480 * 480) {
+        const distance = Math.sqrt(dist2(tgt.x, tgt.y, al.x, al.y));
+        const angle = Math.atan2(tgt.y - al.y, tgt.x - al.x);
+        if (distance > 280) { gx = tgt.x - Math.cos(angle) * 220; gy = tgt.y - Math.sin(angle) * 220; }
+        else if (distance < 110) { gx = al.x - Math.cos(angle) * 110; gy = al.y - Math.sin(angle) * 110; }
+        else { gx = al.x; gy = al.y; }
+      }
       let escorting = false;
       if (al.id === "rian" && this.escort.active) {
         escorting = true;
@@ -2105,7 +2373,19 @@ export class Engine {
       if (d > 900 && !escorting) { al.x = this.px + 40; al.y = this.py + 40; }
       const nx = al.x + al.vx * dt, ny = al.y + al.vy * dt;
       if (this.tileAt(nx, ny) !== T_WATER) { al.x = nx; al.y = ny; }
-      // attack
+      if (tgt && al.id === "archer") {
+        al.dir = Math.atan2(tgt.y - al.y, tgt.x - al.x);
+        if (al.atkCd <= 0 && dist2(tgt.x, tgt.y, al.x, al.y) < 360 * 360) {
+          al.atkCd = 1.2;
+          const speed = 420, dx = Math.cos(al.dir), dy = Math.sin(al.dir);
+          const distance = Math.sqrt(dist2(tgt.x, tgt.y, al.x, al.y));
+          // Do not spawn past an enemy standing right next to the archer.
+          const offset = Math.max(0, Math.min(18, distance - tgt.r - 5));
+          this.projectiles.push({ kind: "ally", x: al.x + dx * offset, y: al.y + dy * offset, vx: dx * speed, vy: dy * speed, t: 1, dmg: 4 + this.tools.sword * 3 });
+          this.sfx.swing();
+        }
+      }
+      // Existing melee allies keep their previous attack.
       if (tgt && al.atkCd <= 0 && dist2(tgt.x, tgt.y, al.x, al.y) < 46 * 46 && (al.id === "rian" || al.id === "maya")) {
         al.atkCd = 0.7;
         const dmg = 4 + this.tools.sword * 3;
@@ -2332,7 +2612,7 @@ export class Engine {
     return NIGHT_DARK * (1 - (t - DAY_LEN - DUSK_LEN - NIGHT_LEN) / DAWN_LEN);
   }
   nearLight(): boolean {
-    if (dist2(this.px, this.py, VILLAGE.x, VILLAGE.y) < VILLAGE.r * VILLAGE.r) return true;
+    if (dist2(this.px, this.py, VILLAGE.x, VILLAGE.y) < VILLAGE_AREA_RADIUS ** 2) return true;
     for (const s of this.structures) {
       if ((s.type === "campfire" || s.type === "forge" || s.type === "tower") && dist2(s.x, s.y, this.px, this.py) < 170 * 170) return true;
     }
@@ -2341,8 +2621,8 @@ export class Engine {
 
   /* ---------------- zone detection ---------------- */
   zoneName(): string {
-    if (dist2(this.px, this.py, VILLAGE.x, VILLAGE.y) < VILLAGE.r * VILLAGE.r) { this.visited.add("vilarejo"); return "Vilarejo de Porto Cinza"; }
-    if (dist2(this.px, this.py, BASE.x, BASE.y) < BASE.r * BASE.r) return "Clareira da Base 🏕️";
+    if (dist2(this.px, this.py, VILLAGE.x, VILLAGE.y) < VILLAGE_AREA_RADIUS ** 2) { this.visited.add("vilarejo"); return "Vilarejo de Porto Cinza"; }
+    if (dist2(this.px, this.py, BASE.x, BASE.y) < this.territoryRadius() ** 2) return this.territoryLevel > 1 ? `Território do Reino · ${this.territoryLevel}` : "Clareira da Base 🏕️";
     const site = SITES.find((entry) => dist2(this.px,this.py,entry.x,entry.y) < entry.radius ** 2);
     if (site) return site.name;
     const t = this.tileAt(this.px, this.py);
@@ -2383,6 +2663,9 @@ export class Engine {
 
   frame(dt: number) {
     this.updateMusicTrack();
+    // The reference room covers the world. In single-player it is paused, so
+    // avoid rendering the hidden canvas while visiting the preview.
+    if (this.activePanel === "reference" && this.softPause) return;
     const pad = this.pollGamepad();
     if (this.hitstop > 0) { this.hitstop -= dt; dt *= 0.12; }
 
@@ -2431,6 +2714,12 @@ export class Engine {
   }
 
   update(dt: number, pad: { mx: number; my: number; run?: boolean }) {
+    // One inexpensive check per second; each gust has its own bounded source.
+    this.windCheckT -= dt;
+    if (this.windCheckT <= 0) {
+      this.windCheckT = 1;
+      if (this.settings.windSounds) this.sfx.wind();
+    }
     // --- time ---
     const prevNight = this.isNight();
     this.time += dt;
@@ -2496,8 +2785,10 @@ export class Engine {
     // collision with water / structures / big nodes
     const tryMove = (nx: number, ny: number) => {
       if (this.tileAt(nx, ny) === T_WATER) return false;
+      // Allow an older save already inside a new footprint to walk out.
+      if (this.referenceStructureAt(nx, ny) && !this.referenceStructureAt(this.px, this.py)) return false;
       for (const s of this.structures) {
-        if ((s.type === "wall" || s.type === "house" || s.type === "tower" || s.type === "forge") && dist2(s.x, s.y, nx, ny) < 24 * 24) return false;
+        if ((s.type === "wall" || s.type === "house" || s.type === "tower" || s.type === "forge") && this.placedStructureContains(s, nx, ny) && !this.placedStructureContains(s, this.px, this.py)) return false;
       }
       return true;
     };
@@ -2519,8 +2810,8 @@ export class Engine {
         this.py += (this.py - n.y) * push * 0.6;
       }
     }
-    // A nearby tree must not push the player into an unwalkable water tile.
-    if (this.tileAt(this.px, this.py) === T_WATER) { this.px = dryX; this.py = dryY; }
+    // Trees must not push the player through water or a solid building.
+    if (this.tileAt(this.px, this.py) === T_WATER || (this.referenceStructureAt(this.px, this.py) && !this.referenceStructureAt(dryX, dryY))) { this.px = dryX; this.py = dryY; }
     this.px = clamp(this.px, TILE, WPX - TILE);
     this.py = clamp(this.py, TILE, HPX - TILE);
 
@@ -2577,6 +2868,16 @@ export class Engine {
       if (dist2(this.px, this.py, site.x, site.y + 45) < 120 * 120) {
         this.interactHint = this.claimedSites.has(site.id) ? `E: Ler a história de ${site.name}` : `E: Explorar ${site.name}`;
         break;
+      }
+    }
+    if (!this.interactHint && this.settings.craftPix) {
+      for (const prop of this.worldProps) {
+        if (!prop.sprite.startsWith("reference_") || dist2(prop.x, prop.y, this.px, this.py) >= 86 * 86) continue;
+        const scene = prop.sprite.slice("reference_".length) as ReferenceScene;
+        if (hasReferenceObject(scene) && hasReferenceScene(scene)) {
+          const key = this.settings.controls === "touch" ? "Usar" : this.settings.controls === "gamepad" ? "X" : "E";
+          this.interactHint = `${key}: Entrar — ${REFERENCE_LABELS[scene]}`; break;
+        }
       }
     }
     if (!this.interactHint) {
@@ -2645,7 +2946,7 @@ export class Engine {
       const cost = this.costFor(t);
       const lock = this.structLock(t);
       return {
-        id: t, name: def.name, icon: def.icon, desc: def.desc, cost,
+        id: t, name: t === "wall" && this.wallPurchaseSize() === 1 ? "Cerca simples" : def.name, icon: def.icon, desc: t === "wall" && this.wallPurchaseSize() === 1 ? "Um trecho avulso para fechar a lacuna restante." : def.desc, cost,
         affordable: this.canAfford(cost), locked: !!lock, lockReason: lock,
       };
     });
@@ -2654,6 +2955,7 @@ export class Engine {
       const lock = this.upgradeLock(t);
       return { tool: t, level: this.tools[t], nextLevel: this.tools[t] + 1, cost, affordable: this.canAfford(cost), locked: !!lock, lockReason: lock };
     });
+    const territoryUpgrade = this.territoryUpgrade();
     const snap: Snapshot = {
       state: this.state,
       hp: Math.ceil(this.hp), maxHp: this.maxHp, stamina: Math.round(this.stamina),
@@ -2676,8 +2978,11 @@ export class Engine {
       fps: this.fps,
       seenCreatures: [...this.seenCreatures], creatureKills: { ...this.creatureKills },
       discoveredSites: [...this.discoveredSites], claimedSites: [...this.claimedSites],
-      equipment: { ...this.equipment }, heldTool: this.heldTool, renderScale: this.dpr,
+      equipment: { ...this.equipment }, heldTool: this.heldTool, combatWeapon: this.combatWeapon, renderScale: this.dpr,
       fenceStyle: this.fenceStyle,
+      territory: { level: this.territoryLevel, maxLevel: TERRITORIES.length, radius: this.territoryRadius(), ...territoryUpgrade, locked: !!territoryUpgrade.reason },
+      fenceRing: this.fenceRing,
+      fencePieces: this.wallPurchaseSize(),
       fenceStyles: (Object.keys(FENCE_DEF) as FenceStyle[]).map((id) => ({
         id, name: FENCE_DEF[id].name, desc: FENCE_DEF[id].desc, hp: this.structMaxHp("wall", id),
         cost: this.fenceStyleCost(id), locked: this.baseLevel() < FENCE_DEF[id].lockLevel,
@@ -2723,7 +3028,7 @@ export class Engine {
     // base clearing — stone posts so the camp is visible from far
     c.strokeStyle = "rgba(226,194,122,0.55)";
     c.lineWidth = 2; c.setLineDash([10, 8]);
-    c.beginPath(); c.arc(BASE.x + ox, BASE.y + oy, BASE.r * 0.72, 0, Math.PI * 2); c.stroke();
+    c.beginPath(); c.arc(BASE.x + ox, BASE.y + oy, this.fenceSpec(this.territoryLevel).fenceRadius, 0, Math.PI * 2); c.stroke();
     c.setLineDash([]);
     c.fillStyle = "rgba(214,196,120,0.14)";
     c.beginPath(); c.arc(BASE.x + ox, BASE.y + oy, BASE.r * 0.5, 0, Math.PI * 2); c.fill();
@@ -2739,6 +3044,8 @@ export class Engine {
     const items: DrawItem[] = [];
     const camL = this.camX - 80, camR = this.camX + this.viewW + 80, camT = this.camY - 230, camB = this.camY + this.viewH + 80;
     const inView = (x: number, y: number) => x > camL && x < camR && y > camT && y < camB;
+    // A tall roof can remain visible even when its anchor is below the screen.
+    const inViewBuilding = (x: number, y: number) => x > camL - 100 && x < camR + 100 && y > camT && y < camB + 340;
 
     for (let by = Math.floor(camT / 128); by <= Math.floor(camB / 128); by++) {
       for (let bx = Math.floor(camL / 128); bx <= Math.floor(camR / 128); bx++) {
@@ -2751,7 +3058,7 @@ export class Engine {
       }
     }
     for (const s of this.structures) {
-      if (!inView(s.x, s.y)) continue;
+      if (!(s.type === "house" || s.type === "forge" || s.type === "tower" ? inViewBuilding(s.x, s.y) : inView(s.x, s.y))) continue;
       items.push({ y: s.y, fn: () => this.drawStructure(s, ox, oy, tnow) });
     }
     for (const m of this.monsters) {
@@ -2767,8 +3074,24 @@ export class Engine {
       const walking = Math.hypot(al.vx, al.vy) > 20;
       items.push({ y: al.y, fn: () => {
         const pace = Math.hypot(al.vx, al.vy);
-        this.drawHumanoid(al.x + ox, al.y + oy, al.id, al.dir, walking, tnow * (pace > 210 ? 13 : 9), 1, al.atkCd > 0.48 ? "attack" : pace > 210 ? "run" : walking ? "walk" : undefined, al.atkCd > 0.48 ? undefined : al.id === "bren" ? "pick" : al.id === "tito" ? "axe" : "sword", 2);
-        if (al.atkCd > 0.48) this.drawAllyWeapon(al.x + ox, al.y + oy, al.dir - 0.7 + (0.7-al.atkCd)*8, al.id, walking ? tnow * 9 : 0);
+        if (al.id === "archer") {
+          const x = al.x + ox, y = al.y + oy;
+          if (this.settings.craftPix && hasReferenceArcher()) {
+            const direction = viewFromAngle(al.dir);
+            const action = al.atkCd > 0.8 ? "attack" : pace > 210 ? "run" : walking ? "walk" : "idle";
+            this.drawShadow(x, y + 2, 13);
+            c.save(); c.translate(Math.round(x), Math.round(y + 2));
+            drawReferenceArcher(c, direction.view, direction.flip, action, tnow, clamp((1.2 - al.atkCd) / 0.4, 0, 1));
+            c.restore();
+          } else {
+            // With no optional preview, keep an existing humanoid as fallback.
+            this.drawHumanoid(x, y, "maya", al.dir, walking, tnow * (pace > 210 ? 13 : 9));
+            this.drawArcherBow(x, y, al.dir);
+          }
+        } else {
+          this.drawHumanoid(al.x + ox, al.y + oy, al.id, al.dir, walking, tnow * (pace > 210 ? 13 : 9), 1, al.atkCd > 0.48 ? "attack" : pace > 210 ? "run" : walking ? "walk" : undefined, al.atkCd > 0.48 ? undefined : al.id === "bren" ? "pick" : al.id === "tito" ? "axe" : "sword", 2);
+          if (al.atkCd > 0.48) this.drawAllyWeapon(al.x + ox, al.y + oy, al.dir - 0.7 + (0.7-al.atkCd)*8, al.id, walking ? tnow * 9 : 0);
+        }
         this.drawName(al.name, al.x + ox, al.y + oy - 99, "#ffe9b0");
       } });
     }
@@ -2785,10 +3108,20 @@ export class Engine {
       items.push({ y: ch.y, fn: () => this.drawChest(ch, ox, oy, tnow) });
     }
     for (const prop of this.worldProps) {
-      if (!inView(prop.x,prop.y)) continue;
-      items.push({ y: prop.y, fn: () => { this.drawShadow(prop.x + ox, prop.y + oy, prop.sprite === "ice_deity" ? 65 : 40); drawSprite(c, prop.sprite, prop.x + ox, prop.y + oy); } });
+      if (!inViewBuilding(prop.x, prop.y)) continue;
+      if (prop.sprite.startsWith("reference_")) {
+        const name = prop.sprite.slice("reference_".length) as ReferenceObject;
+        if (this.settings.craftPix && hasReferenceObject(name)) items.push({ y: prop.y, fn: () => {
+          drawReferenceObject(c, name, prop.x + ox, prop.y + oy, REFERENCE_SCALE[name]);
+        } });
+      } else items.push({ y: prop.y, fn: () => drawSprite(c, prop.sprite, prop.x + ox, prop.y + oy) });
     }
-    for (const [hx, hy] of [[-120, -60], [110, -80], [-90, 90], [120, 70], [0, -130]]) {
+    if (this.settings.craftPix && hasReferenceObject("house")) {
+      for (const [hx, hy] of VILLAGE_HOUSES) {
+        const x = VILLAGE.x + hx, y = VILLAGE.y + hy;
+        if (inViewBuilding(x, y)) items.push({ y, fn: () => drawReferenceObject(c, "house", x + ox, y + oy, REFERENCE_SCALE.house) });
+      }
+    } else for (const [hx, hy] of [[-120, -60], [110, -80], [-90, 90], [120, 70], [0, -130]]) {
       const x = VILLAGE.x + hx, y = VILLAGE.y + hy + 24;
       if (inView(x, y)) items.push({ y, fn: () => drawSprite(c, "hut", x + ox, y + oy) });
     }
@@ -2810,10 +3143,18 @@ export class Engine {
 
     // projectiles
     for (const p of this.projectiles) {
-      c.fillStyle = "#9be04a";
-      c.beginPath(); c.arc(p.x + ox, p.y + oy, 6, 0, Math.PI * 2); c.fill();
-      c.fillStyle = "rgba(155,224,74,0.4)";
-      c.beginPath(); c.arc(p.x + ox - p.vx * 0.02, p.y + oy - p.vy * 0.02, 4, 0, Math.PI * 2); c.fill();
+      if (p.kind === "ally" || p.kind === "player") {
+        c.save(); c.translate(p.x + ox, p.y + oy); c.rotate(Math.atan2(p.vy, p.vx));
+        c.fillStyle = "#6f482a"; c.fillRect(-13, -1, 22, 3);
+        c.fillStyle = "#d9e6eb"; c.beginPath(); c.moveTo(12, 0); c.lineTo(6, -4); c.lineTo(6, 4); c.closePath(); c.fill();
+        c.fillStyle = "#e6d8b5"; c.fillRect(-13, -4, 4, 3); c.fillRect(-13, 2, 4, 3);
+        c.restore();
+      } else {
+        c.fillStyle = "#9be04a";
+        c.beginPath(); c.arc(p.x + ox, p.y + oy, 6, 0, Math.PI * 2); c.fill();
+        c.fillStyle = "rgba(155,224,74,0.4)";
+        c.beginPath(); c.arc(p.x + ox - p.vx * 0.02, p.y + oy - p.vy * 0.02, 4, 0, Math.PI * 2); c.fill();
+      }
     }
 
     // particles
@@ -2831,6 +3172,20 @@ export class Engine {
     this.renderLights(ox, oy);
     this.drawBubbles(ox, oy);
     const climate = this.tileAt(this.px, this.py);
+    if (this.settings.treeMotion && (climate === T_GRASS || climate === T_DARK || climate === T_PATH)) {
+      // Stateless, bounded particles: no allocations or spawn-rate dependence
+      // on FPS. Quality Leve uses fewer leaves and the setting disables both.
+      const count = this.settings.quality === "leve" ? 7 : 14;
+      c.globalAlpha = 0.68;
+      for (let i = 0; i < count; i++) {
+        const x = Math.round(((i * 193 + tnow * (18 + i % 4 * 5)) % (this.viewW + 80)) - 40);
+        const y = Math.round(((i * 157 + tnow * (8 + i % 3 * 3)) % (this.viewH + 60)) - 30 + Math.sin(tnow * 1.4 + i) * 9);
+        c.fillStyle = i % 3 === 0 ? "#d3ae62" : i % 3 === 1 ? "#a4b95e" : "#d87e4a";
+        c.fillRect(x + 1, y, 4, 2); c.fillRect(x, y + 2, 5, 2);
+        c.fillStyle = "#6c7845"; c.fillRect(x + 2, y + 2, 3, 1);
+      }
+      c.globalAlpha = 1;
+    }
     if (climate === T_SNOW || climate === T_ICE || climate === T_SNOW_PATH) {
       c.fillStyle = "rgba(235,250,249,0.66)";
       const flakes = this.settings.quality === "leve" ? 14 : 30;
@@ -2876,7 +3231,7 @@ export class Engine {
       }
       // The cached HUD only occupies the top and bottom of the screen. Avoid
       // blending its large transparent center onto the world every frame.
-      const top = Math.min(104, this.viewH);
+      const top = Math.min(120, this.viewH);
       const bottom = Math.max(top, this.viewH - (this.viewW < 700 ? 142 : 190));
       c.drawImage(this.hudCv, 0, 0, this.viewW, top, 0, 0, this.viewW, top);
       if (bottom < this.viewH) {
@@ -2886,6 +3241,16 @@ export class Engine {
     } else this.renderHud();
     this.drawBasePointer();
     if (this.mapOpen) this.renderAtlas();
+  }
+
+  drawArcherBow(x: number, y: number, dir: number) {
+    const c = this.ctx;
+    c.save(); c.translate(x + Math.cos(dir) * 12, y - 24); c.rotate(dir);
+    c.strokeStyle = "#4b2c1d"; c.lineWidth = 4;
+    c.beginPath(); c.moveTo(-10, -14); c.quadraticCurveTo(12, 0, -10, 14); c.stroke();
+    c.strokeStyle = "#e8d7a0"; c.lineWidth = 1;
+    c.beginPath(); c.moveTo(-10, -14); c.lineTo(-10, 14); c.stroke();
+    c.restore();
   }
 
   drawAllyWeapon(x: number, y: number, dir: number, id: string, cycle = 0) {
@@ -2978,9 +3343,15 @@ export class Engine {
         else drawSprite(c, name, x, y + 4, options);
       }
     } else {
-      this.drawShadow(x, y + 3, 14);
-      const imported = n.type === "bush" && !n.skin && this.settings.craftPix && drawCraftPlant(c, "bush", x + Math.round(wob), y + 4);
-      if (!imported) drawSprite(c, n.skin ?? n.type, x, y + 4, { dx: Math.round(wob) });
+      const isPlant = n.type === "bush" || n.type === "berry";
+      const supported = isPlant && (!n.skin || n.skin === "snow_bush");
+      const variant = n.skin === "snow_bush" ? 5 : n.type === "berry" ? 3 : [0, 1, 2, 4][Math.abs(Math.floor(n.x / 73) + Math.floor(n.y / 59)) % 4];
+      const reference = supported && this.settings.craftPix && drawReferencePlant(c, variant, x + Math.round(wob), y + 4, n.type === "berry" ? 58 : 54);
+      if (!reference) {
+        this.drawShadow(x, y + 3, 14);
+        const imported = n.type === "bush" && !n.skin && this.settings.craftPix && drawCraftPlant(c, "bush", x + Math.round(wob), y + 4);
+        if (!imported) drawSprite(c, n.skin ?? n.type, x, y + 4, { dx: Math.round(wob) });
+      }
     }
     if (hpr < 1) {
       const top = n.type === "tree" || n.type === "pine" ? y - 86 : y - 42;
@@ -2994,8 +3365,7 @@ export class Engine {
     c.save(); c.translate(x,y); c.globalAlpha *= alpha;
     // The footprint follows the ring; the sharpened log remains upright in the
     // top-down projection, so it never looks like a spike lying on the floor.
-    c.save();c.rotate(rotation);c.fillStyle="rgba(24,16,12,.42)";c.beginPath();c.ellipse(0,5,11,5,0,0,Math.PI*2);c.fill();
-    c.fillStyle=tint??"#3d291d";c.fillRect(-11,1,22,5);c.fillStyle=tint??"#8a5b38";c.fillRect(-9,1,18,2);c.restore();
+    c.save();c.rotate(rotation);c.fillStyle=tint??"#3d291d";c.fillRect(-11,1,22,5);c.fillStyle=tint??"#8a5b38";c.fillRect(-9,1,18,2);c.restore();
     c.fillStyle = tint ?? "#40281b"; c.fillRect(-7,-20,14,25);
     c.fillStyle = tint ?? "#7d4e31"; c.fillRect(-5,-19,10,23);
     c.fillStyle = tint ?? "#b97746"; c.fillRect(-3,-18,6,21);
@@ -3015,7 +3385,6 @@ export class Engine {
     c.save();c.translate(x,y);c.globalAlpha*=alpha;
     const half=sideView?12:27;
     const pillar=(px:number)=>{
-      c.fillStyle="rgba(20,14,12,.38)";c.beginPath();c.ellipse(px,7,12,5,0,0,Math.PI*2);c.fill();
       c.fillStyle=tint??"#40281b";c.fillRect(px-8,-31,16,37);c.fillStyle=tint??"#865536";c.fillRect(px-6,-29,12,34);c.fillStyle=tint??"#c1844e";c.fillRect(px-4,-28,4,31);
       c.fillStyle="#292b30";c.fillRect(px-9,-19,18,5);c.fillRect(px-9,-4,18,5);c.fillStyle="#78868c";c.fillRect(px-8,-19,16,2);
       c.fillStyle=tint??"#4d2e1d";c.beginPath();c.moveTo(px-9,-30);c.lineTo(px,-43);c.lineTo(px+9,-30);c.closePath();c.fill();c.fillStyle=tint??"#c2824c";c.beginPath();c.moveTo(px-5,-30);c.lineTo(px,-38);c.lineTo(px+4,-30);c.closePath();c.fill();
@@ -3034,14 +3403,13 @@ export class Engine {
 
   drawRusticPost(x: number, y: number, rotation: number, alpha = 1, tint?: string) {
     const c=this.ctx;c.save();c.translate(x,y);c.globalAlpha*=alpha;
-    c.save();c.rotate(rotation);c.fillStyle="rgba(30,20,12,.34)";c.beginPath();c.ellipse(0,5,10,4,0,0,Math.PI*2);c.fill();c.restore();
+    // Position stays anchored to the fence; no artificial ground oval.
     c.fillStyle=tint??"#5c3b29";c.fillRect(-7,-23,14,28);c.fillStyle=tint??"#9a6a48";c.fillRect(-5,-22,10,26);c.fillStyle=tint??"#c89668";c.fillRect(-3,-21,3,24);
     c.fillStyle=tint??"#e0b681";c.fillRect(-2,-20,1,16);c.fillStyle="#4d3326";c.fillRect(-7,-8,14,3);c.fillRect(-7,1,14,3);c.fillStyle="#a87852";c.fillRect(-6,-8,12,1);c.fillRect(-6,1,12,1);
     c.fillStyle="#38261d";c.fillRect(-1,-15,2,2);c.restore();
   }
   drawStonePost(x:number,y:number,rotation:number,alpha=1,tint?:string){
     const c=this.ctx;c.save();c.translate(x,y);c.globalAlpha*=alpha;
-    c.save();c.rotate(rotation);c.fillStyle="rgba(20,24,28,.34)";c.beginPath();c.ellipse(0,6,12,5,0,0,Math.PI*2);c.fill();c.restore();
     const dark=tint??"#56626b",mid=tint??"#84939c",light=tint??"#bac6ca";
     c.fillStyle=dark;c.fillRect(-9,-26,18,31);c.fillStyle=mid;c.fillRect(-7,-24,14,27);c.fillStyle=light;c.fillRect(-6,-23,5,5);c.fillRect(1,-13,5,5);c.fillRect(-5,-3,6,5);
     c.strokeStyle="#424b52";c.lineWidth=2;for(const yy of [-17,-7]){c.beginPath();c.moveTo(-8,yy);c.lineTo(8,yy);c.stroke();}
@@ -3054,12 +3422,31 @@ export class Engine {
     c.restore();
   }
   drawFencePost(style:FenceStyle,x:number,y:number,rotation:number,alpha=1,tint?:string){
+    if (style === "stone" && this.settings.craftPix && hasReferenceObject("castle_wall")) {
+      const c = this.ctx, sideView = Math.abs(Math.sin(rotation)) > Math.abs(Math.cos(rotation));
+      c.save(); c.translate(x, y); c.scale(sideView ? 0.68 : 1, 1); c.globalAlpha *= alpha;
+      drawReferenceObject(c, "castle_wall", 0, 0, 1); c.restore(); return;
+    }
     if(style==="rustic")this.drawRusticPost(x,y,rotation,alpha,tint);
     else if(style==="stone")this.drawStonePost(x,y,rotation,alpha,tint);
     else if(style==="hedge")this.drawHedgePost(x,y,rotation,alpha,tint);
     else this.drawPalisadePost(x,y,rotation,alpha,tint);
   }
   drawStyledGate(s:Structure,x:number,y:number,alpha=1,tint?:string){
+    if (s.fenceStyle === "stone" && this.settings.craftPix && hasReferenceObject("castle_gate")) {
+      const c = this.ctx, sideView = Math.abs(Math.sin(s.rotation)) > Math.abs(Math.cos(s.rotation));
+      c.save(); c.translate(x, y); c.scale(sideView ? 0.68 : 1, 1); c.globalAlpha *= alpha;
+      drawReferenceObject(c, "castle_gate", 0, 0, 1);
+      if (!s.open) {
+        if (!drawReferenceObject(c, "castle_grate", 0, -2, 1)) {
+          // If only the arch was imported, the fallback grate keeps the closed
+          // state visible instead of silently looking like an open passage.
+          c.fillStyle = "#263646"; for (let i = -12; i <= 12; i += 6) c.fillRect(i, -25, 3, 23);
+          for (let i = -22; i <= -4; i += 6) c.fillRect(-15, i, 30, 2);
+        }
+      }
+      c.restore(); return;
+    }
     if(s.fenceStyle==="stone"){
       this.drawPalisadeGate(s,x,y,alpha,tint??"#7d8990");
       this.drawStonePost(x-27,y,s.rotation,alpha,tint);this.drawStonePost(x+27,y,s.rotation,alpha,tint);
@@ -3072,7 +3459,7 @@ export class Engine {
     const c = this.ctx;
     const x = s.x + ox, y = s.y + oy;
     if(s.type==="wall") {
-      if (this.dpr !== 1) this.drawFencePost(s.fenceStyle, x, y + 5, s.rotation);
+      if (this.dpr !== 1 || (s.fenceStyle === "stone" && this.settings.craftPix && hasReferenceObject("castle_wall"))) this.drawFencePost(s.fenceStyle, x, y + 5, s.rotation);
       else {
         const key = `${s.fenceStyle}:${s.x}:${s.y}:${s.rotation}`;
         let cached = this.fencePosts.get(key);
@@ -3107,17 +3494,19 @@ export class Engine {
     let name: string = s.type;
     if (s.type === "campfire") name = Math.floor(tnow * 8) % 2 ? "campfire1" : "campfire0";
     const sz = spriteSize(name);
-    this.drawShadow(x, y + 4, Math.max(14, sz.w * 0.42));
+    const referenceName = s.type === "tower" ? "castle_tower" : s.type === "forge" || s.type === "house" ? s.type : null;
+    const referenceBuilding = referenceName && this.settings.craftPix && hasReferenceObject(referenceName) ? referenceName : null;
     c.save(); c.translate(x, y + 6); c.rotate(s.rotation);
-    drawSprite(c, name, 0, 0);
+    if (!referenceBuilding || !drawReferenceObject(c, referenceBuilding, 0, 0, REFERENCE_SCALE[referenceBuilding])) drawSprite(c, name, 0, 0);
     if (s.type === "farm" && this.settings.craftPix) drawCraftPlant(c, "crate", 52, 4);
     c.restore();
     if (s.type === "campfire") {
       const g = 0.35 + Math.sin(tnow * 9) * 0.08;c.fillStyle = `rgba(255,150,60,${g * 0.35})`;c.beginPath(); c.arc(x, y - 10, 40, 0, Math.PI * 2); c.fill();
     }
-    if (s.type === "forge") {const g = Math.sin(tnow * 7) * 0.5 + 0.5;c.fillStyle = `rgba(255,120,40,${0.15 + g * 0.15})`;c.beginPath(); c.arc(x, y - 16, 30, 0, Math.PI * 2); c.fill();}
-    if (s.type === "tower") {c.fillStyle = `rgba(255,220,120,${0.18 + Math.sin(tnow * 3) * 0.06})`;c.beginPath(); c.arc(x, y - 100, 26, 0, Math.PI * 2); c.fill();}
-    if(s.hp<s.maxHp)this.drawStructureHealth(s,x,y-sz.h-12);
+    if (s.type === "forge" && !referenceBuilding) {const g = Math.sin(tnow * 7) * 0.5 + 0.5;c.fillStyle = `rgba(255,120,40,${0.15 + g * 0.15})`;c.beginPath(); c.arc(x, y - 16, 30, 0, Math.PI * 2); c.fill();}
+    if (s.type === "tower" && !referenceBuilding) {c.fillStyle = `rgba(255,220,120,${0.18 + Math.sin(tnow * 3) * 0.06})`;c.beginPath(); c.arc(x, y - 100, 26, 0, Math.PI * 2); c.fill();}
+    const buildingHeight = referenceBuilding ? (referenceBuilding === "house" ? 250 : referenceBuilding === "forge" ? 210 : 196) * REFERENCE_SCALE[referenceBuilding] : sz.h;
+    if(s.hp<s.maxHp)this.drawStructureHealth(s,x,y-buildingHeight-12);
   }
   drawStructureHealth(s:Structure,x:number,top:number){
     const c=this.ctx,hpr=clamp(s.hp/s.maxHp,0,1);c.fillStyle="rgba(0,0,0,.65)";c.fillRect(x-18,top,36,5);c.fillStyle=hpr>.5?"#8ae06a":hpr>.25?"#e0c14a":"#e04a4a";c.fillRect(x-18,top,36*hpr,5);
@@ -3139,12 +3528,20 @@ export class Engine {
   drawChest(ch: Chest, ox: number, oy: number, tnow: number) {
     const c = this.ctx;
     const x = ch.x + ox, y = ch.y + oy;
-    this.drawShadow(x, y + 3, 20);
-    drawSprite(c, ch.opened ? "chest_open" : "chest", x, y + 4);
+    const baseChest = ch.label === "Kit do Rian";
+    const referenceChest = baseChest && this.settings.craftPix && drawReferenceObject(c, "chest", x, y + 4, REFERENCE_SCALE.chest);
+    // The reference includes only a closed lid. Keep that same detailed chest
+    // after looting instead of replacing it with the old rectangular box.
+    if (!referenceChest) drawSprite(c, ch.opened ? "chest_open" : "chest", x, y + 4, { scale: baseChest ? 4.2 : SCALE });
+    if (referenceChest && ch.opened) {
+      c.save(); c.font = "700 10px Nunito, sans-serif"; c.textAlign = "center";
+      c.fillStyle = "rgba(14,12,20,.8)"; c.fillRect(x - 21, y - 90, 42, 14);
+      c.fillStyle = "#f4dfa9"; c.fillText("VAZIO", x, y - 79); c.restore();
+    }
     if (!ch.opened) {
       const g = 0.5 + Math.sin(tnow * 4) * 0.4;
       c.fillStyle = `rgba(255,226,138,${g * 0.55})`;
-      c.beginPath(); c.arc(x, y - 36 - Math.sin(tnow * 3) * 3, 3, 0, Math.PI * 2); c.fill();
+      c.beginPath(); c.arc(x, y - (referenceChest ? 76 : baseChest ? 50 : 36) - Math.sin(tnow * 3) * 3, 3, 0, Math.PI * 2); c.fill();
     }
   }
 
@@ -3193,13 +3590,20 @@ export class Engine {
     const action = attacking ? "attack" : this.running_ && this.moving ? "run" : this.moving ? "walk" : undefined;
     const tool = attacking ? this.swingTool : this.heldTool;
     const level = this.tools[tool];
-    // The imported sword includes its own swing; other tools keep the old overlay.
-    this.drawHumanoid(x, y, "player", this.pdir, this.moving, this.walkCycle, blink ? 0.45 : 1, action, tool, level);
-    const originalSword = tool === "sword" && level <= 3 && this.settings.craftPix && hasCraftHero();
+    const usingBow = attacking ? this.swingBow : tool === "sword" && this.combatWeapon === "bow";
+    // The imported sword includes its own swing; the bow is drawn separately.
+    this.drawHumanoid(x, y, "player", this.pdir, this.moving, this.walkCycle, blink ? 0.45 : 1, action, usingBow ? undefined : tool, level);
+    const originalSword = !usingBow && tool === "sword" && level <= 3 && this.settings.craftPix && hasCraftHero();
     const handX = x + Math.cos(this.pdir) * (attacking ? 19 : 13) + (Math.cos(this.pdir) >= 0 ? 4 : -4);
     const stride = this.moving ? Math.sin(this.walkCycle * 1.3) * (this.running_ ? 4 : 2) : 0;
     const handY = y - 24 + (attacking ? -3 : stride);
-    if (attacking && !originalSword) {
+    if (usingBow) {
+      c.save(); c.translate(handX, handY); c.rotate(this.pdir + Math.PI / 4);
+      const reference = this.settings.craftPix && drawReferenceIcon(c, "bow", -20, -20, 40);
+      c.restore();
+      if (!reference) this.drawArcherBow(x, y, this.pdir);
+    }
+    if (attacking && !usingBow && !originalSword) {
       const prog = 1 - this.attackT / 0.22;
       const eased = 1 - Math.pow(1 - clamp(prog, 0, 1), 2);
       const a = this.pdir - 1.12 + eased * 2.24;
@@ -3321,42 +3725,56 @@ export class Engine {
 
   drawFenceConnections(ox: number, oy: number) {
     if (this.structures.length < 2) return;
-    const reach = FENCE_RADIUS + 80;
+    const reach = this.fenceSpec(this.territoryLevel).fenceRadius + 80;
     const bx = BASE.x + ox, by = BASE.y + oy;
     if (bx + reach < 0 || by + reach < 0 || bx - reach > this.viewW || by - reach > this.viewH) return;
-    const c = this.ctx, occupied = new Array<Structure | undefined>(FENCE_SLOTS);
+    const c = this.ctx;
+    const rings = new Map<number, (Structure | undefined)[]>();
     for (const s of this.structures) {
       if (s.type !== "wall" && s.type !== "gate") continue;
+      const distance = Math.hypot(s.x - BASE.x, s.y - BASE.y);
+      const ring = TERRITORIES.findIndex((spec) => Math.abs(spec.fenceRadius - distance) < 12) + 1;
+      if (!ring) continue;
+      const { slots } = this.fenceSpec(ring);
       const a = Math.atan2(s.y - BASE.y, s.x - BASE.x);
-      const slot = ((Math.round(a * FENCE_SLOTS / (2 * Math.PI)) % FENCE_SLOTS) + FENCE_SLOTS) % FENCE_SLOTS;
-      const position = this.fencePosition(slot);
-      if (dist2(position.x, position.y, s.x, s.y) < 12 * 12) occupied[slot] = s;
+      const slot = ((Math.round(a * slots / (2 * Math.PI)) % slots) + slots) % slots;
+      const position = this.fencePosition(slot, ring);
+      if (dist2(position.x, position.y, s.x, s.y) >= 12 * 12) continue;
+      let occupied = rings.get(ring);
+      if (!occupied) { occupied = new Array<Structure | undefined>(slots); rings.set(ring, occupied); }
+      occupied[slot] = s;
     }
-    for (let slot = 0; slot < FENCE_SLOTS; slot++) {
-      const first = occupied[slot], second = occupied[(slot + 1) % FENCE_SLOTS];
-      if (!first || !second || (first.type === "gate" && first.open) || (second.type === "gate" && second.open)) continue;
-      const x1 = first.x + ox, y1 = first.y + oy, x2 = second.x + ox, y2 = second.y + oy;
-      if (Math.max(x1, x2) < -40 || Math.min(x1, x2) > this.viewW + 40 || Math.max(y1, y2) < -60 || Math.min(y1, y2) > this.viewH + 40) continue;
-      // At native 1x resolution the baked rails match the original canvas
-      // geometry. Other render scales keep the vector path for crispness.
-      if (this.dpr !== 1) { this.drawFenceLink(c, first.fenceStyle, x1, y1, x2, y2); continue; }
-      const key = `${first.fenceStyle}:${first.x}:${first.y}:${second.x}:${second.y}`;
-      let cached = this.fenceLinks.get(key);
-      if (!cached) {
-        const left = Math.floor(Math.min(first.x, second.x) - 20), top = Math.floor(Math.min(first.y, second.y) - 36);
-        const right = Math.ceil(Math.max(first.x, second.x) + 20), bottom = Math.ceil(Math.max(first.y, second.y) + 12);
-        const canvas = document.createElement("canvas"); canvas.width = right - left; canvas.height = bottom - top;
-        const painter = canvas.getContext("2d");
-        if (!painter) { this.drawFenceLink(c, first.fenceStyle, x1, y1, x2, y2); continue; }
-        this.drawFenceLink(painter, first.fenceStyle, first.x - left, first.y - top, second.x - left, second.y - top);
-        cached = { canvas, left, top };
-        if (this.fenceLinks.size >= 128) {
-          const oldest = this.fenceLinks.keys().next().value;
-          if (oldest !== undefined) this.fenceLinks.delete(oldest);
+    for (const [ring, occupied] of rings) {
+      const { slots } = this.fenceSpec(ring);
+      for (let slot = 0; slot < slots; slot++) {
+        const first = occupied[slot], second = occupied[(slot + 1) % slots];
+        if (!first || !second || (first.type === "gate" && first.open) || (second.type === "gate" && second.open)) continue;
+        // The imported masonry pieces already touch and do not need the
+        // procedural rails. Keep those rails for the asset-free fallback.
+        if (first.fenceStyle === "stone" && second.fenceStyle === "stone" && this.settings.craftPix && hasReferenceObject("castle_wall")) continue;
+        const x1 = first.x + ox, y1 = first.y + oy, x2 = second.x + ox, y2 = second.y + oy;
+        if (Math.max(x1, x2) < -40 || Math.min(x1, x2) > this.viewW + 40 || Math.max(y1, y2) < -60 || Math.min(y1, y2) > this.viewH + 40) continue;
+        // At native 1x resolution the baked rails match the original canvas
+        // geometry. Other render scales keep the vector path for crispness.
+        if (this.dpr !== 1) { this.drawFenceLink(c, first.fenceStyle, x1, y1, x2, y2); continue; }
+        const key = `${first.fenceStyle}:${first.x}:${first.y}:${second.x}:${second.y}`;
+        let cached = this.fenceLinks.get(key);
+        if (!cached) {
+          const left = Math.floor(Math.min(first.x, second.x) - 20), top = Math.floor(Math.min(first.y, second.y) - 36);
+          const right = Math.ceil(Math.max(first.x, second.x) + 20), bottom = Math.ceil(Math.max(first.y, second.y) + 12);
+          const canvas = document.createElement("canvas"); canvas.width = right - left; canvas.height = bottom - top;
+          const painter = canvas.getContext("2d");
+          if (!painter) { this.drawFenceLink(c, first.fenceStyle, x1, y1, x2, y2); continue; }
+          this.drawFenceLink(painter, first.fenceStyle, first.x - left, first.y - top, second.x - left, second.y - top);
+          cached = { canvas, left, top };
+          if (this.fenceLinks.size >= 128) {
+            const oldest = this.fenceLinks.keys().next().value;
+            if (oldest !== undefined) this.fenceLinks.delete(oldest);
+          }
+          this.fenceLinks.set(key, cached);
         }
-        this.fenceLinks.set(key, cached);
+        c.drawImage(cached.canvas, cached.left + ox, cached.top + oy);
       }
-      c.drawImage(cached.canvas, cached.left + ox, cached.top + oy);
     }
   }
 
@@ -3386,11 +3804,12 @@ export class Engine {
     const positions = ring ? this.fencePositions(type) : [{ x: this.placeX, y: this.placeY }];
     const ok = !this.placeReason;
     if (ring) {
+      const { slots, fenceRadius } = this.fenceSpec();
       c.strokeStyle = "rgba(222,191,120,0.52)";
       c.lineWidth = 2; c.setLineDash([6, 9]);
-      c.beginPath(); c.arc(BASE.x + ox, BASE.y + oy, FENCE_RADIUS, 0, Math.PI * 2); c.stroke();
+      c.beginPath(); c.arc(BASE.x + ox, BASE.y + oy, fenceRadius, 0, Math.PI * 2); c.stroke();
       c.setLineDash([]);
-      for (let slot = 0; slot < FENCE_SLOTS; slot++) {
+      for (let slot = 0; slot < slots; slot++) {
         const p = this.fencePosition(slot);
         const sx = p.x + ox, sy = p.y + oy;
         if (sx < -30 || sy < -30 || sx > this.viewW + 30 || sy > this.viewH + 30) continue;
@@ -3410,7 +3829,15 @@ export class Engine {
       const previewRotation = ring ? Math.atan2(p.y-BASE.y,p.x-BASE.x)+Math.PI/2 : this.placeRotation;
       if(type==="wall") this.drawFencePost(this.fenceStyle,x,y+6,previewRotation,.76,ok?"#63c87e":"#d66060");
       else if(type==="gate") this.drawStyledGate({type:"gate",x:p.x,y:p.y,prodT:0,hp:1,maxHp:1,open:false,rotation:previewRotation,fenceStyle:this.fenceStyle},x,y+6,.76,ok?"#63c87e":"#d66060");
-      else {c.save();c.translate(x,y+6);c.rotate(previewRotation);drawSprite(c,name,0,0,{alpha:.72});drawSprite(c,name,0,0,{alpha:.22,tint:ok?"#7dff9b":"#ff6060"});c.restore();}
+      else {
+        c.save(); c.translate(x, y + 6); c.rotate(previewRotation);
+        c.globalAlpha = 0.72;
+        const referenceName = type === "tower" ? "castle_tower" : type === "house" || type === "forge" ? type : null;
+        const referenceBuilding = referenceName && this.settings.craftPix && drawReferenceObject(c, referenceName, 0, 0, REFERENCE_SCALE[referenceName]);
+        c.globalAlpha = 1;
+        if (!referenceBuilding) { drawSprite(c, name, 0, 0, { alpha: .72 }); drawSprite(c, name, 0, 0, { alpha: .22, tint: ok ? "#7dff9b" : "#ff6060" }); }
+        c.restore();
+      }
     }
     if (!ring) {
       const x = this.placeX + ox, y = this.placeY + oy, g = this.snapGrid(type);
@@ -3424,18 +3851,23 @@ export class Engine {
     const name = type === "campfire" ? "campfire0" : type;
     c.font = "700 12px Nunito, 'Trebuchet MS', system-ui, sans-serif";
     c.textAlign = "center";
-    const label = ok ? `${STRUCT_DEF[type].icon} ${STRUCT_DEF[type].name}${ring ? " · segue a tangente do círculo" : this.placeRotation ? " · lado" : " · frente"}` : `⛔ ${this.placeReason}`;
+    const displayName = type === "wall" && positions.length === 1 ? "Cerca simples" : STRUCT_DEF[type].name;
+    const label = ok ? `${STRUCT_DEF[type].icon} ${displayName}${ring ? ` · anel ${this.fenceRing}` : this.placeRotation ? " · lado" : " · frente"}` : `⛔ ${this.placeReason}`;
     c.fillStyle = "rgba(10,12,20,0.84)";
     const tw = c.measureText(label).width + 16;
-    this.rr(x - tw / 2, y - 70 - spriteSize(name).h * 0.4, tw, 22, 6); c.fill();
+    const previewRef = type === "tower" ? "castle_tower" : type === "house" || type === "forge" ? type : null;
+    const referenceHeight = previewRef && this.settings.craftPix && hasReferenceObject(previewRef) ? (previewRef === "house" ? 250 : previewRef === "forge" ? 210 : 196) * REFERENCE_SCALE[previewRef] : 0;
+    const labelY = referenceHeight ? y - referenceHeight - 25 : y - 70 - spriteSize(name).h * 0.4;
+    this.rr(x - tw / 2, labelY, tw, 22, 6); c.fill();
     c.fillStyle = ok ? "#c8ffd8" : "#ffc8c8";
-    c.fillText(label, x, y - 55 - spriteSize(name).h * 0.4);
+    c.fillText(label, x, labelY + 15);
   }
 
   /* ---------------- HUD ---------------- */
   renderHud() {
     const c = this.ctx;
     const w = this.viewW;
+    const underAttack = this.underAttackNow();
     c.textAlign = "left";
 
     // top-left: hp + stamina (pixel panel)
@@ -3451,7 +3883,16 @@ export class Engine {
     c.textAlign = "center";
     c.fillText(`${Math.ceil(this.hp)} / ${this.maxHp}`, bx + 24 + barW / 2, by + 12);
     c.textAlign = "left";
-    c.fillStyle = "#ff8a8a"; c.fillRect(bx + 4, by + 3, 12, 11); c.fillStyle = "#ff5a5a"; c.fillRect(bx + 2, by + 5, 16, 6); c.fillStyle = "#ffd0d0"; c.fillRect(bx + 5, by + 4, 3, 3);
+    // Legible pixel heart with two lobes and a tapered point, rather than the
+    // old rectangular cross. It remains inside the same compact HUD panel.
+    c.fillStyle = "#491a22";
+    c.fillRect(bx + 4, by + 1, 5, 2); c.fillRect(bx + 12, by + 1, 5, 2);
+    c.fillRect(bx + 2, by + 3, 17, 5); c.fillRect(bx + 3, by + 8, 15, 2);
+    c.fillRect(bx + 5, by + 10, 11, 2); c.fillRect(bx + 7, by + 12, 7, 2); c.fillRect(bx + 9, by + 14, 3, 1);
+    c.fillStyle = "#e04a50";
+    c.fillRect(bx + 4, by + 3, 13, 5); c.fillRect(bx + 5, by + 8, 11, 2);
+    c.fillRect(bx + 7, by + 10, 7, 2); c.fillRect(bx + 9, by + 12, 3, 2);
+    c.fillStyle = "#ffb1a6"; c.fillRect(bx + 5, by + 3, 3, 2); c.fillRect(bx + 4, by + 5, 2, 2);
     c.fillStyle = "#1b2e1b"; c.fillRect(bx + 24, by + 20, barW, 9);
     const stw = barW * this.stamina / 100;
     c.fillStyle = this.stamina < 20 ? "#d0c060" : "#6ad06a";
@@ -3486,11 +3927,15 @@ export class Engine {
     // interact hint
     if (this.interactHint) {
       c.textAlign = "center";
-      c.fillStyle = "rgba(10,14,20,0.75)";
-      const hw = Math.max(220, c.measureText(this.interactHint).width + 40);
-      this.rr(w / 2 - hw / 2, this.viewH - 110, hw, 28, 8); c.fill();
-      c.font = "700 13px Nunito, 'Trebuchet MS', system-ui, sans-serif"; c.fillStyle = "#9fe3ff";
-      c.fillText(this.interactHint, w / 2, this.viewH - 91);
+      c.font = "700 13px Nunito, 'Trebuchet MS', system-ui, sans-serif";
+      c.fillStyle = "rgba(10,14,20,0.85)";
+      const hw = Math.min(w - 20, Math.max(220, c.measureText(this.interactHint).width + 40));
+      // Keep the prompt above the tutorial and keyboard shortcuts, not hidden
+      // beneath them. This also remains inside the cached HUD's top band.
+      const hintY = underAttack ? 88 : 60;
+      this.rr(w / 2 - hw / 2, hintY, hw, 28, 8); c.fill();
+      c.fillStyle = "#9fe3ff";
+      c.fillText(this.interactHint, w / 2, hintY + 19);
     }
 
     // active quest tracker
@@ -3506,7 +3951,7 @@ export class Engine {
       c.fillText(q.desc, w - 20, 93);
     }
 
-    if (this.underAttackNow()) {
+    if (underAttack) {
       const pulse = 0.5 + Math.sin(performance.now() / 220) * 0.5;
       c.textAlign = "center";
       c.fillStyle = `rgba(120,10,10,${0.45 + pulse * 0.35})`;
@@ -3562,7 +4007,11 @@ export class Engine {
       c.fillRect(x, y0, slot, slot);
       c.strokeStyle = held ? "#ffd34d" : "#4a4050"; c.lineWidth = held ? 2 : 1;
       c.strokeRect(x + 0.5, y0 + 0.5, slot - 1, slot - 1);
-      drawToolSprite(c, t, x + slot * 0.3, y0 + slot * 0.68, -Math.PI / 4, small ? 1.7 : 2.0);
+      const icon = t === "sword" && this.combatWeapon === "bow" ? "bow" : t;
+      if (!this.settings.craftPix || !drawReferenceIcon(c, icon, x + 4, y0 + 3, slot - 8)) {
+        if (icon === "bow") drawSprite(c, "tool_bow", x + slot / 2, y0 + slot * 0.85, { scale: small ? 2 : 2.3 });
+        else drawToolSprite(c, t, x + slot * 0.3, y0 + slot * 0.68, -Math.PI / 4, small ? 1.7 : 2.0);
+      }
       c.font = "800 9px Nunito, system-ui, sans-serif"; c.fillStyle = "#cfc8bc";
       c.fillText(`${i + 1}`, x + 4, y0 + 10);
       c.fillStyle = "#ffd34d"; c.textAlign = "right";
@@ -3578,7 +4027,9 @@ export class Engine {
       c.fillRect(x, y0, slot, slot);
       c.strokeStyle = "#4a4050"; c.lineWidth = 1;
       c.strokeRect(x + 0.5, y0 + 0.5, slot - 1, slot - 1);
-      drawSprite(c, "it_" + r, x + slot / 2, y0 + slot * 0.72, { scale: small ? 3 : 3.5 });
+      if (!this.settings.craftPix || !drawReferenceIcon(c, r, x + 4, y0 + 3, slot - 8)) {
+        drawSprite(c, "it_" + r, x + slot / 2, y0 + slot * 0.72, { scale: small ? 3 : 3.5 });
+      }
       c.font = "800 11px Nunito, system-ui, sans-serif";
       c.textAlign = "right";
       c.fillStyle = "rgba(0,0,0,0.7)"; c.fillText(`${n}`, x + slot - 3, y0 + slot - 3);
