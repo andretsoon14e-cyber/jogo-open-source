@@ -20,67 +20,35 @@ const A2 = 45, C3 = 48, D3 = 50, E3 = 52, F3 = 53, G3 = 55, A3 = 57;
 const C4 = 60, D4 = 62, E4 = 64, F4 = 65, G4 = 67, A4 = 69, B4 = 71, C5 = 72, D5 = 74, E5 = 76, G5 = 79, A5 = 81;
 
 const PATTERNS: Record<Exclude<Track, "none">, Pattern> = {
+  // Original, restrained motifs: warm major harmony by day and sparse minor
+  // tones at night. These are synthesized locally; no recordings are shipped.
   lobby: {
-    bpm: 102,
-    wave: "triangle",
-    leadWave: "square",
-    gain: 0.5,
+    bpm: 88, wave: "triangle", leadWave: "sine", gain: 0.36,
     bass: [A2, A2, F3, F3, C3, C3, G3, G3],
     pad: [[A3, C4, E4], [F3, A3, C4], [C4, E4, G4], [G3, B4, D5]],
-    lead: [
-      [0, E5, 2], [2, C5, 1], [3, A4, 2], [5, C5, 1], [6, D5, 2],
-      [8, C5, 2], [10, A4, 2], [12, G4, 2], [14, A4, 2],
-      [16, E5, 2], [18, G5, 2], [20, E5, 2], [22, D5, 2],
-      [24, C5, 3], [27, A4, 1], [28, G4, 4],
-    ],
-    kick: [0, 8, 16, 24],
-    hats: 4,
+    lead: [[0, E4, 2], [3, A4, 2], [6, C5, 3], [10, A4, 2], [13, G4, 2], [16, E4, 3], [20, G4, 2], [23, A4, 3], [27, C5, 2], [30, A4, 2]],
+    kick: [0, 16], hats: 0,
   },
   day: {
-    bpm: 88,
-    wave: "triangle",
-    leadWave: "triangle",
-    gain: 0.42,
+    bpm: 92, wave: "sine", leadWave: "triangle", gain: 0.34,
     bass: [C3, C3, G3, G3, A2, A2, F3, F3],
-    pad: [[C4, E4, G4], [G3, C4, E4], [A3, C4, E4], [F3, A3, C4]],
-    lead: [
-      [0, G4, 2], [2, A4, 2], [4, C5, 3], [7, A4, 1],
-      [8, G4, 2], [10, E4, 4],
-      [16, E5, 2], [18, D5, 2], [20, C5, 3], [23, A4, 1],
-      [24, G4, 4], [28, E4, 4],
-    ],
-    kick: [0, 16],
-    hats: 8,
+    pad: [[C4, E4, G4], [G3, B4, D5], [A3, C4, E4], [F3, A3, C4]],
+    lead: [[0, E4, 2], [3, G4, 2], [6, C5, 3], [10, B4, 2], [13, G4, 2], [16, A4, 3], [20, C5, 2], [23, E5, 2], [26, D5, 2], [29, C5, 3]],
+    kick: [0, 16], hats: 0,
   },
   night: {
-    bpm: 68,
-    wave: "sawtooth",
-    leadWave: "sine",
-    gain: 0.34,
-    bass: [A2, A2, F3, F3, E3, E3, G3, G3],
-    pad: [[A3, C4, E4], [F3, A3, C4], [E3, G3, B4], [G3, B4, D5]],
-    lead: [
-      [0, A4, 4], [4, C5, 4], [8, B4, 4], [12, A4, 4],
-      [16, E4, 4], [20, F4, 4], [24, E4, 4], [28, D4, 4],
-    ],
-    kick: [0, 16],
-    hats: 0,
+    bpm: 62, wave: "triangle", leadWave: "sine", gain: 0.30,
+    bass: [A2, A2, F3, F3, E3, E3, A2, A2],
+    pad: [[A3, C4, E4], [F3, A3, C4], [E3, G3, B4], [A3, C4, E4]],
+    lead: [[0, A3, 6], [8, E4, 5], [16, G4, 3], [21, E4, 4], [27, C4, 5]],
+    kick: [], hats: 0,
   },
   siege: {
-    bpm: 132,
-    wave: "square",
-    leadWave: "sawtooth",
-    gain: 0.4,
+    bpm: 108, wave: "triangle", leadWave: "triangle", gain: 0.32,
     bass: [A2, A2, A2, A2, F3, F3, G3, G3],
     pad: [[A3, C4, E4], [A3, C4, E4], [F3, A3, C4], [G3, B4, D5]],
-    lead: [
-      [0, A4, 1], [1, A4, 1], [2, C5, 1], [3, A4, 1], [4, E5, 2], [6, C5, 2],
-      [8, A4, 1], [9, A4, 1], [10, D5, 1], [11, C5, 1], [12, A4, 4],
-      [16, F4, 2], [18, A4, 2], [20, C5, 2], [22, A4, 2],
-      [24, G4, 2], [26, B4, 2], [28, D5, 4],
-    ],
-    kick: [0, 6, 12, 18, 24, 30],
-    hats: 2,
+    lead: [[0, A4, 2], [3, C5, 1], [4, E5, 3], [8, D5, 2], [11, C5, 1], [12, A4, 4], [16, F4, 2], [19, A4, 2], [22, C5, 3], [26, B4, 2], [29, A4, 3]],
+    kick: [0, 8, 16, 24], hats: 8,
   },
 };
 
@@ -97,7 +65,7 @@ export class MusicManager {
   private voiceEnabled = true;
   private spokenLobby = false;
   enabled = true;
-  volume = 0.55;
+  volume = 0.35;
 
   get current() { return this.track; }
 
@@ -112,7 +80,7 @@ export class MusicManager {
       this.master.gain.value = 0.9;
       this.master.connect(this.ctx.destination);
       this.gain = this.ctx.createGain();
-      this.gain.gain.value = this.enabled ? this.volume : 0;
+      this.gain.gain.value = this.enabled ? this.volume * 0.24 : 0;
       this.gain.connect(this.master);
     } catch {
       this.ctx = null;
@@ -123,14 +91,14 @@ export class MusicManager {
   setVolume(v: number) {
     this.volume = Math.max(0, Math.min(1, v));
     if (this.gain && this.ctx) {
-      this.gain.gain.setTargetAtTime(this.enabled ? this.volume * 0.5 : 0, this.ctx.currentTime, 0.08);
+      this.gain.gain.setTargetAtTime(this.enabled ? this.volume * 0.24 : 0, this.ctx.currentTime, 0.08);
     }
   }
 
   setEnabled(on: boolean) {
     this.enabled = on;
     if (this.gain && this.ctx) {
-      this.gain.gain.setTargetAtTime(on ? this.volume * 0.5 : 0, this.ctx.currentTime, 0.08);
+      this.gain.gain.setTargetAtTime(on ? this.volume * 0.24 : 0, this.ctx.currentTime, 0.08);
     }
     if (on && this.track !== "none") this.resume();
   }
@@ -197,9 +165,9 @@ export class MusicManager {
         this.note(midi(n - 12), t, stepDur * 3.4, p.wave, 0.16 * p.gain);
       }
       // pad
-      if (s % 16 === 0) {
-        const chord = p.pad[(s / 16) % p.pad.length];
-        for (const n of chord) this.note(midi(n), t, stepDur * 14, "sine", 0.05 * p.gain);
+      if (s % 8 === 0) {
+        const chord = p.pad[(s / 8) % p.pad.length];
+        for (const n of chord) this.note(midi(n), t, stepDur * 7, "sine", 0.05 * p.gain);
       }
       // drums
       if (p.kick.includes(s)) this.drum(t, 0.18, 90, 0.12 * p.gain);

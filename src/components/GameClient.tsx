@@ -58,6 +58,7 @@ export default function GameClient() {
   const [audioOn, setAudioOn] = useState(false);
   const [menuArt, setMenuArt] = useState("");
   const [showKeys, setShowKeys] = useState(true);
+  const [showTutorial, setShowTutorial] = useState(true);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<Engine | null>(null);
@@ -340,9 +341,9 @@ export default function GameClient() {
 
   if (screen === "difficulty") {
     const diffs: { d: Difficulty; icon: string; desc: string }[] = [
-      { d: "dificil", icon: "🌲", desc: "Monstros em matilha atacam sua cerca à noite. Morte: perde 35% dos itens carregados." },
-      { d: "muito-dificil", icon: "🌑", desc: "Custos 2x, hordas maiores, brutamontes frequentes. Morte: perde 60% dos itens." },
-      { d: "impossivel", icon: "💀", desc: "Custos 3,5x, criaturas colossais, MORTE PERMANENTE. Boa sorte." },
+      { d: "dificil", icon: "🌲", desc: "As noites começam menores. Ao cair, perde parte dos recursos comuns e pode precisar reparar a base." },
+      { d: "muito-dificil", icon: "🌑", desc: "Custos 2x e ataques mais fortes. A perda e os estragos aumentam com o tamanho da onda." },
+      { d: "impossivel", icon: "💀", desc: "Custos 3,5x e criaturas colossais. A base pode ficar quase destruída; itens preciosos permanecem." },
     ];
     return (
       <Shell onBack={() => setScreen("menu")}>
@@ -465,6 +466,7 @@ export default function GameClient() {
             ["🔧 Reparo", "Perto de uma cerca danificada, E consome madeira e repara 45% da vida da estrutura. Reconstrua durante a batalha."],
             ["🪓 Ferramentas", "Ataque com J ou clique (esquema teclado+mouse). 1 machado · 2 picareta · 3 arma. No inventário, escolha espada ou arco; ambos usam o nível de combate. Ferro pede picareta nv.2, cristal nv.3."],
             ["🏗️ Base e reino", "Fogueira salva o jogo, bancada libera o resto, forja melhora armas, fazenda/serraria/pedreira produzem, casas aumentam a vida."],
+            ["👥 Resgates e tarefas", "Sinais ! no mapa indicam sobreviventes. Ajude-os, converse para convidar e abra Pessoas no caderno (ou P). Arqueiro, maga e espadachim começam no nível 1: mande treinar na base e forje equipamentos com recursos. O minerador trabalha em uma pedreira."],
             ["🗺️ Mapa", "M abre o mapa com os lugares e a base pulsando em verde. À noite ele escurece: leia perto de fogo ou no vilarejo."],
             ["🎮 Controles", "Escolha em ⚙️ Configurações: teclado+mouse, só teclado (teclas na tela), controle ou toque. A sensitividade ajusta a câmera."],
             ["⛵ Fuga", "Junta recursos colossais, erga a balsa na praia e escape após o dia 14 — só após completar as missões-chave."],
@@ -488,8 +490,13 @@ export default function GameClient() {
       {snap?.underAttack && gameState === "playing" && (
         <div className="pointer-events-none absolute inset-0 z-10 border-[6px] border-red-600/40 animate-alarm" />
       )}
+      {snap?.recovery && gameState === "playing" && <div role="status" aria-live="polite" className="absolute top-[70px] left-1/2 -translate-x-1/2 z-30 w-[min(92vw,520px)] rounded-xl border border-amber-400/70 bg-slate-950/95 px-4 py-3 text-center text-amber-50 shadow-2xl pointer-events-none">
+        <p className="font-bold text-base">{snap.recovery.waking ? "Você acorda ferido na base" : "Recupere suas forças"}</p>
+        <p className="text-xs mt-1">Vida e energia estão baixas. {snap.recovery.report.destroyed} {snap.recovery.report.destroyed === 1 ? "estrutura destruída" : "estruturas destruídas"} e {snap.recovery.report.damaged} danificadas.</p>
+        <p className="text-xs mt-1 text-amber-200">Perdeu {snap.recovery.report.percent}% dos recursos comuns; seus itens preciosos estão seguros.</p>
+      </div>}
 
-      {toast && gameState !== "gameover" && gameState !== "victory" && (
+      {toast && !snap?.recovery && gameState !== "gameover" && gameState !== "victory" && (
         <div className="absolute top-24 left-1/2 -translate-x-1/2 z-30 pointer-events-none animate-toast max-w-[92vw]">
           <div className={`flex items-center gap-3 px-4 py-2.5 rounded-2xl shadow-2xl border-2 ${toast.who ? "bg-[#fbf6ea] border-[#2a2230] text-[#2a2230]" : "bg-slate-900/92 border-amber-600/60 text-amber-50"}`}>
             {toast.who && <Portrait who={toast.who} craftPix={settings.craftPix} />}
@@ -532,21 +539,18 @@ export default function GameClient() {
             <HudBtn icon="bag" label="Inventário · I" onClick={() => engineRef.current?.openPanel("inventory")} />
             <HudBtn icon="help" label="Bestiário e ruínas · N" onClick={() => engineRef.current?.openPanel("bestiary")} />
             <HudBtn icon="settings" label="Opções" onClick={() => setShowSettings(true)} />
+            {snap?.tutorial && !showTutorial && <HudBtn icon="help" label="Mostrar tutorial" onClick={() => setShowTutorial(true)} />}
           </div>
 
-          {snap?.tutorial && !showSettings && panel === "none" && (
+          {snap?.tutorial && showTutorial && !snap.recovery && !showSettings && panel === "none" && (
             <div role="region" aria-label="Tutorial" className="absolute top-28 md:top-auto md:bottom-28 left-1/2 -translate-x-1/2 z-20 w-[min(92vw,560px)] pointer-events-none">
               <div className="bg-slate-950/90 border border-emerald-500/50 rounded-xl px-4 py-2.5 shadow-2xl animate-slide-up">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-[10px] uppercase tracking-widest text-emerald-400">Tutorial · {snap.tutorial.step}/{snap.tutorial.total}</span>
-                  <div className="flex gap-1">
-                    {Array.from({ length: snap.tutorial.total }).map((_, i) => (
-                      <span key={i} className={`w-4 h-1 rounded ${i < snap.tutorial!.step ? "bg-emerald-400" : "bg-slate-700"}`} />
-                    ))}
-                  </div>
+                  <span className="text-xs font-bold uppercase tracking-wide text-emerald-300">Tutorial · {snap.tutorial.step}/{snap.tutorial.total}</span>
+                  <button type="button" onClick={() => setShowTutorial(false)} className="pointer-events-auto text-xs font-bold text-slate-200 hover:text-white cursor-pointer" aria-label="Ocultar tutorial">Ocultar ✕</button>
                 </div>
-                <p className="font-bold text-amber-200 text-sm mt-0.5">{snap.tutorial.title}</p>
-                <p className="text-[11px] text-slate-300 leading-snug">{snap.tutorial.text}</p>
+                <p className="font-bold text-amber-200 text-base mt-1">{snap.tutorial.title}</p>
+                <p className="text-sm text-slate-100 leading-snug">{snap.tutorial.text}</p>
                 <div className="flex gap-1.5 mt-1.5 flex-wrap">
                   {snap.tutorial.keys.map((k) => (
                     <kbd key={k} className="px-2 py-0.5 rounded bg-slate-800 border border-slate-600 text-[10px] font-bold text-amber-100">{k}</kbd>
@@ -603,6 +607,8 @@ export default function GameClient() {
           onTool={(tool) => { engineRef.current?.setTool(tool); engineRef.current?.emitSnapshot(); }}
           onCombatWeapon={(weapon) => engineRef.current?.setCombatWeapon(weapon)}
           onEat={() => { engineRef.current?.eatFood(); engineRef.current?.emitSnapshot(); }}
+          onSpecialistDuty={(id, duty) => engineRef.current?.setSpecialistDuty(id, duty)}
+          onSpecialistUpgrade={(id) => engineRef.current?.upgradeSpecialist(id)}
         />
       )}
 
@@ -854,8 +860,9 @@ function SettingsModal({ settings, onChange, onClose, audioOn }: { settings: Gam
           <label className="block text-xs text-slate-200 mt-2">Volume dos efeitos</label>
           <input type="range" min={0} max={1} step={0.05} value={settings.sfxVol}
             onChange={(e) => onChange({ sfxVol: Number(e.target.value) })} className="w-full accent-amber-500" />
-          <Toggle label="Sons das criaturas" desc="Rugidos e chamados quando os monstros estão próximos" on={settings.creatureSounds} onChange={(v) => onChange({ creatureSounds: v })} />
-          <Toggle label="Som do vento" desc="Rajadas suaves durante a exploração; respeita o volume de efeitos" on={settings.windSounds} onChange={(v) => onChange({ windSounds: v })} />
+          <Toggle label="Sons das criaturas" desc="Chamados de animais e monstros próximos" on={settings.creatureSounds} onChange={(v) => onChange({ creatureSounds: v })} />
+          <Toggle label="Som do vento" desc="Rajadas durante a exploração" on={settings.windSounds} onChange={(v) => onChange({ windSounds: v })} />
+          <Toggle label="Riachos e fogueiras" desc="Água e fogo audíveis quando você se aproxima" on={settings.ambientSounds} onChange={(v) => onChange({ ambientSounds: v })} />
           <Toggle label="Voz do tema no lobby" desc="Narra o tema do jogo no menu" on={settings.voice} onChange={(v) => onChange({ voice: v })} />
         </section>
 

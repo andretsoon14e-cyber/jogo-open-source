@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import sharp from "sharp";
-import { mattePreview, matteObject, keepMainSilhouette, makeReferenceObject } from "../scripts/reference-art-core.mjs";
+import { mattePreview, matteObject, keepMainSilhouette, makeReferenceObject, makeMage } from "../scripts/reference-art-core.mjs";
 
 const background = [189, 200, 192];
 const rgb = (width, height, color = background) => Buffer.from(Array.from({ length: width * height }, () => color).flat());
@@ -100,4 +100,30 @@ test("a grade do castelo mantém as barras e remove o fundo dentro dos vãos", a
   assert.equal(alpha(data, 11, 0, 0), 0);
   assert.equal(alpha(data, 11, 3, 4), 0);
   assert.equal(alpha(data, 11, 5, 4), 255);
+});
+
+test("magas são empacotadas com quadros de descanso/caminhada nas quatro direções", async () => {
+  const width = 1800, height = 1200;
+  const pixels = Buffer.alloc(width * height * 3);
+  for (let i = 0; i < pixels.length; i += 3) { pixels[i] = 189; pixels[i + 1] = 200; pixels[i + 2] = 192; }
+  for (let row = 0; row < 4; row++) {
+    for (let frame = 0; frame < (row === 3 ? 4 : 12); frame++) {
+      const center = 98 + frame * 128, top = 700 + row * 118;
+      for (let y = top + 18; y < top + 54; y++) for (let x = center - 12; x < center + 12; x++) put(pixels, width, x, y, [40, 50, 120]);
+    }
+    for (let frame = 0; frame < 6; frame++) {
+      const center = 1046 + frame * 128, top = 140 + row * 118;
+      for (let y = top + 18; y < top + 54; y++) for (let x = center - 12; x < center + 12; x++) put(pixels, width, x, y, [120, 50, 40]);
+    }
+  }
+  const input = await sharp(pixels, { raw: { width, height, channels: 3 } }).png().toBuffer();
+  const atlas = await makeMage(input, "red");
+  const { data, info } = await sharp(atlas).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  assert.deepEqual([info.width, info.height], [1152, 768]);
+  for (const row of [0, 1, 2, 3]) {
+    const idleFrame = row === 3 ? 3 : 11;
+    assert.equal(alpha(data, info.width, idleFrame * 96 + 48, row * 96 + 30), 255, `descanso ${row}`);
+    assert.equal(alpha(data, info.width, 5 * 96 + 48, (row + 4) * 96 + 30), 255, `caminhada ${row}`);
+  }
+  assert.equal(alpha(data, info.width, 4 * 96 + 48, 3 * 96 + 30), 0, "não inventar quadros extras de costas");
 });

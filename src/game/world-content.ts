@@ -14,6 +14,8 @@ export interface SiteDefinition {
 
 const T = 32;
 export const GLACIER = { x: 137 * T, y: 43 * T, radius: 21 * T };
+/** Rocky mineral basin inspired by the supplied crystal-field reference. */
+export const MINERAL_BASIN = { x: 76 * T, y: 40 * T, rx: 15 * T, ry: 10 * T };
 export const SITES: SiteDefinition[] = [
   { id: "roots", name: "Santuário das Raízes", subtitle: "Pedra antiga · floresta viva", x: 45 * T, y: 77 * T, radius: 180, sprite: "ruin_roots", color: "#b4d76d", lore: "As raízes guardam os nomes de quem chegou antes. No altar, um antigo caçador deixou suprimentos.", reward: { wood: 20, food: 5, fiber: 15 }, guardian: "brute" },
   { id: "echo", name: "Torre dos Ecos", subtitle: "Uma torre que o tempo esqueceu", x: 65 * T, y: 61 * T, radius: 180, sprite: "ruin_tower", color: "#d8ac7b", lore: "O vento atravessa a torre como uma voz. Um mapa gasto revela um depósito de ferramentas.", reward: { stone: 25, iron: 8 }, guardian: "bat" },

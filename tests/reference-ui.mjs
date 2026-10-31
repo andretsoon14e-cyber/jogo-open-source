@@ -105,6 +105,24 @@ try {
   assert.equal(await rings.getByRole("button", { name: "Anel 1" }).getAttribute("aria-pressed"), "true");
   const persisted = await page.evaluate(() => JSON.parse(localStorage.getItem("ilha-save-dificil-single")));
   assert.equal(persisted.territoryLevel, 2); assert.equal(persisted.fenceRing, 1);
+  await workshop.getByRole("button", { name: "Pessoas" }).click();
+  const people = page.getByRole("dialog", { name: "Pessoas & tarefas" }); await people.waitFor();
+  const archer = people.getByRole("article", { name: "Arqueiro" });
+  await archer.getByRole("button", { name: "Treinar" }).click();
+  assert.equal(await archer.getByRole("button", { name: "Treinar" }).getAttribute("aria-pressed"), "true");
+  assert.equal((await page.evaluate(() => JSON.parse(localStorage.getItem("ilha-save-dificil-single")))).specialists.archer.duty, "train");
+  // Reload a pending death and verify the recovery report is not obscured by
+  // the duplicate toast when the player wakes up.
+  const report = { lost: { wood: 20 }, percent: 20, pressure: 8, damaged: 2, destroyed: 1 };
+  await page.goto(base);
+  await page.evaluate((data) => localStorage.setItem("ilha-save-dificil-single", JSON.stringify(data)), { ...saveAt(104 * 32, 88 * 32), hp: 0, pendingRespawn: true, deathReport: report });
+  await page.getByRole("button", { name: "Jogar sozinho" }).click();
+  await page.getByRole("button", { name: "Continuar" }).first().click();
+  const outcome = page.getByRole("dialog", { name: "Fim da partida" }); await outcome.waitFor();
+  await outcome.getByRole("button", { name: "Renascer na fogueira" }).click();
+  const recovery = page.getByRole("status"); await recovery.waitFor();
+  assert.match(await recovery.textContent(), /1 estrutura destruída e 2 danificadas/);
+  assert.equal(await page.getByText("Você acordou ferido na base. Reúna forças e repare os estragos.").count(), 0, "aviso não deve cobrir o relatório");
   await context.close();
 
   const phoneContext = await contextFor({ width: 320, height: 568 }, true);
@@ -136,6 +154,12 @@ try {
   assert.match(await phoneExpansion.textContent(), /Território 2\/4/);
   await phoneWorkshop.getByTitle("Cerca dupla").click();
   assert.equal(await phoneWorkshop.getByRole("button", { name: "Anel 2" }).getAttribute("aria-pressed"), "true");
+  await phoneWorkshop.getByRole("button", { name: "Pessoas" }).click();
+  const phonePeople = phone.getByRole("dialog", { name: "Pessoas & tarefas" }); await phonePeople.waitFor();
+  assert.equal(await phonePeople.evaluate((el) => el.scrollWidth > el.clientWidth + 2), false, "painel de pessoas transborda no celular");
+  const phoneArcher = phonePeople.getByRole("article", { name: "Arqueiro" });
+  await phoneArcher.getByRole("button", { name: "Defender base" }).click();
+  assert.equal(await phoneArcher.getByRole("button", { name: "Defender base" }).getAttribute("aria-pressed"), "true");
   await phoneContext.close();
   assert.deepEqual(errors, []);
   console.log("OK: visitas às cinco cenas, forja, pausa, teclado e tela pequena com toque.");

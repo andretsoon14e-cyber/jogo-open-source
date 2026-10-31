@@ -82,3 +82,43 @@ test("rajadas de vento reutilizam ruído, terminam sozinhas e respeitam pausa e 
   sfx.destroy();
   assert.equal(ctx.closed, true);
 });
+
+test("animais têm vozes distintas e riachos/fogo reutilizam som limitado", () => {
+  const sfx = new Sfx(), ctx = new FakeAudioContext(); sfx.ctx = ctx;
+  sfx.animal("goose", 0.8);
+  assert.equal(ctx.oscillators[0].frequency.events[0][1], 290);
+  sfx.animal("rabbit", 1);
+  assert.equal(ctx.oscillators.length, 1, "vários animais não acumulam chamadas");
+  ctx.currentTime = 10; sfx.animal("goat", 1);
+  assert.equal(ctx.oscillators[1].frequency.events[0][1], 190);
+  ctx.currentTime = 20; sfx.animal("rabbit", 1);
+  assert.equal(ctx.oscillators[2].frequency.events[0][1], 720);
+  sfx.water(0); sfx.fire(0);
+  assert.equal(ctx.sources.length, 0, "áudio distante não cria fontes");
+  sfx.water(0.8); sfx.fire(1);
+  assert.equal(ctx.sources.length, 2);
+  assert.equal(ctx.buffers, 1, "água e fogo compartilham o buffer de ruído");
+  assert.deepEqual(ctx.sources.map((source) => source.started.slice(1)), [[0, 1], [0, 0.42]]);
+  sfx.water(1); sfx.fire(1);
+  assert.equal(ctx.sources.length, 2, "não cria uma fonte por quadro");
+  ctx.currentTime = 30; ctx.state = "suspended";
+  sfx.water(1); sfx.fire(1); sfx.animal("goose", 1);
+  assert.equal(ctx.sources.length, 2);
+  assert.equal(ctx.oscillators.length, 3);
+  sfx.destroy();
+});
+
+test("pássaros diurnos e impactos de combate são discretos e não se acumulam", () => {
+  const sfx = new Sfx(), ctx = new FakeAudioContext(); sfx.ctx = ctx;
+  sfx.bird(); assert.equal(ctx.oscillators.length, 2, "dois trinados curtos");
+  sfx.bird(); assert.equal(ctx.oscillators.length, 2, "pássaros usam intervalo global");
+  sfx.hit(); assert.equal(ctx.sources.length, 1);
+  sfx.hit(); assert.equal(ctx.sources.length, 1, "golpes simultâneos não somam ruído ilimitado");
+  ctx.currentTime = 1; sfx.hit(); assert.equal(ctx.sources.length, 2);
+  sfx.monsterDeath("hulk", 0); assert.equal(ctx.sources.length, 2, "criaturas distantes não geram som");
+  sfx.monsterDeath("hulk", 0.7); assert.equal(ctx.sources.length, 3);
+  assert.equal(ctx.buffers, 1, "impactos reutilizam ruído");
+  sfx.vol = 0; ctx.currentTime = 100; sfx.bird(); sfx.hit(); sfx.monsterDeath("imp", 1);
+  assert.equal(ctx.sources.length, 3); assert.equal(ctx.oscillators.length, 5);
+  sfx.destroy();
+});

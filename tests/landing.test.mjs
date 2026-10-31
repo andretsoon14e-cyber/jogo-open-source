@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import engineModule from "../src/game/engine.ts";
 import spritesModule from "../src/game/sprites.ts";
 import characterModule from "../src/game/character-art.ts";
@@ -115,6 +116,15 @@ test("locais das referências têm aproximação por terra em várias sementes",
         const index = ny * SIZE + nx;
         if (!visited[index] && game.tiles[index] !== 0) { visited[index] = 1; queue[tail++] = index; }
       }
+    }
+    for (const chest of game.chests.filter((item) => item.rare)) {
+      const x = Math.floor(chest.x / TILE), y = Math.floor(chest.y / TILE);
+      assert.ok(visited[y * SIZE + x], `${chest.label}: inacessível na semente ${seed}`);
+    }
+    assert.ok(visited[40 * SIZE + 76], `campo mineral inacessível na semente ${seed}`);
+    for (const rescue of game.rescues) {
+      const x = Math.floor(rescue.x / TILE), y = Math.floor(rescue.y / TILE);
+      assert.ok(visited[y * SIZE + x], `${rescue.id}: resgate inacessível por terra na semente ${seed}`);
     }
     for (const prop of game.worldProps.filter((item) => item.sprite.startsWith("reference_"))) {
       let reachable = false;
@@ -522,8 +532,12 @@ test("as ruínas possuem recompensa única e descobertas persistentes", () => {
   const after = game.inv.wood;
   game.tryInteract();
   assert.equal(game.inv.wood, after, "recompensa foi duplicada");
+  assert.equal(game.crystalDiscovered, false);
+  game.inspectSite("arch");
+  assert.equal(game.crystalDiscovered, true, "cristal encontrado em altar também libera a mineração");
   game.saveGame(true);
   const loaded = makeEngine(1, true);
+  assert.equal(loaded.crystalDiscovered, true);
   assert.ok(loaded.claimedSites.has(site.id));
   assert.ok(loaded.discoveredSites.has(site.id));
   assert.equal(loaded.inv.wood, after);
@@ -596,7 +610,7 @@ test("fogueiras geram partículas pelo tempo da simulação, respeitam o limite 
   const random = Math.random;
   try {
     game.skipCutscene();
-    const fire = { type: "campfire", x: game.px, y: game.py, hp: 100, maxHp: 100, prodT: 0, open: false, rotation: 0, fenceStyle: "palisade" };
+    const fire = { type: "campfire", x: game.px + 50, y: game.py, hp: 100, maxHp: 100, prodT: 0, open: false, rotation: 0, fenceStyle: "palisade" };
     game.structures = [fire]; game.centerCamera();
     Math.random = () => 0.1;
     for (let i = 0; i < 100; i++) game.drawStructure(fire, -game.camX, -game.camY, i / 120);
@@ -866,4 +880,297 @@ test("trechos de anéis diferentes se conectam separadamente e portões abertos 
   game.drawFenceConnections(-BASE.x + 640, -BASE.y + 360);
   assert.equal(links.length, 1);
   game.destroy();
+});
+
+test("baú da base é sólido antes e depois de aberto, mas permite saída de save antigo", () => {
+  const game = makeEngine(61);
+  try {
+    game.state = "playing"; game.escort.active = false;
+    game.updateSpawns = noop; game.updateMonsters = noop;
+    const chest = game.chests.find((ch) => ch.label === "Kit do Rian");
+    assert.ok(chest);
+    game.px = chest.x - 48; game.py = chest.y - 12;
+    for (let i = 0; i < 30; i++) game.update(1 / 60, { mx: 1, my: 0 });
+    assert.equal(game.baseChestContains(game.px, game.py), false);
+    assert.ok(game.px < chest.x - 33, "não atravessa o baú fechado");
+    game.tryInteract();
+    assert.equal(chest.opened, true, "o baú continua alcançável para interagir");
+    for (let i = 0; i < 30; i++) game.update(1 / 60, { mx: 1, my: 0 });
+    assert.equal(game.baseChestContains(game.px, game.py), false, "continua sólido após abrir");
+    game.px = chest.x; game.py = chest.y - 10; game.pvx = game.pvy = 0;
+    for (let i = 0; i < 45; i++) game.update(1 / 60, { mx: 1, my: 0 });
+    assert.ok(game.px > chest.x + 34, "save antigo dentro do baú pode sair");
+    for (let i = 0; i < 45; i++) game.update(1 / 60, { mx: -1, my: 0 });
+    assert.ok(game.px > chest.x + 33, "após sair, não entra novamente");
+  } finally { game.destroy(); }
+});
+
+test("pode cruzar a fogueira, mas as chamas dão dano e fazem a tela tremer", () => {
+  const game = makeEngine(62);
+  try {
+    game.state = "playing"; game.escort.active = false;
+    game.updateSpawns = noop; game.updateMonsters = noop;
+    const fire = { type: "campfire", x: BASE.x - 10, y: BASE.y + 100, hp: 180, maxHp: 180, prodT: 0, open: false, rotation: 0, fenceStyle: "palisade" };
+    game.structures.push(fire);
+    game.px = fire.x - 40; game.py = fire.y; game.hp = 100;
+    let burned = false, shook = false;
+    for (let i = 0; i < 50; i++) {
+      game.update(1 / 60, { mx: 1, my: 0 });
+      burned ||= game.hp < 100;
+      shook ||= game.shake > 0;
+    }
+    assert.ok(game.px > fire.x + 20, "o fogo não deve bloquear o caminho");
+    assert.ok(burned, "pisar nas chamas causa dano");
+    assert.ok(shook, "o impacto faz a tela tremer");
+    game.hp = 50; game.px = fire.x + 55; game.py = fire.y;
+    game.updateStructures(1);
+    assert.ok(game.hp > 50, "calor ainda recupera vida ao lado da fogueira");
+  } finally { game.destroy(); }
+});
+
+test("ambiente toca sons por proximidade, aceita gesto na interface e respeita os controles", () => {
+  const game = makeEngine(63);
+  try {
+    let unlocked = 0;
+    game.sfx.ensure = () => { unlocked++; };
+    game.onAudioGesture();
+    assert.equal(unlocked, 1, "qualquer gesto de ponteiro pode desbloquear o áudio");
+    const heard = [];
+    game.sfx.wind = () => heard.push(["wind"]);
+    game.sfx.water = (v) => heard.push(["water", v]);
+    game.sfx.fire = (v) => heard.push(["fire", v]);
+    game.sfx.animal = (k, v) => heard.push(["animal", k, v]);
+    game.px = BASE.x; game.py = BASE.y;
+    game.animals = [{ kind: "goose", x: game.px + 40, y: game.py, vx: 0, vy: 0, t: 1, hp: 14, dir: 1, flee: 0 }];
+    game.structures = [{ type: "campfire", x: game.px + 40, y: game.py, hp: 180, maxHp: 180, prodT: 0, open: false, rotation: 0, fenceStyle: "palisade" }];
+    const tx = Math.floor(game.px / TILE), ty = Math.floor(game.py / TILE);
+    game.tiles[ty * SIZE + tx + 1] = 0;
+    game.updateAmbience();
+    assert.ok(heard.some(([kind, value]) => kind === "water" && value > 0));
+    assert.ok(heard.some(([kind, value]) => kind === "fire" && value > 0));
+    assert.ok(heard.some(([kind, animal, value]) => kind === "animal" && animal === "goose" && value > 0));
+    assert.ok(heard.some(([kind]) => kind === "wind"));
+    heard.length = 0;
+    game.settings.ambientSounds = game.settings.creatureSounds = game.settings.windSounds = false;
+    game.updateAmbience();
+    assert.deepEqual(heard, []);
+  } finally { game.destroy(); }
+});
+
+test("riachos e campo mineral preservam índices de recursos antigos e rotas por terra", () => {
+  // Digests of type/maxHp before adding biomes (commit 7997906). nodeHp saves
+  // refer to indices; moving a node away from a new creek is OK, reordering is not.
+  const legacy = [
+    [1, 2144, "60dfbabaea3c1ea6c0f8fbc111da34058d77f0c83ca4805385adc602efe73e7c"],
+    [17, 2101, "ad04a21d294345d0aeece08a535918bc95f38db36010a4ed54f9c0c5109efe22"],
+    [77, 2038, "149ba56b7a19061e10d0eb58a89f40cb261664c94c24efc04c3e85a711e649f8"],
+  ];
+  for (const [seed, oldCount, digest] of legacy) {
+    const game = makeEngine(seed);
+    try {
+      const signature = game.nodes.slice(0, oldCount).map((node) => `${node.type}:${node.maxHp}`).join("|");
+      assert.equal(createHash("sha256").update(signature).digest("hex"), digest, `índices mudaram na semente ${seed}`);
+      assert.ok(game.nodes.length > oldCount + 15, "novos depósitos foram anexados");
+      assert.equal(game.tileAt(76 * TILE, 40 * TILE), 13, "centro dos campos de cristal");
+      assert.ok(canReachBase(game), "os riachos não devem isolar o caminho da base");
+      assert.ok(game.nodes.every((node) => game.tileAt(node.x, node.y) !== 0), "nós não ficam sob a água");
+      const basins = [[17, 39, 78, 95], [158, 178, 103, 132], [66, 85, 146, 163]];
+      for (const [x0, x1, y0, y1] of basins) {
+        let water = 0;
+        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (game.tiles[y * SIZE + x] === 0) water++;
+        assert.ok(water >= 20, `riacho ausente na região ${x0},${y0}`);
+      }
+    } finally { game.destroy(); }
+  }
+});
+
+test("tesouros raros e construções de saves antigos sobrevivem aos novos biomas", () => {
+  storage.clear();
+  const game = makeEngine(77);
+  try {
+    game.skipCutscene();
+    game.nodes[100].hp = 0; game.nodes[100].respawn = 30; game.depletedNodes.add(game.nodes[100]);
+    game.chests[0].opened = true;
+    assert.equal(game.chests.filter((chest) => chest.rare).length, 4);
+    assert.ok(game.chests.filter((chest) => chest.rare).every((chest) => game.tileAt(chest.x, chest.y) !== 0));
+    game.saveGame(true);
+    const data = JSON.parse(storage.get(game.saveKey()));
+    // Old saves only knew the first five chests and could have built where a
+    // stream now flows; the structure must remain on a small dry foundation.
+    data.chests = data.chests.slice(0, 5);
+    const at = game.tiles.findIndex((tile, index) => {
+      const x = index % SIZE, y = Math.floor(index / SIZE);
+      return tile === 0 && x >= 20 && x <= 37 && y >= 80 && y <= 95;
+    });
+    assert.ok(at >= 0);
+    const fire = { type: "campfire", x: (at % SIZE + 0.5) * TILE, y: (Math.floor(at / SIZE) + 0.5) * TILE, hp: 90, open: false, rotation: 0 };
+    data.structures.push(fire);
+    storage.set(game.saveKey(), JSON.stringify(data));
+    const loaded = makeEngine(123, true); // saved seed differs from requested seed
+    try {
+      assert.equal(loaded.opts.seed, 77);
+      assert.equal(loaded.nodes[100].type, game.nodes[100].type);
+      assert.equal(loaded.nodes[100].hp, 0);
+      assert.equal(loaded.chests[0].opened, true);
+      assert.ok(loaded.chests.slice(5).every((chest) => chest.rare && !chest.opened));
+      assert.ok(loaded.structures.some((s) => s.type === "campfire" && s.x === fire.x && s.y === fire.y));
+      assert.equal(loaded.tileAt(fire.x, fire.y), 7, "fundação do save fica sobre ponte");
+      loaded.chests[5].opened = true; loaded.saveGame(true);
+      const again = makeEngine(77, true);
+      try { assert.equal(again.chests[5].opened, true, "tesouro novo não pode ser saqueado duas vezes"); }
+      finally { again.destroy(); }
+    } finally { loaded.destroy(); }
+  } finally { game.destroy(); storage.clear(); }
+});
+
+test("fauna varia por região e criaturas raras dão recompensas especiais", () => {
+  const game = makeEngine(77), originalRandom = Math.random;
+  try {
+    for (const [tile, expected] of [[2, "goose"], [3, "goat"], [8, "goat"], [13, "rabbit"]]) {
+      const at = game.tiles.findIndex((value, index) => {
+        const x = (index % SIZE + 0.5) * TILE, y = (Math.floor(index / SIZE) + 0.5) * TILE;
+        return value === tile && Math.hypot(x - BASE.x, y - BASE.y) > 500;
+      });
+      assert.ok(at >= 0, `terreno ${tile} não encontrado`);
+      const x = (at % SIZE + 0.5) * TILE, y = (Math.floor(at / SIZE) + 0.5) * TILE;
+      const samples = [x / (SIZE * TILE), y / (SIZE * TILE), 0.75, 0.01, 0.5];
+      Math.random = () => samples.shift() ?? 0.5;
+      game.animals = []; game.spawnAnimals(1);
+      assert.equal(game.animals[0]?.kind, expected, `fauna do terreno ${tile}`);
+      assert.equal(game.animals[0]?.rare, true);
+      game.drops = []; game.hitAnimal(game.animals[0], 1000);
+      assert.ok(game.drops.some((drop) => drop.res === "crystal"), "animal raro deixa cristal");
+    }
+    Math.random = originalRandom;
+    game.monsters = []; game.drops = [];
+    const x = 76 * TILE, y = 40 * TILE;
+    game.spawnMonster(x, y, "brute", true);
+    const creature = game.monsters[0];
+    assert.equal(creature.skin, "golem");
+    assert.equal(creature.rare, true);
+    assert.equal(creature.hp, game.monsterCfg("brute").hp * 1.6);
+    game.killMonster(creature);
+    assert.ok(game.drops.some((drop) => drop.res === "crystal" && drop.n === 2));
+  } finally { Math.random = originalRandom; game.destroy(); }
+});
+
+test("primeiras noites têm teto menor, crescem com dias e dificuldade e não empilham monstros", () => {
+  storage.clear();
+  const game = makeEngine(5); simplifySimulation(game); game.escort.active = false;
+  game.tileAt = () => 2; game.referenceStructureAt = () => false; game.blockedByWall = () => false;
+  game.monsters = []; game.day = 1;
+  const early = game.monsterCap();
+  game.spawnWave(20);
+  assert.ok(game.monsters.length <= early && game.monsters.length > 0);
+  for (let i = 0; i < game.monsters.length; i++) for (let j = i + 1; j < game.monsters.length; j++) {
+    const a = game.monsters[i], b = game.monsters[j];
+    assert.ok(Math.hypot(a.x - b.x, a.y - b.y) >= Math.max(42, a.r + b.r + 16));
+  }
+  game.day = 5; const middle = game.monsterCap(); game.day = 15; const late = game.monsterCap();
+  assert.ok(early < middle && middle < late && late <= 54);
+  game.monsters = []; game.spawnMonster(1200, 1200, "imp"); game.spawnMonster(1200, 1200, "imp");
+  for (let i = 0; i < 20; i++) game.separateMonsters(0.1);
+  assert.ok(Math.hypot(game.monsters[0].x - game.monsters[1].x, game.monsters[0].y - game.monsters[1].y) > 29);
+  game.destroy();
+});
+
+test("moradores mantêm direção, pés no chão e param diante de obstáculos", () => {
+  storage.clear(); const game = makeEngine(17); simplifySimulation(game);
+  const v = game.villagers[0]; game.villagers = [v]; game.chests = []; game.nearbyNodes = () => [];
+  v.x = 58 * TILE; v.y = 122 * TILE; v.dir = 0; v.steps = 0; v.vx = 27; v.vy = 0; v.t = 5;
+  game.px = v.x + 1000; game.py = v.y; game.tileAt = () => 2;
+  const wall = v.x + 5; game.referenceStructureAt = (x) => x >= wall;
+  game.updateVillagers(0.1); assert.ok(v.x > 58 * TILE); assert.ok(v.steps > 0);
+  game.updateVillagers(0.1);
+  assert.ok(v.x < wall); assert.equal(v.vx, 0); assert.equal(v.vy, 0);
+  const dir = v.dir; game.px = v.x - 100; game.updateVillagers(0.1);
+  assert.equal(v.dir, dir, "parado não deve girar instantaneamente para o jogador");
+  game.destroy();
+});
+
+test("queda escala com dificuldade e pressão, preserva itens preciosos e só aplica saque uma vez", () => {
+  function makeRaid(difficulty, pressure) {
+    storage.clear();
+    const game = new Engine({ canvas: canvas(), mode: "single", difficulty, playerName: "Teste", seed: 22, continueSave: false, onUi: noop });
+    game.skipCutscene(); game.escort.active = false;
+    game.inv = { wood: 100, stone: 100, fiber: 100, food: 100, iron: 40, crystal: 20 };
+    game.tools = { axe: 3, pick: 2, sword: 3 }; game.equipment = { harness: true, coat: true, charm: true };
+    game.structures = [{ type: "campfire", x: BASE.x, y: BASE.y, hp: 180, maxHp: 180, open: false, rotation: 0, fenceStyle: "palisade", prodT: 0 }];
+    for (let i = 0; i < 50; i++) game.structures.push({ type: i % 5 ? "wall" : "farm", x: BASE.x + 300 + i * 40, y: BASE.y, hp: 200, maxHp: 200, open: false, rotation: 0, fenceStyle: "palisade", prodT: 0 });
+    game.raidPeak = pressure; game.monsters = []; game.die(); return game;
+  }
+  const small = makeRaid("dificil", 0), smallLoss = small.deathReport.percent, smallBroken = small.deathReport.destroyed;
+  assert.equal(small.state, "gameover"); assert.equal(small.pendingRespawn, true);
+  assert.equal(small.inv.iron, 40); assert.equal(small.inv.crystal, 20); assert.deepEqual(small.tools, { axe: 3, pick: 2, sword: 3 });
+  assert.ok(small.structures.some((s) => s.type === "campfire")); small.destroy();
+  const large = makeRaid("dificil", 12);
+  assert.ok(large.deathReport.percent > smallLoss); assert.ok(large.deathReport.destroyed >= smallBroken);
+  const beforeReload = { inv: { ...large.inv }, structures: large.structures.length, report: { ...large.deathReport } };
+  const saved = JSON.parse(localStorage.getItem(large.saveKey())); assert.equal(saved.pendingRespawn, true);
+  large.destroy();
+  const loaded = new Engine({ canvas: canvas(), mode: "single", difficulty: "dificil", playerName: "Teste", seed: 22, continueSave: true, onUi: noop });
+  assert.equal(loaded.state, "gameover"); assert.deepEqual(loaded.inv, beforeReload.inv); assert.equal(loaded.structures.length, beforeReload.structures);
+  loaded.respawn();
+  assert.equal(loaded.state, "playing"); assert.equal(loaded.pendingRespawn, false);
+  assert.equal(loaded.hp, Math.ceil(loaded.maxHp * 0.3)); assert.equal(loaded.stamina, 25);
+  assert.ok(loaded.wakeT > 0 && loaded.invulnT >= 5); assert.deepEqual(loaded.inv, beforeReload.inv);
+  assert.ok(Math.hypot(loaded.px - BASE.x, loaded.py - BASE.y) > 25, "não acordar dentro das chamas");
+  assert.ok(loaded.allies.every((ally) => Math.hypot(ally.x - loaded.px, ally.y - loaded.py) >= 135), "companheiros não devem cobrir o personagem ferido");
+  const after = JSON.parse(localStorage.getItem(loaded.saveKey())); assert.equal(after.pendingRespawn, false);
+  loaded.destroy();
+  const impossible = makeRaid("impossivel", 12);
+  assert.ok(impossible.deathReport.percent > beforeReload.report.percent);
+  assert.ok(impossible.deathReport.destroyed > beforeReload.report.destroyed);
+  assert.equal(impossible.inv.crystal, 20); assert.equal(impossible.inv.iron, 40);
+  impossible.respawn(); assert.equal(impossible.state, "playing", "até no impossível a base pode ser reconstruída");
+  impossible.destroy();
+});
+
+test("resgates são independentes, exigem combate e preservam o progresso após salvar", () => {
+  storage.clear(); const game = makeEngine(77); game.skipCutscene(); game.escort.active = false;
+  const rescue = game.rescues.find((entry) => entry.id === "archer");
+  game.px = rescue.x + 150; game.py = rescue.y; game.monsters = [];
+  game.updateRescues(); assert.equal(rescue.phase, "fighting");
+  assert.ok(rescue.defenders.length >= 1 && rescue.defenders.length <= 2);
+  assert.equal(game.hireSpecialist("archer"), false, "não pode contratar antes de salvar");
+  const other = game.specialists.mage;
+  for (const monster of rescue.defenders) { monster.hp = 0; game.killMonster(monster); }
+  game.updateRescues(); assert.equal(game.specialists.archer.rescued, true);
+  assert.equal(other.rescued, false, "não libera todas as profissões juntas");
+  game.px = rescue.x; game.py = rescue.y; game.tryInteract();
+  assert.equal(game.specialists.archer.hired, true);
+  assert.equal(game.specialistLevel(game.specialists.archer), 1);
+  assert.equal(game.allies.filter((a) => a.id === "archer").length, 1);
+  game.saveGame(true); game.destroy();
+  const loaded = makeEngine(77, true);
+  assert.equal(loaded.specialists.archer.hired, true);
+  assert.equal(loaded.allies.filter((a) => a.id === "archer").length, 1);
+  assert.equal(loaded.specialists.mage.rescued, false);
+  loaded.destroy(); storage.clear();
+});
+
+test("treino, forja e mineração precisam das tarefas, tempo e recursos corretos", () => {
+  storage.clear(); const game = makeEngine(77); game.skipCutscene(); game.escort.active = false;
+  game.time = 10; game.monsters = []; game.structures = [];
+  for (const id of ["archer", "miner"]) { game.specialists[id].rescued = true; assert.equal(game.hireSpecialist(id), true); }
+  const archer = game.specialists.archer, ally = game.allies.find((a) => a.id === "archer");
+  ally.x = BASE.x; ally.y = BASE.y; game.inv = { wood: 100, stone: 100, fiber: 100, food: 100, iron: 100, crystal: 100 };
+  assert.equal(game.upgradeSpecialist("archer"), false, "sem forja nem treino");
+  assert.equal(game.setSpecialistDuty("archer", "mine"), false);
+  assert.equal(game.setSpecialistDuty("archer", "train"), true);
+  game.updateSpecialists(46); assert.equal(game.specialistLevel(archer), 1, "treino sozinho não fabrica arma");
+  game.structures.push({ type: "forge", x: BASE.x, y: BASE.y, hp: 100, maxHp: 100, prodT: 0, open: false, rotation: 0, fenceStyle: "palisade" });
+  const iron = game.inv.iron; assert.equal(game.upgradeSpecialist("archer"), true);
+  assert.equal(game.specialistLevel(archer), 2); assert.ok(game.inv.iron < iron);
+  assert.equal(game.upgradeSpecialist("archer"), false, "próximo treino necessário");
+  const miner = game.allies.find((a) => a.id === "miner"); miner.x = BASE.x; miner.y = BASE.y;
+  let ore = game.inv.iron; game.updateSpecialists(46); assert.equal(game.inv.iron, ore, "sem pedreira não minera");
+  game.structures.push({ type: "quarry", x: BASE.x, y: BASE.y, hp: 100, maxHp: 100, prodT: 0, open: false, rotation: 0, fenceStyle: "palisade" });
+  game.updateSpecialists(46); assert.equal(game.inv.iron, ore + 2);
+  const crystals = game.inv.crystal; game.crystalDiscovered = true; game.updateSpecialists(46); assert.equal(game.inv.crystal, crystals + 1);
+  game.setSpecialistDuty("miner", "rest"); ore = game.inv.iron; game.updateSpecialists(50); assert.equal(game.inv.iron, ore);
+  game.saveGame(true); game.destroy();
+  const loaded = makeEngine(77, true);
+  assert.equal(loaded.specialists.archer.weaponLevel, 2); assert.equal(loaded.specialists.miner.duty, "rest");
+  assert.equal(loaded.crystalDiscovered, true); loaded.destroy(); storage.clear();
 });

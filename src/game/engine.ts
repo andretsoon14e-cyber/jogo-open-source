@@ -4,14 +4,14 @@
 
 import { drawSign, drawFlag } from "@/game/art";
 import { drawSprite, drawSwaySprite, drawCharacter, drawToolSprite, spriteSize, getBaked, SPRITES, SCALE, viewFromAngle } from "@/game/sprites";
-import { drawCraftOrc, drawCraftPlant, hasCraftHero, hasCraftOrcs, loadCraftPix } from "@/game/craftpix";
-import { drawReferenceArcher, drawReferenceIcon, drawReferenceObject, drawReferencePlant, hasReferenceArcher, hasReferenceObject, hasReferenceScene, loadReferenceArt, type ReferenceObject, type ReferenceScene } from "@/game/reference-art";
+import { drawCraftOrc, drawCraftPlant, drawCraftVillager, hasCraftHero, hasCraftOrcs, loadCraftPix } from "@/game/craftpix";
+import { drawReferenceArcher, drawReferenceDeposit, drawReferenceIcon, drawReferenceObject, drawReferencePlant, drawReferenceResident, hasReferenceArcher, hasReferenceObject, hasReferenceScene, loadReferenceArt, type ReferenceObject, type ReferenceScene, type ResidentLook } from "@/game/reference-art";
 import { Terrain, drawWaterAnim } from "@/game/terrain";
 import { MusicManager } from "@/game/music";
 import { Sfx } from "@/game/sfx";
 import { GameSettings, DEFAULT_SETTINGS } from "@/game/settings";
 import { FrameLimiter } from "@/game/frame-limiter";
-import { SITES, GLACIER, EQUIPMENT, type EquipmentKey } from "@/game/world-content";
+import { SITES, GLACIER, MINERAL_BASIN, EQUIPMENT, type EquipmentKey } from "@/game/world-content";
 
 export type Difficulty = "dificil" | "muito-dificil" | "impossivel";
 export type Mode = "single" | "multi";
@@ -20,6 +20,8 @@ export type ResKey = "wood" | "stone" | "fiber" | "food" | "iron" | "crystal";
 export type ToolKey = "axe" | "pick" | "sword";
 export type CombatWeapon = "sword" | "bow";
 export type FenceStyle = "rustic" | "palisade" | "stone" | "hedge";
+export type SpecialistId = "archer" | "mage" | "guard" | "miner";
+export type SpecialistDuty = "follow" | "defend" | "train" | "mine" | "rest";
 
 export const RES_LABEL: Record<ResKey, string> = {
   wood: "Madeira", stone: "Pedra", fiber: "Fibra", food: "Comida", iron: "Ferro", crystal: "Cristal",
@@ -30,7 +32,7 @@ export const RES_ICON: Record<ResKey, string> = {
 export const TOOL_LABEL: Record<ToolKey, string> = { axe: "Machado", pick: "Picareta", sword: "Espada" };
 export const TOOL_ICON: Record<ToolKey, string> = { axe: "🪓", pick: "⛏️", sword: "⚔️" };
 
-export type GamePanel = "build" | "forge" | "inventory" | "bestiary" | "reference" | "none";
+export type GamePanel = "build" | "forge" | "inventory" | "bestiary" | "people" | "reference" | "none";
 
 export interface BuildOption {
   id: string; name: string; icon: string; desc: string;
@@ -45,6 +47,18 @@ export interface UpgradeOption {
 export interface QuestView {
   id: string; name: string; desc: string; done: boolean; progress: number; target: number; reward: string;
 }
+export interface SpecialistView {
+  id: SpecialistId; name: string; role: string; hint: string; rescued: boolean; hired: boolean;
+  duty: SpecialistDuty; level: number; weaponLevel: number; training: number; trainingTarget: number;
+  upgradeCost: Partial<Record<ResKey, number>>; upgradeReason: string; affordable: boolean;
+}
+export interface DeathReport {
+  lost: Partial<Record<ResKey, number>>;
+  percent: number;
+  pressure: number;
+  damaged: number;
+  destroyed: number;
+}
 export interface Snapshot {
   state: GameState;
   hp: number; maxHp: number; stamina: number;
@@ -54,11 +68,13 @@ export interface Snapshot {
   score: number; kills: number; deaths: number;
   quests: QuestView[];
   allies: string[];
+  specialists: SpecialistView[];
   baseLevel: number;
   buildOptions: BuildOption[];
   upgradeOptions: UpgradeOption[];
   raftReasons: string[];
   canRespawn: boolean;
+  recovery: { waking: boolean; remaining: number; report: DeathReport } | null;
   outcome: "morte" | "vitoria" | null;
   teamScore: number;
   mpCount: number;
@@ -123,7 +139,7 @@ const TILE = 32;
 const W = 190, H = 190;
 const WPX = W * TILE, HPX = H * TILE;
 
-const T_WATER = 0, T_SAND = 1, T_GRASS = 2, T_DARK = 3, T_PATH = 4, T_ROCK = 5, T_CAVE = 6, T_BRIDGE = 7, T_SNOW = 8, T_ICE = 9, T_RUIN = 10, T_SNOW_PATH = 11, T_NECRO = 12;
+const T_WATER = 0, T_SAND = 1, T_GRASS = 2, T_DARK = 3, T_PATH = 4, T_ROCK = 5, T_CAVE = 6, T_BRIDGE = 7, T_SNOW = 8, T_ICE = 9, T_RUIN = 10, T_SNOW_PATH = 11, T_NECRO = 12, T_MINERAL = 13;
 
 // Keep the original generation radii for stable resource indices in old saves.
 const VILLAGE = { x: 58 * TILE, y: 122 * TILE, r: 13 * TILE };
@@ -170,11 +186,11 @@ const TERRITORIES = [
   { radius: 960, fenceRadius: 830.4, slots: 149, level: 12, requires: "tower", cost: { wood: 280, stone: 300, iron: 80, crystal: 10 } },
 ] as const;
 
-interface DiffCfg { resMult: number; mHp: number; mDmg: number; spawn: number; permadeath: boolean; lossOnDeath: number; }
+interface DiffCfg { resMult: number; mHp: number; mDmg: number; spawn: number; lossOnDeath: number; }
 const DIFF: Record<Difficulty, DiffCfg> = {
-  "dificil": { resMult: 1, mHp: 1.35, mDmg: 1.3, spawn: 1.2, permadeath: false, lossOnDeath: 0.35 },
-  "muito-dificil": { resMult: 2, mHp: 1.9, mDmg: 1.85, spawn: 1.6, permadeath: false, lossOnDeath: 0.6 },
-  "impossivel": { resMult: 3.5, mHp: 2.7, mDmg: 2.6, spawn: 2.2, permadeath: true, lossOnDeath: 1 },
+  "dificil": { resMult: 1, mHp: 1.35, mDmg: 1.3, spawn: 1.2, lossOnDeath: 0.12 },
+  "muito-dificil": { resMult: 2, mHp: 1.9, mDmg: 1.85, spawn: 1.6, lossOnDeath: 0.22 },
+  "impossivel": { resMult: 3.5, mHp: 2.7, mDmg: 2.6, spawn: 2.2, lossOnDeath: 0.33 },
 };
 export const DIFF_LABEL: Record<Difficulty, string> = {
   "dificil": "Difícil", "muito-dificil": "Muito Difícil", "impossivel": "Impossível",
@@ -193,27 +209,41 @@ interface Monster {
   dir: number;
   siege: boolean;
   skin: string;
+  rare?: boolean;
   defeated?: boolean;
 }
-interface Projectile { x: number; y: number; vx: number; vy: number; t: number; dmg: number; kind?: "ally" | "player"; }
+interface Projectile { x: number; y: number; vx: number; vy: number; t: number; dmg: number; kind?: "ally" | "player" | "magic"; }
 type StructType = "campfire" | "wall" | "gate" | "workbench" | "house" | "farm" | "sawmill" | "quarry" | "forge" | "tower" | "raft";
 interface Structure { type: StructType; x: number; y: number; prodT: number; hp: number; maxHp: number; open: boolean; rotation: number; fenceStyle: FenceStyle; }
 interface Particle { x: number; y: number; vx: number; vy: number; t: number; max: number; c: string; s: number; grav: number; }
 interface Floater { x: number; y: number; t: number; text: string; c: string; }
 interface Ally { id: string; name: string; color: string; x: number; y: number; vx: number; vy: number; atkCd: number; downT: number; dir: number; }
 interface RemotePlayer { id: string; name: string; x: number; y: number; hp: number; tx: number; ty: number; }
-interface Villager { x: number; y: number; vx: number; vy: number; t: number; c: string; look: string; line: string; }
+interface Villager { x: number; y: number; vx: number; vy: number; t: number; dir: number; steps: number; c: string; look: string; line: string; }
 type AnimalKind = "rabbit" | "goose" | "goat";
-interface Animal { kind: AnimalKind; x: number; y: number; vx: number; vy: number; t: number; hp: number; dir: number; flee: number; }
-interface Chest { x: number; y: number; opened: boolean; loot: Partial<Record<ResKey, number>>; label: string; }
+interface Animal { kind: AnimalKind; x: number; y: number; vx: number; vy: number; t: number; hp: number; dir: number; flee: number; rare?: boolean; }
+interface Chest { x: number; y: number; opened: boolean; loot: Partial<Record<ResKey, number>>; label: string; rare?: boolean; }
 interface WorldProp { sprite: string; x: number; y: number; }
 interface Bubble { who: string; text: string; t: number; dur: number; }
+interface SpecialistProgress { id: SpecialistId; rescued: boolean; hired: boolean; duty: SpecialistDuty; training: number; weaponLevel: number; workTime: number; }
+interface RescueEncounter { id: SpecialistId; x: number; y: number; phase: "waiting" | "fighting" | "safe"; defenders: Monster[]; }
 interface Escort { active: boolean; wp: { x: number; y: number; line: string }[]; i: number; waitT: number; }
+
+const SPECIALIST_IDS: SpecialistId[] = ["archer", "mage", "guard", "miner"];
+const SPECIALISTS: Record<SpecialistId, { name: string; role: string; hint: string; x: number; y: number; color: string }> = {
+  archer: { name: "Arqueiro", role: "Combate à distância", hint: "A oeste da base, entre a clareira e a vila", x: BASE.x - 1050, y: BASE.y + 400, color: "#b7d68e" },
+  mage: { name: "Maga", role: "Magia à distância", hint: "Nas proximidades das ruínas a oeste", x: 45 * TILE + 120, y: 77 * TILE + 100, color: "#9edcff" },
+  guard: { name: "Espadachim", role: "Defesa corpo a corpo", hint: "A sudeste da base", x: BASE.x + 650, y: BASE.y + 610, color: "#f1bb82" },
+  miner: { name: "Minerador", role: "Produção de minérios", hint: "No campo mineral ao norte", x: MINERAL_BASIN.x, y: MINERAL_BASIN.y + 180, color: "#d8ca9d" },
+};
+function newSpecialists(): Record<SpecialistId, SpecialistProgress> {
+  return Object.fromEntries(SPECIALIST_IDS.map((id) => [id, { id, rescued: false, hired: false, duty: id === "miner" ? "mine" : "follow", training: 0, weaponLevel: 1, workTime: 0 }])) as Record<SpecialistId, SpecialistProgress>;
+}
 
 interface QuestDef { id: string; name: string; desc: string; target: number; reward: string; }
 const QUESTS: QuestDef[] = [
   { id: "q1", name: "Primeiros Passos", desc: "Colete madeira e pedra (total)", target: 60, reward: "Desbloqueia a Bancada" },
-  { id: "q2", name: "Caçador", desc: "Derrote monstros", target: 20, reward: "Maya e um arqueiro aliado se juntam" },
+  { id: "q2", name: "Caçador", desc: "Derrote monstros", target: 20, reward: "Maya se junta à base" },
   { id: "q3", name: "Construtor", desc: "Construa estruturas", target: 7, reward: "Tito, o Construtor (-20% custos)" },
   { id: "q4", name: "Ferreiro", desc: "Colete ferro", target: 40, reward: "Bren, o Ferreiro (melhorias nv.4+)" },
   { id: "q5", name: "Explorador", desc: "Visite vilarejo, caverna e floresta sombria", target: 3, reward: "+40 de vida máxima" },
@@ -272,6 +302,11 @@ interface SaveData {
   combatWeapon?: CombatWeapon;
   territoryLevel?: number;
   fenceRing?: number;
+  buildPatrolDay?: number;
+  pendingRespawn?: boolean;
+  deathReport?: DeathReport | null;
+  specialists?: Partial<Record<SpecialistId, SpecialistProgress>>;
+  crystalDiscovered?: boolean;
 }
 
 /* =========================================================
@@ -303,6 +338,9 @@ export class Engine {
   floaters: Floater[] = [];
   allies: Ally[] = [];
   villagers: Villager[] = [];
+  specialists = newSpecialists();
+  crystalDiscovered = false;
+  rescues: RescueEncounter[] = [];
   remotes: RemotePlayer[] = [];
   animals: Animal[] = [];
   chests: Chest[] = [];
@@ -319,6 +357,13 @@ export class Engine {
   private fenceSpaceCache: { ring: number; structures: Structure[]; length: number; references: string; pieces: 1 | 2; reserveGate: boolean } | null = null;
   lastTutId = "";
   animalT = 0;
+  spawnCooldown = 8;
+  buildPatrolDay = 0;
+  raidPeak = 0;
+  pendingRespawn = false;
+  deathReport: DeathReport | null = null;
+  wakeT = 0;
+  recoveryNoticeT = 0;
   worldProps: WorldProp[] = [];
   seenCreatures = new Set<string>();
   creatureKills: Record<string, number> = {};
@@ -386,6 +431,7 @@ export class Engine {
   cutParticleAcc = 0;
   prodToastT = 0;
   windCheckT = 0;
+  fireContactT = 0;
 
   // minimap
   mini: HTMLCanvasElement | null = null;
@@ -431,8 +477,11 @@ export class Engine {
 
     let loaded = false;
     if (opts.continueSave) loaded = this.loadSave();
+    this.initRescues();
     if (loaded) {
-      this.state = "playing";
+      // A death already saved its consequences; reloading must not restore a
+      // previous inventory or apply the raid a second time.
+      this.state = this.pendingRespawn ? "gameover" : "playing";
       this.emitState();
     } else {
       this.state = "cutscene";
@@ -583,6 +632,7 @@ export class Engine {
     // or change node ordering, so existing saves keep their resource progress.
     this.prepareLandingAndRoute();
     this.expandWorld();
+    this.addBiomeDetails(seed);
     this.prepareExpandedVillage();
     this.rebuildNodeBuckets();
     this.buildMinimap();
@@ -742,6 +792,94 @@ export class Engine {
     }
   }
 
+  /** Add the mineral basin and three small streams after legacy node generation.
+   * No random numbers are consumed and existing node indices never change. */
+  private addBiomeDetails(seed: number) {
+    const basin = MINERAL_BASIN;
+    const x0 = Math.floor((basin.x - basin.rx) / TILE), x1 = Math.ceil((basin.x + basin.rx) / TILE);
+    const y0 = Math.floor((basin.y - basin.ry) / TILE), y1 = Math.ceil((basin.y + basin.ry) / TILE);
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const nx = (x * TILE - basin.x) / basin.rx, ny = (y * TILE - basin.y) / basin.ry;
+      const irregular = Math.sin(x * 0.8 + y * 0.5 + seed * 0.0001) * 0.08;
+      const i = y * W + x, t = this.tiles[i];
+      if (nx * nx + ny * ny < 1 + irregular && (t === T_GRASS || t === T_ROCK)) this.tiles[i] = T_MINERAL;
+    }
+    // New deposits are appended after the old glacier deposits, preserving
+    // nodeHp indices from existing saves and their regeneration order.
+    for (let i = 0; i < 36; i++) {
+      const angle = i * 2.39996 + (seed % 101) * 0.01, radius = Math.sqrt((i + 1) / 38);
+      const x = basin.x + Math.cos(angle) * basin.rx * radius * 0.86;
+      const y = basin.y + Math.sin(angle) * basin.ry * radius * 0.82;
+      if (this.tileAt(x, y) !== T_MINERAL) continue;
+      const type: NodeType = i % 4 === 0 ? "crystal" : i % 4 === 1 ? "rock" : "ore";
+      const hp = type === "rock" ? 30 : type === "ore" ? 44 : 56;
+      this.nodes.push({ type, x, y, hp, maxHp: hp, respawn: 0, wob: 0 });
+    }
+
+    const streams: readonly (readonly [number, number][])[] = [
+      [[39, 78], [32, 84], [25, 91], [17, 95]],
+      [[158, 103], [165, 112], [169, 122], [178, 132]],
+      [[66, 146], [73, 151], [79, 158], [85, 163]],
+    ];
+    const protectedTile = (x: number, y: number) => {
+      const wx = x * TILE, wy = y * TILE;
+      return dist2(wx, wy, BASE.x, BASE.y) < 1050 ** 2 || dist2(wx, wy, VILLAGE.x, VILLAGE.y) < 850 ** 2
+        || dist2(wx, wy, WAKE.x, WAKE.y) < 270 ** 2 || SITES.some((site) => dist2(wx, wy, site.x, site.y) < 160 ** 2);
+    };
+    for (const stream of streams) for (let s = 0; s < stream.length - 1; s++) {
+      const [ax, ay] = stream[s], [bx, by] = stream[s + 1];
+      const dx = bx - ax, dy = by - ay, length = Math.hypot(dx, dy), steps = Math.ceil(length * 3);
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps, bend = Math.sin((s + t) * Math.PI) * 0.65;
+        for (const side of [0, 1]) {
+          const x = Math.round(ax + dx * t - dy / length * (bend + side));
+          const y = Math.round(ay + dy * t + dx / length * (bend + side));
+          if (x < 2 || y < 2 || x >= W - 2 || y >= H - 2 || protectedTile(x, y)) continue;
+          const at = y * W + x, tile = this.tiles[at];
+          // Existing roads remain dry crossings. Sites, ice, and village/base
+          // are left intact, so the escort and kingdom stay reachable.
+          if (tile === T_PATH || tile === T_BRIDGE || tile === T_SNOW_PATH) this.tiles[at] = T_BRIDGE;
+          else if (tile === T_GRASS || tile === T_DARK || tile === T_ROCK || tile === T_MINERAL || tile === T_SAND) this.tiles[at] = T_WATER;
+        }
+      }
+    }
+    // Older resource indices stay valid even where a new creek runs through a
+    // node: move that node to the closest dry tile instead of removing it.
+    for (const node of this.nodes) {
+      if (this.tileAt(node.x, node.y) !== T_WATER) continue;
+      const tx = Math.floor(node.x / TILE), ty = Math.floor(node.y / TILE);
+      let placed = false;
+      for (let r = 1; r <= 8 && !placed; r++) for (let dy = -r; dy <= r && !placed; dy++) for (let dx = -r; dx <= r; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+        const x = (tx + dx + 0.5) * TILE, y = (ty + dy + 0.5) * TILE;
+        if (this.tileAt(x, y) !== T_WATER) { node.x = x; node.y = y; placed = true; break; }
+      }
+    }
+    // The reference deposits are larger than the former procedural rocks.
+    // Spread nearby nodes without changing their identities or save indices,
+    // and leave space to approach the mineral treasure.
+    const places: { x: number; y: number }[] = [];
+    for (let row = 0, y = basin.y - basin.ry; y <= basin.y + basin.ry; row++, y += 68) {
+      for (let col = 0, x = basin.x - basin.rx; x <= basin.x + basin.rx; col++, x += 68) {
+        const px = x + (row % 2) * 26 + Math.sin(row * 2.7 + col * 1.3 + seed) * 13;
+        const py = y + Math.cos(row * 1.1 + col * 2.1 + seed) * 13;
+        if (this.tileAt(px, py) === T_MINERAL && dist2(px, py, basin.x + 70, basin.y + 50) > 85 ** 2) places.push({ x: px, y: py });
+      }
+    }
+    for (const node of this.nodes) {
+      if (this.tileAt(node.x, node.y) !== T_MINERAL || (node.type !== "rock" && node.type !== "ore" && node.type !== "crystal")) continue;
+      let closest = -1, best = Infinity;
+      for (let i = 0; i < places.length; i++) {
+        const d = dist2(node.x, node.y, places[i].x, places[i].y);
+        if (d < best) { best = d; closest = i; }
+      }
+      if (closest >= 0) {
+        const [point] = places.splice(closest, 1);
+        node.x = point.x; node.y = point.y;
+      }
+    }
+  }
+
   /** Make room for the larger houses after generation, without changing RNG
    * consumption or deleting/reordering resource nodes referenced by saves. */
   private prepareExpandedVillage() {
@@ -786,11 +924,17 @@ export class Engine {
   spawnAnimals(n: number) {
     for (let i = 0; i < n * 6 && this.animals.length < n; i++) {
       const x = Math.random() * WPX, y = Math.random() * HPX;
-      if (this.tileAt(x, y) !== T_GRASS) continue;
+      const terrain = this.tileAt(x, y);
+      if (terrain !== T_GRASS && terrain !== T_DARK && terrain !== T_SNOW && terrain !== T_ROCK && terrain !== T_MINERAL) continue;
       if (dist2(x, y, BASE.x, BASE.y) < BASE.r * BASE.r) continue;
-      const r = Math.random();
-      const kind: AnimalKind = r < 0.5 ? "rabbit" : r < 0.8 ? "goose" : "goat";
-      this.animals.push({ kind, x, y, vx: 0, vy: 0, t: Math.random() * 3, hp: kind === "goat" ? 26 : kind === "goose" ? 14 : 10, dir: 1, flee: 0 });
+      const r = Math.random(), rare = Math.random() < 0.06;
+      // Reuse the supplied fauna rather than inventing unreferenced species:
+      // hares/goats in snow and rocky fields, geese near the green forest.
+      const kind: AnimalKind = terrain === T_SNOW ? (r < 0.7 ? "rabbit" : "goat")
+        : terrain === T_ROCK || terrain === T_MINERAL ? (r < 0.7 ? "goat" : "rabbit")
+          : terrain === T_DARK ? (r < 0.6 ? "rabbit" : "goat") : r < 0.5 ? "rabbit" : r < 0.8 ? "goose" : "goat";
+      const hp = kind === "goat" ? 26 : kind === "goose" ? 14 : 10;
+      this.animals.push({ kind, x, y, vx: 0, vy: 0, t: Math.random() * 3, hp: rare ? hp * 1.5 : hp, dir: 1, flee: 0, rare });
     }
   }
 
@@ -803,6 +947,27 @@ export class Engine {
       { x: CAVE.x + 40, y: CAVE.y + CAVE.r * 0.6, opened: false, loot: { iron: 10, crystal: 2 }, label: "Baú da caverna" },
       { x: 150 * TILE, y: 102 * TILE, opened: false, loot: { iron: 6, food: 3, fiber: 10 }, label: "Baú sombrio" },
     ];
+    // Append, never insert: saved chest-open flags use the original indices.
+    const extras: Chest[] = [
+      { x: MINERAL_BASIN.x + 70, y: MINERAL_BASIN.y + 50, opened: false, loot: { iron: 12, crystal: 5 }, label: "Tesouro dos cristais", rare: true },
+      { x: GLACIER.x + 120, y: GLACIER.y + 80, opened: false, loot: { crystal: 4, iron: 6, food: 4 }, label: "Tesouro do degelo", rare: true },
+      { x: 144 * TILE + 90, y: 108 * TILE + 75, opened: false, loot: { crystal: 3, iron: 8, fiber: 6 }, label: "Tesouro das ruínas", rare: true },
+      { x: 44 * TILE, y: 90 * TILE, opened: false, loot: { fiber: 12, food: 7, crystal: 2 }, label: "Tesouro da floresta", rare: true },
+    ];
+    for (const chest of extras) {
+      const clear = (x: number, y: number) => this.tileAt(x, y) !== T_WATER &&
+        !this.nodes.some((n) => n.hp > 0 && dist2(x, y, n.x, n.y) < 36 ** 2);
+      if (!clear(chest.x, chest.y)) {
+        const tx = Math.floor(chest.x / TILE), ty = Math.floor(chest.y / TILE);
+        let placed = false;
+        for (let r = 1; r <= 10 && !placed; r++) for (let dy = -r; dy <= r && !placed; dy++) for (let dx = -r; dx <= r; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+          const x = (tx + dx + 0.5) * TILE, y = (ty + dy + 0.5) * TILE;
+          if (clear(x, y)) { chest.x = x; chest.y = y; placed = true; break; }
+        }
+      }
+      this.chests.push(chest);
+    }
   }
 
   spawnVillagers() {
@@ -819,8 +984,67 @@ export class Engine {
       this.villagers.push({
         x: VILLAGE.x + Math.cos(a) * VILLAGE.r * 0.4,
         y: VILLAGE.y + Math.sin(a) * VILLAGE.r * 0.4,
-        vx: 0, vy: 0, t: Math.random() * 4, c: cols[i], look: `v${i}`, line: lines[i],
+        vx: 0, vy: 0, t: Math.random() * 4, dir: Math.PI / 2, steps: 0, c: cols[i], look: `v${i}`, line: lines[i],
       });
+    }
+  }
+
+  initRescues() {
+    this.rescues = SPECIALIST_IDS.map((id) => {
+      const def = SPECIALISTS[id];
+      let chosen = { x: def.x, y: def.y };
+      let found = false;
+      // Deterministic dry, unobstructed standing point; no world-generation RNG
+      // or resource indices are consumed or changed for old saves.
+      for (let ring = 0; ring <= 20 && !found; ring++) {
+        for (let dy = -ring; dy <= ring && !found; dy++) for (let dx = -ring; dx <= ring; dx++) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;
+          const x = def.x + dx * 24, y = def.y + dy * 24;
+          if (this.tileAt(x, y) === T_WATER || this.referenceStructureAt(x, y) || this.blockedByWall(x, y)) continue;
+          if (this.nearbyNodes(x, y).some((node) => node.hp > 0 && node.type !== "bush" && node.type !== "berry" && dist2(x, y, node.x, node.y) < 42 ** 2)) continue;
+          if (id === "archer" && [-42, 42].some((dx) => this.tileAt(x + dx, y) === T_WATER || this.referenceStructureAt(x + dx, y) || this.nearbyNodes(x + dx, y).some((node) => node.hp > 0 && node.type !== "bush" && node.type !== "berry" && dist2(x + dx, y, node.x, node.y) < 36 ** 2))) continue;
+          if (this.chests.some((ch) => dist2(x, y, ch.x, ch.y) < 70 ** 2)) continue;
+          chosen = { x, y }; found = true; break;
+        }
+      }
+      return { id, ...chosen, phase: this.specialists[id].rescued ? "safe" : "waiting", defenders: [] };
+    });
+  }
+
+  updateRescues() {
+    for (const rescue of this.rescues) {
+      const progress = this.specialists[rescue.id];
+      if (progress.hired || progress.rescued) continue;
+      if (rescue.phase === "waiting" && !this.escort.active && dist2(this.px, this.py, rescue.x, rescue.y) < 300 ** 2) {
+        const guards: Monster[] = [];
+        const available = Math.max(0, this.monsterCap() - this.monsters.filter((m) => m.hp > 0 && !m.defeated).length);
+        for (let i = 0; i < Math.min(2, available); i++) {
+          const type: MonType = this.day >= 4 && i === 1 ? "crawler" : "imp";
+          for (let attempt = 0; attempt < 16; attempt++) {
+            const angle = Math.PI / 2 + i * Math.PI + attempt * 0.45;
+            const radius = 120 + Math.floor(attempt / 6) * 35;
+            const x = rescue.x + Math.cos(angle) * radius, y = rescue.y + Math.sin(angle) * radius;
+            if (dist2(x, y, this.px, this.py) < 70 ** 2 || !this.monsterSpawnClear(x, y, type) || this.nearbyNodes(x, y).some((node) => node.hp > 0 && node.type !== "bush" && node.type !== "berry" && dist2(x, y, node.x, node.y) < 24 ** 2)) continue;
+            this.spawnMonster(x, y, type); guards.push(this.monsters[this.monsters.length - 1]); break;
+          }
+        }
+        if (guards.length) {
+          rescue.defenders = guards; rescue.phase = "fighting";
+          this.toast(`Socorro! Ajude ${SPECIALISTS[rescue.id].name}: derrote as criaturas próximas.`);
+        }
+      } else if (rescue.phase === "fighting") {
+        const alive = rescue.defenders.filter((m) => m.hp > 0 && !m.defeated);
+        if (!alive.length) {
+          progress.rescued = true; rescue.phase = "safe";
+          this.sfx.quest(); this.toast(`${SPECIALISTS[rescue.id].name}: obrigado! Aproxime-se e use Interagir para convidar.`);
+          this.saveGame(); this.emitSnapshot();
+        } else if (alive.some((m) => !this.monsters.includes(m))) {
+          // If the player falls or leaves and the encounter despawns, retry it;
+          // never grant a rescue merely because enemies were unloaded.
+          this.monsters = this.monsters.filter((m) => !alive.includes(m));
+          rescue.phase = "waiting"; rescue.defenders = [];
+        }
+      }
     }
   }
 
@@ -829,7 +1053,7 @@ export class Engine {
     cv.width = W; cv.height = H;
     const c = cv.getContext("2d");
     if (!c) return;
-    const cols = ["#2f6c9c", "#e3d191", "#6f9a44", "#2f5230", "#b99a67", "#8d8678", "#3b3744", "#a87a48", "#d4e4e3", "#67b1cd", "#a29c86", "#bdac87", "#565e57"];
+    const cols = ["#2f6c9c", "#e3d191", "#6f9a44", "#2f5230", "#b99a67", "#8d8678", "#3b3744", "#a87a48", "#d4e4e3", "#67b1cd", "#a29c86", "#bdac87", "#565e57", "#6c604f"];
     for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
       c.fillStyle = cols[this.tiles[y * W + x]];
       c.fillRect(x, y, 1, 1);
@@ -862,9 +1086,11 @@ export class Engine {
       this.togglePause(); e.preventDefault(); return;
     }
     if (this.state !== "playing") return;
+    if (this.wakeT > 0) { this.keys.clear(); e.preventDefault(); return; }
     if (this.activePanel === "reference") { this.keys.clear(); return; }
     if (k === "i") { this.openPanel("inventory"); e.preventDefault(); return; }
     if (k === "n") { this.openPanel("bestiary"); e.preventDefault(); return; }
+    if (k === "p") { this.openPanel("people"); e.preventDefault(); return; }
     if (this.activePanel !== "none" || this.softPause) { this.keys.clear(); return; }
     if (this.placing) {
       if ((this.placing === "wall" || this.placing === "gate") && ["q", "arrowleft", "e", "arrowright"].includes(k)) {
@@ -886,8 +1112,12 @@ export class Engine {
   };
   onKeyUp = (e: KeyboardEvent) => { this.keys.delete(e.key.toLowerCase()); };
   onBlur = () => { this.keys.clear(); };
+  // The canvas, touch joystick and HUD are separate elements. Any pointer
+  // gesture must unlock the effects context, not only clicks on the canvas.
+  onAudioGesture = () => { this.sfx.ensure(); };
 
   bindInput() {
+    window.addEventListener("pointerdown", this.onAudioGesture);
     window.addEventListener("keydown", this.onKeyDown);
     window.addEventListener("keyup", this.onKeyUp);
     window.addEventListener("blur", this.onBlur);
@@ -901,7 +1131,7 @@ export class Engine {
   onPointer = (e: PointerEvent) => {
     this.sfx.ensure();
     if (this.state === "cutscene") { this.advanceDialogue(); return; }
-    if (this.state !== "playing") return;
+    if (this.state !== "playing" || this.wakeT > 0) return;
     if (this.placing && e.pointerType === "mouse") {
       if (e.button === 2) this.cancelPlace(); else this.confirmPlace();
       return;
@@ -998,11 +1228,11 @@ export class Engine {
     return true;
   }
 
-  setTouchMove(x: number, y: number) { this.touchMove.x = x; this.touchMove.y = y; }
+  setTouchMove(x: number, y: number) { this.touchMove.x = this.wakeT > 0 ? 0 : x; this.touchMove.y = this.wakeT > 0 ? 0 : y; }
   touchAction(a: "attack" | "roll" | "interact" | "eat") {
     this.sfx.ensure();
     if (this.state === "cutscene") { this.advanceDialogue(); return; }
-    if (this.state !== "playing") return;
+    if (this.state !== "playing" || this.wakeT > 0) return;
     if (this.placing && a === "attack") { this.confirmPlace(); return; }
     if (a === "attack") this.tryAttack();
     if (a === "roll") this.tryRoll();
@@ -1033,6 +1263,7 @@ export class Engine {
     const p = pads && pads[0];
     if (!p) { this.padConnected = false; return { mx: 0, my: 0 }; }
     this.padConnected = true;
+    if (this.wakeT > 0) { this.lastPadButtons = p.buttons.map((button) => button.pressed); return { mx: 0, my: 0 }; }
     const dead = (v: number) => (Math.abs(v) < 0.18 ? 0 : v);
     const mx = dead(p.axes[0] ?? 0), my = dead(p.axes[1] ?? 0);
     const btn = (i: number) => !!p.buttons[i]?.pressed;
@@ -1042,6 +1273,7 @@ export class Engine {
     }
     const was = (i: number) => !!this.lastPadButtons[i];
     const pressed = (i: number) => btn(i) && !was(i);
+    if (p.buttons.some((button, i) => button.pressed && !was(i))) this.sfx.ensure();
     if (this.state === "cutscene") {
       if (pressed(0) || pressed(2)) this.advanceDialogue();
       if (pressed(9)) this.skipCutscene();
@@ -1264,12 +1496,14 @@ export class Engine {
     this.addScore(25);
     this.spawnParticles(m.x, m.y, "#b13ae0", 22, 260);
     this.spawnParticles(m.x, m.y, "#30102d", 12, 160);
-    this.sfx.die();
+    if (this.settings.creatureSounds) this.sfx.monsterDeath(m.type, 1 - Math.sqrt(dist2(m.x, m.y, this.px, this.py)) / 600);
+    else this.sfx.hit();
     // loot
     const r = Math.random();
     if (r < 0.35) this.drops.push({ res: "fiber", x: m.x, y: m.y, vx: 0, vy: -60, n: 1, t: 0 });
     else if (r < 0.5) this.drops.push({ res: "food", x: m.x, y: m.y, vx: 20, vy: -60, n: 1, t: 0 });
     else if (r < 0.58 && m.type !== "crawler") this.drops.push({ res: "iron", x: m.x, y: m.y, vx: -20, vy: -60, n: 1, t: 0 });
+    if (m.rare) this.drops.push({ res: "crystal", x: m.x, y: m.y, vx: 20, vy: -80, n: 2, t: 0 });
     this.checkQuests();
   }
 
@@ -1293,6 +1527,13 @@ export class Engine {
 
   tryInteract() {
     if (this.placing) { this.confirmPlace(); return; }
+    for (const rescue of this.rescues) {
+      if (this.specialists[rescue.id].hired || dist2(rescue.x, rescue.y, this.px, this.py) >= 80 ** 2) continue;
+      if (rescue.phase === "fighting") this.toast("Derrote as criaturas que cercam o grupo primeiro.");
+      else if (this.specialists[rescue.id].rescued) this.hireSpecialist(rescue.id);
+      else this.toast("Volte depois de acompanhar Rian até a base.");
+      return;
+    }
     for (const site of SITES) {
       if (dist2(site.x, site.y + 45, this.px, this.py) < 120 * 120) { this.inspectSite(site.id); return; }
     }
@@ -1495,7 +1736,7 @@ export class Engine {
       this.toast(label);
       this.spawnParticles(s.x, s.y, "#c9a26a", 22, 240);
       this.shake = Math.min(14, this.shake + 7);
-      this.sfx.die();
+      this.sfx.structureBreak();
     }
   }
   underAttackNow(): boolean {
@@ -1625,6 +1866,13 @@ export class Engine {
     this.placeY = Math.floor(y / g) * g + g / 2;
     this.placeReason = this.placeCheck(type, this.placeX, this.placeY);
   }
+  /** The starting chest is a real, solid object even after it is emptied and
+   * when optional reference art is unavailable. Its front stays reachable. */
+  baseChestContains(x: number, y: number): boolean {
+    const chest = this.chests.find((entry) => entry.label === "Kit do Rian");
+    return !!chest && Math.abs(x - chest.x) < 34 && y > chest.y - 42 && y < chest.y + 9;
+  }
+
   /** Ground footprints of fixed reference buildings are static structures,
    * not enemies. If the art is absent, no invisible obstacles are created. */
   referenceStructureAt(x: number, y: number): boolean {
@@ -1658,7 +1906,7 @@ export class Engine {
       const minD = (s.type === "wall" || s.type === "gate") && (type === "wall" || type === "gate") ? 27 : 44;
       if (dist2(s.x, s.y, x, y) < minD * minD || this.placedStructureContains(s, x, y)) return "Este espaço da cerca está ocupado";
     }
-    if (this.referenceStructureAt(x, y)) return "Há uma construção nesse lugar";
+    if (this.referenceStructureAt(x, y) || this.baseChestContains(x, y)) return "Há uma construção nesse lugar";
     // The ring is intentionally cleared while placing: trees no longer block
     // wall slots. They are harvested only in the footprint after purchase.
     if (type !== "wall" && type !== "gate") {
@@ -1724,9 +1972,11 @@ export class Engine {
     this.shake = Math.min(8, this.shake + 4);
     this.sfx.build();
     const total = this.structures.length;
-    if ((type === "campfire" || type === "wall" || type === "gate") && total <= 5 && !this.survivedNight) {
-      this.spawnWave(type === "campfire" ? 5 : 4);
-      this.toast("👁️ Eles sentiram sua presença... uma patrulha se aproxima!");
+    if ((type === "campfire" || type === "wall" || type === "gate") && total <= 5 && !this.survivedNight && this.buildPatrolDay !== this.day) {
+      // One small early patrol, not a new full wave after every fence piece.
+      this.buildPatrolDay = this.day;
+      this.spawnWave(this.day <= 2 ? 2 : 3);
+      this.toast("👁️ Eles sentiram sua presença... uma pequena patrulha se aproxima!");
       this.sfx.night();
     } else {
       this.toast(type === "wall" ? positions.length === 1 ? "🧱 Trecho avulso colocado!" : "🧱 Dois trechos conectados! Gire para continuar o círculo." : `${STRUCT_DEF[type].icon} ${STRUCT_DEF[type].name} construída!`);
@@ -1772,12 +2022,94 @@ export class Engine {
     return true;
   }
 
-  /* ---------------- quests ---------------- */
-  recruitArcher() {
-    if (this.allies.some((ally) => ally.id === "archer")) return;
-    this.allies.push({ id: "archer", name: "Arqueiro", color: "#b7d68e", x: this.px - 30, y: this.py + 32, vx: 0, vy: 0, atkCd: 0, downT: 0, dir: 0 });
+  /* ---------------- rescued specialists ---------------- */
+  specialistLevel(person: SpecialistProgress): number {
+    const trained = person.training >= 120 ? 3 : person.training >= 45 ? 2 : 1;
+    return Math.min(person.weaponLevel, trained);
+  }
+  specialistUpgradeCost(person: SpecialistProgress): Partial<Record<ResKey, number>> {
+    const m = this.diff.resMult;
+    return person.weaponLevel === 1
+      ? { wood: Math.ceil(16 * m), iron: Math.ceil(8 * m) }
+      : { wood: Math.ceil(24 * m), iron: Math.ceil(16 * m), crystal: Math.ceil(4 * m) };
+  }
+  specialistUpgradeReason(person: SpecialistProgress): string {
+    if (!person.hired) return "Resgate e convide primeiro";
+    if (person.id === "miner") return "Trabalha com a picareta da pedreira";
+    if (person.weaponLevel >= 3) return "Equipamento no nível máximo";
+    if (!this.structures.some((s) => s.type === "forge")) return "Construa uma forja";
+    if (person.training < (person.weaponLevel === 1 ? 45 : 120)) return "Treine durante o dia na base";
+    return "";
+  }
+  specialistViews(): SpecialistView[] {
+    return SPECIALIST_IDS.map((id) => {
+      const person = this.specialists[id], def = SPECIALISTS[id];
+      const cost = this.specialistUpgradeCost(person), reason = this.specialistUpgradeReason(person);
+      return { id, name: def.name, role: def.role, hint: def.hint, rescued: person.rescued, hired: person.hired,
+        duty: person.duty, level: id === "miner" ? 1 : this.specialistLevel(person), weaponLevel: person.weaponLevel,
+        training: Math.floor(person.training), trainingTarget: person.weaponLevel >= 3 ? 120 : person.weaponLevel === 1 ? 45 : 120,
+        upgradeCost: cost, upgradeReason: reason, affordable: this.canAfford(cost) };
+    });
+  }
+  hireSpecialist(id: SpecialistId): boolean {
+    const person = this.specialists[id];
+    if (!person || !person.rescued || person.hired) return false;
+    if (id !== "miner" && SPECIALIST_IDS.filter((key) => key !== "miner" && this.specialists[key].hired).length >= 3) {
+      this.toast("A equipe de defesa já está completa."); return false;
+    }
+    person.hired = true;
+    const def = SPECIALISTS[id];
+    if (!this.allies.some((ally) => ally.id === id)) this.allies.push({ id, name: def.name, color: def.color, x: this.px - 30, y: this.py + 32, vx: 0, vy: 0, atkCd: 0, downT: 0, dir: 0 });
+    this.sfx.quest(); this.toast(`${def.name} entrou para a equipe no nível 1. Abra Pessoas para definir a tarefa.`);
+    this.saveGame(); this.emitSnapshot(); return true;
+  }
+  setSpecialistDuty(id: SpecialistId, duty: SpecialistDuty): boolean {
+    const person = this.specialists[id];
+    const allowed: SpecialistDuty[] = id === "miner" ? ["mine", "rest"] : ["follow", "defend", "train"];
+    if (!person?.hired || !allowed.includes(duty)) return false;
+    person.duty = duty; this.saveGame(); this.emitSnapshot(); return true;
+  }
+  upgradeSpecialist(id: SpecialistId): boolean {
+    const person = this.specialists[id];
+    if (!person) return false;
+    const reason = this.specialistUpgradeReason(person);
+    if (reason) { this.toast(reason); return false; }
+    const cost = this.specialistUpgradeCost(person);
+    if (!this.canAfford(cost)) { this.toast("Recursos insuficientes para o equipamento."); return false; }
+    this.payCost(cost); person.weaponLevel++;
+    this.sfx.build(); this.toast(`${SPECIALISTS[id].name}: equipamento forjado, nível ${person.weaponLevel}!`);
+    this.saveGame(); this.emitSnapshot(); return true;
+  }
+  updateSpecialists(dt: number) {
+    if (this.isNight()) return;
+    for (const id of SPECIALIST_IDS) {
+      const person = this.specialists[id], ally = this.allies.find((a) => a.id === id);
+      if (!person.hired || !ally || ally.downT > 0) continue;
+      if (id !== "miner" && person.duty === "train" && dist2(ally.x, ally.y, BASE.x, BASE.y) < 180 ** 2 &&
+          !this.monsters.some((m) => m.hp > 0 && dist2(m.x, m.y, BASE.x, BASE.y) < 240 ** 2)) {
+        const before = person.training; person.training = Math.min(120, person.training + dt);
+        if ((before < 45 && person.training >= 45) || (before < 120 && person.training >= 120)) {
+          this.toast(`${SPECIALISTS[id].name} terminou o treino. Forje o próximo equipamento na aba Pessoas.`);
+          this.saveGame(); this.emitSnapshot();
+        }
+      }
+      if (id === "miner" && person.duty === "mine") {
+        const quarry = this.structures.find((s) => s.type === "quarry");
+        if (!quarry || dist2(ally.x, ally.y, quarry.x, quarry.y) >= 120 ** 2 ||
+            this.monsters.some((m) => m.hp > 0 && dist2(m.x, m.y, quarry.x, quarry.y) < 200 ** 2)) continue;
+        person.workTime += dt;
+        if (person.workTime >= 45) {
+          person.workTime %= 45; this.inv.iron += 2;
+          this.questP[3] = Math.min(QUESTS[3].target, this.questP[3] + 2);
+          if (this.crystalDiscovered) this.inv.crystal++;
+          this.toast(this.crystalDiscovered ? "Minerador: +2 ferro e +1 cristal." : "Minerador: +2 ferro. Encontre cristal para ampliar a mineração.");
+          this.emitSnapshot();
+        }
+      }
+    }
   }
 
+  /* ---------------- quests ---------------- */
   checkQuests() {
     this.questP[0] = Math.min(QUESTS[0].target, this.gatheredWoodStone);
     this.questP[3] = Math.min(QUESTS[3].target, this.questP[3]);
@@ -1791,7 +2123,6 @@ export class Engine {
         this.toast(`✅ Missão completa: ${QUESTS[i].name} — ${QUESTS[i].reward}`);
         if (i === 1) {
           this.allies.push({ id: "maya", name: "Maya", color: "#5ad0c9", x: this.px + 30, y: this.py + 30, vx: 0, vy: 0, atkCd: 0, downT: 0, dir: 0 });
-          this.recruitArcher();
         }
         if (i === 2) this.allies.push({ id: "tito", name: "Tito", color: "#c9b45a", x: BASE.x, y: BASE.y, vx: 0, vy: 0, atkCd: 0, downT: 0, dir: 0 });
         if (i === 3) this.allies.push({ id: "bren", name: "Bren", color: "#c95a5a", x: BASE.x + 40, y: BASE.y, vx: 0, vy: 0, atkCd: 0, downT: 0, dir: 0 });
@@ -1811,15 +2142,16 @@ export class Engine {
     const fire = this.structures.some((s) => s.type === "campfire");
     const touch = this.settings.controls === "touch";
     const pad = this.settings.controls === "gamepad";
-    const kA = touch ? "Botão ⚔️" : pad ? "A" : "J";
-    const kE = touch ? "Botão ✋" : pad ? "X" : "E";
-    const kB = touch ? "Botão 🎒" : pad ? "Y" : "B";
+    const kA = touch ? "Atacar" : pad ? "A" : "J";
+    const kE = touch ? "Usar" : pad ? "X" : "E";
+    const kB = touch ? "Construir" : pad ? "Y" : "B";
     const kMove = touch ? "Joystick" : pad ? "Analógico" : "WASD";
+    const kPick = touch ? "Arma até a picareta" : pad ? "LB/RB até a picareta" : "2";
     const steps: TutorialView[] = [
       { id: "t1", title: "1 · Corte sua primeira árvore", text: `Ande com ${kMove}, encare a árvore e ataque com ${kA} (machado). Cada golpe derruba madeira 🪵.`, keys: [kMove, kA], step: 1, total: 6 },
-      { id: "t2", title: "2 · Junte 12 madeira e 8 pedra", text: `Quebre rochas com a picareta: tecle 2, ou ${kA} perto da pedra. Colete também fibra nas moitas.`, keys: ["2", kA], step: 2, total: 6 },
-      { id: "t3", title: "3 · Erga a fogueira", text: `Abra a construção com ${kB}, escolha 🔥 Fogueira e coloque no centro da clareira. Ela salva o jogo com ${kE}.`, keys: [kB, kE], step: 3, total: 6 },
-      { id: "t4", title: "4 · Cerque a base (2 pares)", text: `Compre duas cercas duplas: cada compra coloca 2 peças no círculo. Gire com Q/E, ←/→ ou os botões.`, keys: [kB], step: 4, total: 6 },
+      { id: "t2", title: "2 · Junte 12 madeira e 8 pedra", text: `Quebre rochas com a picareta (${kPick}) e use ${kA}. Colete também fibra nas moitas.`, keys: [kPick, kA], step: 2, total: 6 },
+      { id: "t3", title: "3 · Erga a fogueira", text: `Abra ${kB}, escolha Fogueira e coloque na clareira. Aproxime-se e use ${kE} para salvar.`, keys: [kB, kE], step: 3, total: 6 },
+      { id: "t4", title: "4 · Cerque a base (2 pares)", text: `Compre duas cercas duplas: cada compra coloca 2 peças no círculo. ${touch || pad ? "Gire pelas setas na tela." : "Gire com Q/E ou as setas na tela."}`, keys: [kB], step: 4, total: 6 },
       { id: "t5", title: "5 · Instale o portão", text: `Coloque o 🚪 Portão no vão da cerca. ${kE} abre/fecha. Fechado, eles precisam quebrar; aberto, entram.`, keys: [kB, kE], step: 5, total: 6 },
       { id: "t6", title: "6 · Sobreviva à primeira noite", text: `Feche o portão e defenda a clareira. Fure os invasores e repare a cerca com ${kE} + 🪵 madeira.`, keys: [kE, kA], step: 6, total: 6 },
     ];
@@ -1856,7 +2188,9 @@ export class Engine {
         discoveredSites: [...this.discoveredSites], claimedSites: [...this.claimedSites],
         seenCreatures: [...this.seenCreatures], creatureKills: { ...this.creatureKills }, equipment: { ...this.equipment },
         fenceStyle: this.fenceStyle, combatWeapon: this.combatWeapon,
-        territoryLevel: this.territoryLevel, fenceRing: this.fenceRing,
+        territoryLevel: this.territoryLevel, fenceRing: this.fenceRing, buildPatrolDay: this.buildPatrolDay,
+        pendingRespawn: this.pendingRespawn, deathReport: this.deathReport,
+        specialists: this.specialists, crystalDiscovered: this.crystalDiscovered,
       };
       localStorage.setItem(this.saveKey(), JSON.stringify(data));
     } catch { /* ignore */ }
@@ -1873,10 +2207,14 @@ export class Engine {
         this.nodes = []; this.tiles = new Uint8Array(W * H);
         this.nodeBuckets.clear(); this.depletedNodes.clear(); this.shakingNodes.clear();
         this.genWorld(d.seed);
+        this.animals = []; this.spawnAnimals(90);
+        this.placeChests();
       }
       this.px = d.px; this.py = d.py; this.hp = d.hp; this.maxHp = d.maxHp;
       this.inv = { ...this.inv, ...d.inv }; this.tools = { ...this.tools, ...d.tools };
       this.time = d.time; this.day = d.day; this.score = d.score; this.kills = d.kills; this.deaths = d.deaths;
+      // Older saves with early structures have already seen the build patrol.
+      this.buildPatrolDay = Number.isFinite(d.buildPatrolDay) ? Math.max(0, d.buildPatrolDay!) : d.structures.length ? this.day : 0;
       this.territoryLevel = Number.isInteger(d.territoryLevel) ? clamp(d.territoryLevel!, 1, TERRITORIES.length) : 1;
       this.fenceRing = Number.isInteger(d.fenceRing) ? clamp(d.fenceRing!, 1, this.territoryLevel) : this.territoryLevel;
       this.structures = d.structures.map((s) => {
@@ -1887,14 +2225,52 @@ export class Engine {
         return { type: s.type, x: s.x, y: s.y, prodT: 0, hp: Math.min(s.hp ?? mhp, mhp), maxHp: mhp, open: !!s.open, rotation, fenceStyle };
       });
       this.layFenceFoundations(this.structures.filter((s) => (s.type === "wall" || s.type === "gate") && Math.hypot(s.x - BASE.x, s.y - BASE.y) > TERRITORIES[0].fenceRadius + 40));
+      // A structure from an older save may predate a newly carved creek. Give
+      // it a small dry foundation rather than deleting or moving the build.
+      let savedFoundation = false;
+      for (const s of this.structures) {
+        if (s.type === "raft" || this.tileAt(s.x, s.y) !== T_WATER) continue;
+        const tx = Math.floor(s.x / TILE), ty = Math.floor(s.y / TILE);
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const x = tx + dx, y = ty + dy;
+          if (x < 0 || y < 0 || x >= W || y >= H) continue;
+          const at = y * W + x;
+          if (this.tiles[at] === T_WATER) { this.tiles[at] = T_BRIDGE; savedFoundation = true; }
+        }
+      }
+      if (savedFoundation) { this.terrain?.invalidateAll(); this.buildMinimap(); }
       this.questP = d.questP; this.questDone = d.questDone;
       this.visited = new Set(d.visited);
       this.gatheredWoodStone = this.questP[0];
-      const cols: Record<string, string> = { rian: "#e8a33d", maya: "#5ad0c9", tito: "#c9b45a", bren: "#c95a5a", archer: "#b7d68e" };
-      const names: Record<string, string> = { rian: "Rian", maya: "Maya", tito: "Tito", bren: "Bren", archer: "Arqueiro" };
-      this.allies = d.allies.map((id) => ({ id, name: names[id] ?? id, color: cols[id] ?? "#fff", x: this.px + 40, y: this.py, vx: 0, vy: 0, atkCd: 0, downT: 0, dir: 0 }));
-      // Old saves that already completed this quest receive the new ally once.
-      if (this.questDone[1]) this.recruitArcher();
+      const cols: Record<string, string> = { rian: "#e8a33d", maya: "#5ad0c9", tito: "#c9b45a", bren: "#c95a5a", ...Object.fromEntries(SPECIALIST_IDS.map((id) => [id, SPECIALISTS[id].color])) };
+      const names: Record<string, string> = { rian: "Rian", maya: "Maya", tito: "Tito", bren: "Bren", ...Object.fromEntries(SPECIALIST_IDS.map((id) => [id, SPECIALISTS[id].name])) };
+      this.allies = [...new Set(d.allies)].map((id) => ({ id, name: names[id] ?? id, color: cols[id] ?? "#fff", x: this.px + 40, y: this.py, vx: 0, vy: 0, atkCd: 0, downT: 0, dir: 0 }));
+      this.specialists = newSpecialists();
+      for (const id of SPECIALIST_IDS) {
+        const old = d.specialists?.[id], person = this.specialists[id];
+        if (old) {
+          person.rescued = old.rescued === true; person.hired = old.hired === true;
+          const duties: SpecialistDuty[] = id === "miner" ? ["mine", "rest"] : ["follow", "defend", "train"];
+          if (duties.includes(old.duty)) person.duty = old.duty;
+          person.training = Number.isFinite(old.training) ? clamp(old.training, 0, 120) : 0;
+          person.weaponLevel = Number.isFinite(old.weaponLevel) ? clamp(Math.floor(old.weaponLevel), 1, 3) : 1;
+          person.workTime = Number.isFinite(old.workTime) ? clamp(old.workTime, 0, 44.99) : 0;
+        }
+        // Grandfather an archer or other specialist actually present in an old
+        // save; completing the old quest alone no longer creates a new one.
+        if (this.allies.some((a) => a.id === id)) {
+          person.rescued = true; person.hired = true;
+          if (!old && id === "archer") {
+            person.weaponLevel = clamp(this.tools.sword, 1, 3);
+            person.training = person.weaponLevel === 3 ? 120 : person.weaponLevel === 2 ? 45 : 0;
+          }
+        } else if (person.hired) {
+          person.rescued = true;
+          const def = SPECIALISTS[id];
+          this.allies.push({ id, name: def.name, color: def.color, x: this.px + 40, y: this.py, vx: 0, vy: 0, atkCd: 0, downT: 0, dir: 0 });
+        }
+      }
+      this.crystalDiscovered = d.crystalDiscovered === true || (d.crystalDiscovered === undefined && this.inv.crystal > 0);
       for (const [i, hp, rs] of d.nodeHp) {
         if (this.nodes[i]) {
           this.nodes[i].hp = hp; this.nodes[i].respawn = rs;
@@ -1922,6 +2298,8 @@ export class Engine {
       this.equipment = { harness: true, coat: false, charm: false, ...(d.equipment ?? {}) };
       this.fenceStyle = d.fenceStyle ?? "palisade";
       this.combatWeapon = d.combatWeapon === "bow" ? "bow" : "sword";
+      this.pendingRespawn = d.pendingRespawn === true;
+      this.deathReport = d.deathReport ?? null;
       this.lastTutId = this.tutorial()?.id ?? "done";
       return true;
     } catch { return false; }
@@ -1937,39 +2315,94 @@ export class Engine {
   }
 
   /* ---------------- death / respawn ---------------- */
+  applyDeathRaid(): DeathReport {
+    const nearby = this.monsters.filter((m) => m.hp > 0 && dist2(m.x, m.y, this.px, this.py) < 400 ** 2).length;
+    const pressure = Math.max(this.raidPeak, nearby);
+    const intensity = clamp(pressure / 12, 0, 1);
+    const difficulty = this.opts.difficulty;
+    const extra = difficulty === "impossivel" ? 0.22 : difficulty === "muito-dificil" ? 0.16 : 0.12;
+    const fraction = this.diff.lossOnDeath + intensity * extra;
+    const lost: Partial<Record<ResKey, number>> = {};
+    // Scarce metals, crystals, crafted tools and equipment are never removed.
+    for (const key of ["wood", "stone", "fiber", "food"] as ResKey[]) {
+      const count = Math.floor(this.inv[key] * fraction);
+      this.inv[key] -= count; lost[key] = count;
+    }
+    const baseDamage = difficulty === "impossivel" ? 0.30 : difficulty === "muito-dificil" ? 0.20 : 0.08;
+    const destruction = baseDamage + intensity * (difficulty === "impossivel" ? 0.60 : difficulty === "muito-dificil" ? 0.30 : 0.22);
+    const rng = mulberry32((this.opts.seed ^ Math.imul(this.deaths, 0x9e3779b9) ^ Math.imul(this.day, 0x85ebca6b)) >>> 0);
+    let damaged = 0, destroyed = 0, lostHouses = 0;
+    this.structures = this.structures.filter((s) => {
+      // A fire remains as the recovery point, and a raft is not an attack target.
+      if (s.type === "campfire" || s.type === "raft") return true;
+      const exposed = s.type === "wall" || s.type === "gate" || s.type === "farm";
+      const chance = destruction * (exposed ? 1 : 0.6);
+      const roll = rng();
+      if (roll < chance) {
+        destroyed++;
+        if (s.type === "house") lostHouses++;
+        return false;
+      }
+      if (roll < Math.min(1, chance + 0.35 + intensity * 0.15)) {
+        s.hp = Math.max(1, s.hp - s.maxHp * (0.2 + intensity * 0.35));
+        damaged++;
+      }
+      return true;
+    });
+    if (lostHouses) this.maxHp = Math.max(100, this.maxHp - lostHouses * 12);
+    this.fenceSpaceCache = null; this.fenceLinks.clear(); this.fencePosts.clear();
+    return { lost, percent: Math.round(fraction * 100), pressure, damaged, destroyed };
+  }
+
   die() {
+    if (this.state === "gameover") return;
     this.deaths++;
     this.mapOpen = false;
     this.softPause = false;
-    this.outcome = this.diff.permadeath ? "morte" : null;
+    this.deathReport = this.applyDeathRaid();
+    this.pendingRespawn = true;
+    this.outcome = null;
+    this.hp = 0;
     this.state = "gameover";
     this.sfx.die();
     this.shake = 16;
     this.spawnParticles(this.px, this.py, "#e03a3a", 30, 300);
-    if (this.diff.permadeath) { this.outcome = "morte"; this.saveClear(); }
+    this.saveGame();
     this.emitState();
   }
   respawn() {
-    if (this.diff.permadeath || this.state !== "gameover") return;
+    if (this.state !== "gameover") return;
     this.softPause = false;
-    // lose part of carried resources
-    for (const k of Object.keys(this.inv) as ResKey[]) {
-      this.inv[k] = Math.floor(this.inv[k] * (1 - this.diff.lossOnDeath));
-    }
-    this.hp = Math.ceil(this.maxHp * 0.6);
-    this.stamina = 100;
+    this.pendingRespawn = false;
+    this.hp = Math.max(1, Math.ceil(this.maxHp * 0.3));
+    this.stamina = 25;
     const fire = this.structures.find((s) => s.type === "campfire");
-    if (fire) { this.px = fire.x + 20; this.py = fire.y + 20; }
+    if (fire) { this.px = fire.x + 52; this.py = fire.y + 40; }
     else { this.px = BASE.x; this.py = BASE.y; }
     this.ensurePlayablePosition();
     this.centerCamera();
-    this.invulnT = 2.5;
-    // scatter monsters away
-    for (const m of this.monsters) {
-      if (dist2(m.x, m.y, this.px, this.py) < 500 * 500) { m.state = "idle"; m.x = m.home.x; m.y = m.home.y; }
+    // Keep nearby companions from covering the injured player during the
+    // wake-up animation. Distant followers and their saved roles are unchanged.
+    const spaced: { x: number; y: number }[] = [];
+    for (const [index, ally] of this.allies.entries()) {
+      if (dist2(ally.x, ally.y, this.px, this.py) >= 150 ** 2) { spaced.push(ally); continue; }
+      for (let attempt = 0; attempt < 12; attempt++) {
+        const angle = (index + attempt) * Math.PI * 2 / 6;
+        const radius = 145 + Math.floor(attempt / 6) * 45;
+        const x = this.px + Math.cos(angle) * radius, y = this.py + Math.sin(angle) * radius;
+        if (this.tileAt(x, y) === T_WATER || this.referenceStructureAt(x, y) || this.blockedByWall(x, y) || spaced.some((other) => dist2(x, y, other.x, other.y) < 60 ** 2)) continue;
+        ally.x = x; ally.y = y; ally.vx = 0; ally.vy = 0; break;
+      }
+      spaced.push(ally);
     }
+    this.pvx = 0; this.pvy = 0; this.moving = false; this.running_ = false;
+    this.keys.clear(); this.touchMove.x = 0; this.touchMove.y = 0; this.touchBtn.run = false;
+    this.invulnT = 5; this.wakeT = 2.8; this.recoveryNoticeT = 10;
+    // Survivors retreat before the player wakes; nearby enemies cannot chain-kill.
+    this.monsters = this.monsters.filter((m) => dist2(m.x, m.y, this.px, this.py) >= 600 ** 2);
+    this.projectiles = []; this.spawnCooldown = 16; this.raidPeak = 0;
     this.state = "playing";
-    this.toast(`💀 Você caiu... perdeu ${Math.round(this.diff.lossOnDeath * 100)}% dos recursos carregados.`);
+    this.toast("Você acordou ferido na base. Reúna forças e repare os estragos.");
     this.saveGame();
     this.emitState();
   }
@@ -1994,6 +2427,7 @@ export class Engine {
     for (const resource of Object.keys(site.reward) as ResKey[]) {
       const n = site.reward[resource] ?? 0;
       this.inv[resource] += n;
+      if (resource === "crystal" && n > 0) this.crystalDiscovered = true;
       if (resource === "wood" || resource === "stone") this.gatheredWoodStone += n;
       if (resource === "iron") this.questP[3] += n;
     }
@@ -2037,12 +2471,12 @@ export class Engine {
       case "orc": return { hp: 90 * h, dmg: 20 * dm, speed: 126, r: 16 };
     }
   }
-  spawnMonster(x: number, y: number, type: MonType) {
-    const c = this.monsterCfg(type);
+  spawnMonster(x: number, y: number, type: MonType, rare = false) {
+    const c = this.monsterCfg(type), hp = c.hp * (rare ? 1.6 : 1);
     this.monsters.push({
-      type, x, y, vx: 0, vy: 0, hp: c.hp, maxHp: c.hp, dmg: c.dmg, speed: c.speed, r: c.r,
+      type, x, y, vx: 0, vy: 0, hp, maxHp: hp, dmg: c.dmg * (rare ? 1.15 : 1), speed: c.speed, r: c.r,
       state: "idle", t: Math.random() * 2, atkCd: 0, flash: 0, home: { x, y }, dir: 0, siege: false,
-      skin: this.skinFor(type, x, y),
+      skin: this.skinFor(type, x, y), rare,
     });
   }
   skinFor(type: MonType, x: number, y: number): string {
@@ -2052,7 +2486,7 @@ export class Engine {
       case "crawler": return "ghost";
       case "stalker": return "wraith";
       case "spitter": return "skelmage";
-      case "brute": return t === T_ROCK || t === T_CAVE ? "golem" : "treant";
+      case "brute": return t === T_ROCK || t === T_CAVE || t === T_MINERAL ? "golem" : "treant";
       case "hulk": return "crystalgolem";
       case "bat": return "demonbat";
       case "slime": return "iceslime";
@@ -2066,6 +2500,7 @@ export class Engine {
     const roll = Math.random();
     const night = this.isNight();
     if (t === T_SNOW || t === T_ICE || t === T_SNOW_PATH) return roll < 0.68 ? "slime" : roll < 0.9 ? "bat" : "hulk";
+    if (t === T_MINERAL) return roll < 0.18 ? "hulk" : roll < 0.58 ? "brute" : roll < 0.8 ? "bat" : "crawler";
     const scaled = SITES.find((site) => site.id === "scaled");
     if (scaled && dist2(x, y, scaled.x, scaled.y) < scaled.radius * scaled.radius) return roll < 0.72 ? "lizard" : "slime";
     if (t === T_RUIN || t === T_NECRO) return roll < 0.42 ? "bat" : roll < 0.72 ? "spitter" : "demon";
@@ -2074,7 +2509,7 @@ export class Engine {
     // The new creature only enters spawn tables when its optional art is ready.
     if (this.settings.craftPix && hasCraftOrcs() && roll >= 0.75 && roll < 0.86) return "orc";
     const horror = t === T_CAVE || t === T_ROCK || t === T_DARK;
-    const bigChance = Math.min(0.24, 0.04 + this.day * 0.012) * (horror ? 1.6 : 1);
+    const bigChance = this.day < 3 ? 0 : Math.min(0.24, 0.04 + this.day * 0.012) * (horror ? 1.6 : 1);
     if (roll < bigChance * 0.45) return "hulk";
     if (roll < bigChance) return "brute";
     if (horror) {
@@ -2092,48 +2527,70 @@ export class Engine {
     if (roll < 0.18) return "crawler";
     return "imp";
   }
-  spawnWave(n: number, cx = BASE.x, cy = BASE.y) {
-    for (let i = 0; i < n; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const d = this.fenceSpec(this.territoryLevel).fenceRadius + 160 + Math.random() * 240;
-      const x = cx + Math.cos(a) * d, y = cy + Math.sin(a) * d;
-      if (this.tileAt(x, y) === T_WATER) continue;
-      const type: MonType = i === 0 && n >= 5 ? "brute" : Math.random() < 0.7 ? "imp" : "crawler";
-      this.spawnMonster(x, y, type);
-    }
+  monsterCap() {
+    return Math.min(54, Math.max(1, Math.floor((5 + Math.max(0, this.day - 1) * 1.35) * this.diff.spawn)));
   }
 
-  updateSpawns(dt: number) {
-    const night = this.isNight();
-    const cap = Math.min(58, Math.floor((14 + this.day * 1.8) * this.diff.spawn));
-    if (this.monsters.length >= cap) return;
-    const hasBase = this.structures.length > 0;
-    const rate = (night ? (hasBase ? 0.55 : 0.34) : 0.12) * this.diff.spawn;
-    if (Math.random() < rate * dt) {
-      const batch = night ? 1 + Math.floor(Math.random() * 3) : 1;
-      // spawn in ring around player, biased to dark zones at day
-      for (let tryI = 0; tryI < 8; tryI++) {
-        const a = Math.random() * Math.PI * 2;
-        const nearBase = dist2(this.px, this.py, BASE.x, BASE.y) < this.territoryRadius() ** 2;
-        const minimum = nearBase ? Math.max(460, this.fenceSpec(this.territoryLevel).fenceRadius + 120) : 460;
-        const d = minimum + Math.random() * 420;
-        const x = this.px + Math.cos(a) * d, y = this.py + Math.sin(a) * d;
-        const t = this.tileAt(x, y);
-        if (t === T_WATER) continue;
-        const darkZone = t === T_DARK || t === T_CAVE || t === T_ROCK || t === T_RUIN || t === T_NECRO || t === T_SNOW || t === T_ICE;
-        if (!night && !darkZone) continue;
-        // never spawn inside village / base walls proximity
-        if (dist2(x, y, VILLAGE.x, VILLAGE.y) < VILLAGE_AREA_RADIUS ** 2) continue;
-        if (dist2(x, y, BASE.x, BASE.y) < (this.fenceSpec(this.territoryLevel).fenceRadius + 70) ** 2) continue;
-        for (let b = 0; b < batch; b++) {
-          this.spawnMonster(x + (Math.random() - 0.5) * 90, y + (Math.random() - 0.5) * 90, this.monsterTypeForZone(x, y));
-        }
-        break;
+  monsterSpawnClear(x: number, y: number, type: MonType) {
+    if (this.tileAt(x, y) === T_WATER || this.referenceStructureAt(x, y) || this.blockedByWall(x, y)) return false;
+    const radius = this.monsterCfg(type).r;
+    return this.monsters.every((m) => m.hp <= 0 || dist2(x, y, m.x, m.y) >= Math.max(42, radius + m.r + 16) ** 2);
+  }
+
+  spawnWave(n: number, cx = BASE.x, cy = BASE.y) {
+    const count = Math.max(0, Math.min(n, this.monsterCap() - this.monsters.length));
+    const start = Math.random() * Math.PI * 2;
+    for (let i = 0; i < count; i++) {
+      const type: MonType = this.day >= 4 && i === 0 && count >= 5 ? "brute" : Math.random() < 0.7 ? "imp" : "crawler";
+      for (let attempt = 0; attempt < 8; attempt++) {
+        // Spread arrivals around the perimeter instead of stacking a crowd at
+        // a single spawn point. Skip invalid sites rather than spawning in water.
+        const a = start + i * Math.PI * 2 / Math.max(1, count) + (Math.random() - 0.5) * 0.35;
+        const d = this.fenceSpec(this.territoryLevel).fenceRadius + 160 + Math.random() * 240;
+        const x = cx + Math.cos(a) * d, y = cy + Math.sin(a) * d;
+        if (!this.monsterSpawnClear(x, y, type)) continue;
+        this.spawnMonster(x, y, type); break;
       }
     }
   }
 
+  updateSpawns(dt: number) {
+    this.spawnCooldown -= dt;
+    if (this.spawnCooldown > 0) return;
+    const night = this.isNight();
+    // A real cooldown avoids several random batches arriving in the same
+    // second. Days and difficulty increase both pressure and the live cap.
+    const interval = night ? Math.max(3.5, 13 - Math.max(0, this.day - 1) * 0.45) : 22;
+    this.spawnCooldown = interval / Math.sqrt(this.diff.spawn / 1.2) * (0.8 + Math.random() * 0.4);
+    const cap = this.monsterCap();
+    if (this.monsters.length >= cap) return;
+    const batch = night && this.day >= 8 ? 1 + Math.floor(Math.random() * 3) : night && this.day >= 3 ? 1 + Math.floor(Math.random() * 2) : 1;
+    // Spawn in a ring around the player, biased to dangerous zones by day.
+    for (let tryI = 0; tryI < 10; tryI++) {
+      const a = Math.random() * Math.PI * 2;
+      const nearBase = dist2(this.px, this.py, BASE.x, BASE.y) < this.territoryRadius() ** 2;
+      const minimum = nearBase ? Math.max(460, this.fenceSpec(this.territoryLevel).fenceRadius + 120) : 460;
+      const d = minimum + Math.random() * 420;
+      const x = this.px + Math.cos(a) * d, y = this.py + Math.sin(a) * d;
+      const t = this.tileAt(x, y);
+      if (t === T_WATER) continue;
+      const darkZone = t === T_DARK || t === T_CAVE || t === T_ROCK || t === T_MINERAL || t === T_RUIN || t === T_NECRO || t === T_SNOW || t === T_ICE;
+      if (!night && !darkZone) continue;
+      if (dist2(x, y, VILLAGE.x, VILLAGE.y) < VILLAGE_AREA_RADIUS ** 2) continue;
+      if (dist2(x, y, BASE.x, BASE.y) < (this.fenceSpec(this.territoryLevel).fenceRadius + 70) ** 2) continue;
+      for (let b = 0; b < batch && this.monsters.length < cap; b++) {
+        const angle = a + b * Math.PI * 2 / Math.max(1, batch);
+        const sx = x + (b ? Math.cos(angle) * 70 : 0), sy = y + (b ? Math.sin(angle) * 70 : 0);
+        if (dist2(sx, sy, VILLAGE.x, VILLAGE.y) < VILLAGE_AREA_RADIUS ** 2 || dist2(sx, sy, BASE.x, BASE.y) < (this.fenceSpec(this.territoryLevel).fenceRadius + 70) ** 2) continue;
+        const type = this.monsterTypeForZone(sx, sy);
+        if (this.monsterSpawnClear(sx, sy, type)) this.spawnMonster(sx, sy, type, Math.random() < 0.08);
+      }
+      break;
+    }
+  }
+
   blockedByWall(x: number, y: number): boolean {
+    if (this.baseChestContains(x, y)) return true;
     for (const s of this.structures) {
       if (s.type === "gate" && s.open) continue;
       if ((s.type === "wall" || s.type === "gate" || s.type === "house" || s.type === "tower" || s.type === "forge") && this.placedStructureContains(s, x, y, 25)) return true;
@@ -2151,6 +2608,33 @@ export class Engine {
       if (d < bd) { bd = d; best = st; }
     }
     return best;
+  }
+
+  separateMonsters(dt: number) {
+    // Resolve only neighboring overlaps. Each pair moves gradually, keeping
+    // the horde readable without teleporting creatures through solid walls.
+    for (let i = 0; i < this.monsters.length; i++) {
+      const a = this.monsters[i];
+      if (a.hp <= 0) continue;
+      for (let j = i + 1; j < this.monsters.length; j++) {
+        const b = this.monsters[j];
+        if (b.hp <= 0) continue;
+        let dx = b.x - a.x, dy = b.y - a.y;
+        let distance = Math.hypot(dx, dy);
+        const minimum = Math.max(30, a.r + b.r + 12);
+        if (distance >= minimum) continue;
+        if (distance < 0.01) {
+          const angle = (i * 17 + j * 29) * 2.399963;
+          dx = Math.cos(angle); dy = Math.sin(angle); distance = 1;
+        } else { dx /= distance; dy /= distance; }
+        const amount = Math.min((minimum - distance) * 0.5, 65 * dt);
+        const move = (m: Monster, x: number, y: number) => {
+          if (this.tileAt(x, y) !== T_WATER && !this.blockedByWall(x, y) && !this.referenceStructureAt(x, y)) { m.x = x; m.y = y; }
+        };
+        move(a, a.x - dx * amount, a.y - dy * amount);
+        move(b, b.x + dx * amount, b.y + dy * amount);
+      }
+    }
   }
 
   updateMonsters(dt: number) {
@@ -2258,10 +2742,13 @@ export class Engine {
       }
       m.vx *= Math.pow(0.6, dt * 6); m.vy *= Math.pow(0.6, dt * 6);
     }
+    this.separateMonsters(dt);
+    const pressure = this.monsters.filter((m) => m.hp > 0 && (m.siege || dist2(m.x, m.y, this.px, this.py) < 400 ** 2)).length;
+    this.raidPeak = Math.max(this.raidPeak, pressure);
     for (let i = this.projectiles.length - 1; i >= 0; i--) {
       const p = this.projectiles[i];
       p.t -= dt;
-      if (p.kind === "ally" || p.kind === "player") {
+      if (p.kind === "ally" || p.kind === "magic" || p.kind === "player") {
         // Substeps prevent fast arrows from tunneling through enemies or walls.
         // Friendly arrows never test the player or other allies as targets.
         const steps = Math.max(1, Math.ceil(Math.hypot(p.vx, p.vy) * dt / 8));
@@ -2298,7 +2785,7 @@ export class Engine {
     }
   }
 
-  damagePlayer(dmg: number, fromX: number, fromY: number) {
+  damagePlayer(dmg: number, fromX: number, fromY: number, knockback = 320) {
     if (this.invulnT > 0 || this.state !== "playing") return;
     const final = Math.max(1, Math.round(dmg * (this.equipment.coat ? 0.82 : 1)));
     this.hp -= final;
@@ -2307,7 +2794,7 @@ export class Engine {
     this.shake = Math.min(16, this.shake + 9);
     this.hitstop = 0.05;
     const a = Math.atan2(this.py - fromY, this.px - fromX);
-    this.pvx += Math.cos(a) * 320; this.pvy += Math.sin(a) * 320;
+    this.pvx += Math.cos(a) * knockback; this.pvy += Math.sin(a) * knockback;
     this.spawnParticles(this.px, this.py, "#e03a3a", 14, 220);
     this.floaters.push({ x: this.px, y: this.py - 34, t: 0, text: `-${final}`, c: "#ff6060" });
     this.sfx.hurt();
@@ -2318,18 +2805,26 @@ export class Engine {
     for (const al of this.allies) {
       if (al.downT > 0) { al.downT -= dt; if (al.downT <= 0) { al.x = BASE.x; al.y = BASE.y; } continue; }
       al.atkCd = Math.max(0, al.atkCd - dt);
-      // The archer searches farther away but never selects another ally.
-      let tgt: Monster | null = null; let bd = (al.id === "archer" ? 360 : 230) ** 2;
+      const person = this.specialists[al.id as SpecialistId];
+      const duty = person?.hired ? person.duty : undefined;
+      const ranged = al.id === "archer" || al.id === "mage";
+      let tgt: Monster | null = null; let bd = (ranged ? 360 : 230) ** 2;
       for (const m of this.monsters) {
-        if (m.hp <= 0 || m.defeated) continue;
+        if (m.hp <= 0 || m.defeated || duty === "train" || duty === "mine" || duty === "rest") continue;
+        if (duty === "defend" && dist2(m.x, m.y, BASE.x, BASE.y) > 400 ** 2) continue;
         const d = dist2(m.x, m.y, al.x, al.y);
         if (d < bd) { bd = d; tgt = m; }
       }
       let gx = this.px - 46 + ((al.id.charCodeAt(0) % 3) - 1) * 36;
       let gy = this.py + 34 + ((al.id.charCodeAt(1) % 3) - 1) * 30;
       if (al.id === "tito" || al.id === "bren") { gx = BASE.x + (al.id === "tito" ? -60 : 60); gy = BASE.y + 20; }
-      if (tgt && (al.id === "rian" || al.id === "maya")) { gx = tgt.x; gy = tgt.y; }
-      if (tgt && al.id === "archer" && dist2(al.x, al.y, this.px, this.py) < 480 * 480) {
+      if (duty === "defend" || duty === "train" || duty === "rest" || duty === "mine") {
+        const quarry = duty === "mine" ? this.structures.find((s) => s.type === "quarry") : undefined;
+        gx = (quarry?.x ?? BASE.x) + (al.id === "guard" ? 70 : -70);
+        gy = (quarry?.y ?? BASE.y) + 55;
+      }
+      if (tgt && (al.id === "rian" || al.id === "maya" || al.id === "guard")) { gx = tgt.x; gy = tgt.y; }
+      if (tgt && ranged && (duty === "defend" || dist2(al.x, al.y, this.px, this.py) < 480 * 480)) {
         const distance = Math.sqrt(dist2(tgt.x, tgt.y, al.x, al.y));
         const angle = Math.atan2(tgt.y - al.y, tgt.x - al.x);
         if (distance > 280) { gx = tgt.x - Math.cos(angle) * 220; gy = tgt.y - Math.sin(angle) * 220; }
@@ -2369,11 +2864,19 @@ export class Engine {
         al.vx += (Math.cos(a) * sp - al.vx) * Math.min(1, dt * 6);
         al.vy += (Math.sin(a) * sp - al.vy) * Math.min(1, dt * 6);
       } else { al.vx *= 0.8; al.vy *= 0.8; }
-      // teleport if too far
-      if (d > 900 && !escorting) { al.x = this.px + 40; al.y = this.py + 40; }
-      const nx = al.x + al.vx * dt, ny = al.y + al.vy * dt;
-      if (this.tileAt(nx, ny) !== T_WATER) { al.x = nx; al.y = ny; }
-      if (tgt && al.id === "archer") {
+      // Keep the old long-distance catch-up for followers. Stationary duties
+      // return to their own destination instead of being teleported to the player.
+      if (d > 1200 && !escorting) {
+        if (duty && duty !== "follow") { al.x = gx + 30; al.y = gy + 30; }
+        else { al.x = this.px + 40; al.y = this.py + 40; }
+      }
+      const oldX = al.x, oldY = al.y, nx = oldX + al.vx * dt, ny = oldY + al.vy * dt;
+      const inside = this.referenceStructureAt(oldX, oldY);
+      const clear = (x: number, y: number) => this.tileAt(x, y) !== T_WATER && (!this.referenceStructureAt(x, y) || inside);
+      if (clear(nx, oldY)) al.x = nx;
+      if (clear(al.x, ny)) al.y = ny;
+      if (dt > 0) { al.vx = (al.x - oldX) / dt; al.vy = (al.y - oldY) / dt; }
+      if (tgt && ranged) {
         al.dir = Math.atan2(tgt.y - al.y, tgt.x - al.x);
         if (al.atkCd <= 0 && dist2(tgt.x, tgt.y, al.x, al.y) < 360 * 360) {
           al.atkCd = 1.2;
@@ -2381,14 +2884,14 @@ export class Engine {
           const distance = Math.sqrt(dist2(tgt.x, tgt.y, al.x, al.y));
           // Do not spawn past an enemy standing right next to the archer.
           const offset = Math.max(0, Math.min(18, distance - tgt.r - 5));
-          this.projectiles.push({ kind: "ally", x: al.x + dx * offset, y: al.y + dy * offset, vx: dx * speed, vy: dy * speed, t: 1, dmg: 4 + this.tools.sword * 3 });
+          this.projectiles.push({ kind: al.id === "mage" ? "magic" : "ally", x: al.x + dx * offset, y: al.y + dy * offset, vx: dx * speed, vy: dy * speed, t: 1, dmg: 4 + (person ? this.specialistLevel(person) : 1) * 3 });
           this.sfx.swing();
         }
       }
       // Existing melee allies keep their previous attack.
-      if (tgt && al.atkCd <= 0 && dist2(tgt.x, tgt.y, al.x, al.y) < 46 * 46 && (al.id === "rian" || al.id === "maya")) {
+      if (tgt && al.atkCd <= 0 && dist2(tgt.x, tgt.y, al.x, al.y) < 46 * 46 && (al.id === "rian" || al.id === "maya" || al.id === "guard")) {
         al.atkCd = 0.7;
-        const dmg = 4 + this.tools.sword * 3;
+        const dmg = 4 + (person ? this.specialistLevel(person) : this.tools.sword) * 3;
         tgt.hp -= dmg; tgt.flash = 0.12;
         this.spawnParticles(tgt.x, tgt.y, "#ffd34d", 6, 140);
         this.floaters.push({ x: tgt.x, y: tgt.y - 18, t: 0, text: `${dmg}`, c: "#ffeaa0" });
@@ -2476,7 +2979,8 @@ export class Engine {
         this.drops.push({ res: "food", x: a.x, y: a.y, vx: Math.cos(ang) * 80, vy: Math.sin(ang) * 80 - 40, n: 1, t: 0 });
       }
       if (a.kind === "goat") this.drops.push({ res: "fiber", x: a.x, y: a.y, vx: 0, vy: -60, n: 2, t: 0 });
-      this.addScore(10);
+      if (a.rare) this.drops.push({ res: "crystal", x: a.x, y: a.y, vx: 20, vy: -70, n: 1, t: 0 });
+      this.addScore(a.rare ? 40 : 10);
       this.spawnParticles(a.x, a.y, "#f0d0a0", 12, 160);
     }
   }
@@ -2517,7 +3021,15 @@ export class Engine {
         }
       }
       if (s.type === "campfire") {
-        if (dist2(s.x, s.y, this.px, this.py) < 110 * 110 && this.hp < this.maxHp) {
+        const distance = dist2(s.x, s.y, this.px, this.py);
+        // Warmth heals around the fire, but its center burns. Contact is
+        // deliberately walkable, and has no knockback so it can be crossed.
+        if (distance < 20 * 20) {
+          if (this.fireContactT <= 0 && this.invulnT <= 0) {
+            this.fireContactT = 1;
+            this.damagePlayer(5, s.x, s.y, 0);
+          }
+        } else if (distance < 110 * 110 && this.hp < this.maxHp) {
           this.hp = Math.min(this.maxHp, this.hp + 2.2 * dt);
         }
         // Emit in simulation time, not during drawing: high-refresh displays
@@ -2550,6 +3062,7 @@ export class Engine {
       }
       if (d.t > 0.35 && dd < 26 * 26) {
         this.inv[d.res] += d.n;
+        if (d.res === "crystal") this.crystalDiscovered = true;
         this.addScore(1);
         if (d.res === "wood" || d.res === "stone") this.gatheredWoodStone += d.n;
         if (d.res === "iron") this.questP[3] = Math.min(QUESTS[3].target, this.questP[3] + d.n);
@@ -2628,6 +3141,7 @@ export class Engine {
     const t = this.tileAt(this.px, this.py);
     if (t === T_SNOW || t === T_ICE || t === T_SNOW_PATH) return "❄ Vale do Degelo";
     if (t === T_CAVE) { this.visited.add("caverna"); return "Caverna Uivante"; }
+    if (t === T_MINERAL) return "Campos de Cristal";
     if (t === T_ROCK) return "Encostas Rochosas";
     if (t === T_DARK) { this.visited.add("sombria"); return "⚠️ Floresta Sombria";  }
     if (t === T_SAND) return "Praia do Naufrágio";
@@ -2681,7 +3195,9 @@ export class Engine {
     }
 
     if (this.state === "playing" && !this.softPause) {
-      this.update(dt, pad);
+      if (this.wakeT > 0) this.wakeT = Math.max(0, this.wakeT - dt);
+      else this.update(dt, pad);
+      this.recoveryNoticeT = Math.max(0, this.recoveryNoticeT - dt);
     }
     this.shake = Math.max(0, this.shake - dt * 26);
     this.render();
@@ -2713,19 +3229,46 @@ export class Engine {
     if (this.music.current !== want) this.music.play(want);
   }
 
-  update(dt: number, pad: { mx: number; my: number; run?: boolean }) {
-    // One inexpensive check per second; each gust has its own bounded source.
-    this.windCheckT -= dt;
-    if (this.windCheckT <= 0) {
-      this.windCheckT = 1;
-      if (this.settings.windSounds) this.sfx.wind();
+  /** Sample nearby ambience at most once per second, never per sprite/frame. */
+  updateAmbience() {
+    if (this.settings.windSounds) this.sfx.wind();
+    if (this.settings.creatureSounds) {
+      if (!this.isNight()) this.sfx.bird();
+      let nearest: Animal | null = null, best = 320 * 320;
+      for (const animal of this.animals) {
+        const d = dist2(animal.x, animal.y, this.px, this.py);
+        if (d < best) { best = d; nearest = animal; }
+      }
+      if (nearest) this.sfx.animal(nearest.kind, 1 - Math.sqrt(best) / 320);
     }
+    if (this.settings.ambientSounds) {
+      const tx = Math.floor(this.px / TILE), ty = Math.floor(this.py / TILE);
+      let best = 192 * 192;
+      for (let dy = -6; dy <= 6; dy++) for (let dx = -6; dx <= 6; dx++) {
+        const x = tx + dx, y = ty + dy;
+        if (x < 0 || y < 0 || x >= W || y >= H || this.tiles[y * W + x] !== T_WATER) continue;
+        const d = dist2((x + 0.5) * TILE, (y + 0.5) * TILE, this.px, this.py);
+        if (d < best) best = d;
+      }
+      this.sfx.water(1 - Math.sqrt(best) / 192);
+      let fire = 220 * 220;
+      for (const structure of this.structures) if (structure.type === "campfire") {
+        fire = Math.min(fire, dist2(structure.x, structure.y, this.px, this.py));
+      }
+      this.sfx.fire(1 - Math.sqrt(fire) / 220);
+    }
+  }
+
+  update(dt: number, pad: { mx: number; my: number; run?: boolean }) {
+    this.windCheckT -= dt;
+    if (this.windCheckT <= 0) { this.windCheckT = 1; this.updateAmbience(); }
     // --- time ---
     const prevNight = this.isNight();
     this.time += dt;
     const newDay = Math.floor(this.time / CYCLE) + 1;
     if (newDay > this.day) {
       this.day = newDay;
+      this.raidPeak = 0;
       this.survivedNight = true;
       this.addScore(100);
       this.toast(`🌅 Manhã do dia ${this.day}. O mapa está nítido — a base fica marcada em verde.`);
@@ -2785,8 +3328,9 @@ export class Engine {
     // collision with water / structures / big nodes
     const tryMove = (nx: number, ny: number) => {
       if (this.tileAt(nx, ny) === T_WATER) return false;
-      // Allow an older save already inside a new footprint to walk out.
+      // Allow older saves already inside a new footprint to walk out.
       if (this.referenceStructureAt(nx, ny) && !this.referenceStructureAt(this.px, this.py)) return false;
+      if (this.baseChestContains(nx, ny) && !this.baseChestContains(this.px, this.py)) return false;
       for (const s of this.structures) {
         if ((s.type === "wall" || s.type === "house" || s.type === "tower" || s.type === "forge") && this.placedStructureContains(s, nx, ny) && !this.placedStructureContains(s, this.px, this.py)) return false;
       }
@@ -2810,8 +3354,10 @@ export class Engine {
         this.py += (this.py - n.y) * push * 0.6;
       }
     }
-    // Trees must not push the player through water or a solid building.
-    if (this.tileAt(this.px, this.py) === T_WATER || (this.referenceStructureAt(this.px, this.py) && !this.referenceStructureAt(dryX, dryY))) { this.px = dryX; this.py = dryY; }
+    // Trees must not push the player through water, a building or the chest.
+    if (this.tileAt(this.px, this.py) === T_WATER ||
+        (this.referenceStructureAt(this.px, this.py) && !this.referenceStructureAt(dryX, dryY)) ||
+        (this.baseChestContains(this.px, this.py) && !this.baseChestContains(dryX, dryY))) { this.px = dryX; this.py = dryY; }
     this.px = clamp(this.px, TILE, WPX - TILE);
     this.py = clamp(this.py, TILE, HPX - TILE);
 
@@ -2820,6 +3366,7 @@ export class Engine {
     this.attackT = Math.max(0, this.attackT - dt);
     this.rollCd = Math.max(0, this.rollCd - dt);
     this.invulnT = Math.max(0, this.invulnT - dt);
+    this.fireContactT = Math.max(0, this.fireContactT - dt);
     this.hurtFlash = Math.max(0, this.hurtFlash - dt);
 
     // Update only recently hit nodes, not every tree on the island.
@@ -2841,7 +3388,9 @@ export class Engine {
     // touch attack hold -> repeated
     this.updateSpawns(dt);
     this.updateMonsters(dt);
+    this.updateRescues();
     this.updateAllies(dt);
+    this.updateSpecialists(dt);
     this.updateStructures(dt);
     this.updateDrops(dt);
     this.updateParticles(dt);
@@ -2869,6 +3418,12 @@ export class Engine {
         this.interactHint = this.claimedSites.has(site.id) ? `E: Ler a história de ${site.name}` : `E: Explorar ${site.name}`;
         break;
       }
+    }
+    for (const rescue of this.rescues) {
+      if (this.specialists[rescue.id].hired || dist2(rescue.x, rescue.y, this.px, this.py) >= 80 ** 2) continue;
+      const key = this.settings.controls === "touch" ? "Usar" : this.settings.controls === "gamepad" ? "X" : "E";
+      this.interactHint = rescue.phase === "fighting" ? "Resgate: derrote as criaturas" : this.specialists[rescue.id].rescued ? `${key}: Convidar ${SPECIALISTS[rescue.id].name}` : "Sobreviventes precisam de ajuda";
+      break;
     }
     if (!this.interactHint && this.settings.craftPix) {
       for (const prop of this.worldProps) {
@@ -2898,16 +3453,42 @@ export class Engine {
   }
 
   updateVillagers(dt: number) {
+    if (dt <= 0) return;
     for (const v of this.villagers) {
       v.t -= dt;
       if (v.t <= 0) {
-        v.t = 2 + Math.random() * 3;
+        // Short walks separated by pauses read as purposeful village activity,
+        // and no longer make people shuffle continuously against a wall.
+        v.t = 1.8 + Math.random() * 2.5;
         const a = Math.random() * Math.PI * 2;
-        v.vx = Math.cos(a) * 40; v.vy = Math.sin(a) * 40;
-        if (Math.random() < 0.4) { v.vx = 0; v.vy = 0; }
+        const speed = Math.random() < 0.5 ? 0 : 27;
+        v.vx = Math.cos(a) * speed; v.vy = Math.sin(a) * speed;
       }
-      const nx = v.x + v.vx * dt, ny = v.y + v.vy * dt;
-      if (dist2(nx, ny, VILLAGE.x, VILLAGE.y) < VILLAGE.r * VILLAGE.r * 0.6 && this.tileAt(nx, ny) !== T_WATER) { v.x = nx; v.y = ny; }
+      if (Math.hypot(v.vx, v.vy) < 1) continue;
+      const oldX = v.x, oldY = v.y;
+      const valid = (x: number, y: number) => {
+        if (dist2(x, y, VILLAGE.x, VILLAGE.y) >= VILLAGE.r * VILLAGE.r * 0.6 || this.tileAt(x, y) === T_WATER) return false;
+        if (this.referenceStructureAt(x, y) && !this.referenceStructureAt(oldX, oldY)) return false;
+        const movingInto = (ox: number, oy: number, radius: number) => {
+          const next = dist2(x, y, ox, oy), previous = dist2(oldX, oldY, ox, oy);
+          return next < radius * radius && next < previous;
+        };
+        if (movingInto(this.px, this.py, 27)) return false;
+        if (this.villagers.some((other) => other !== v && movingInto(other.x, other.y, 30))) return false;
+        if (this.chests.some((chest) => movingInto(chest.x, chest.y, 28))) return false;
+        return !this.nearbyNodes(x, y).some((node) => node.hp > 0 && node.type !== "bush" && node.type !== "berry" && movingInto(node.x, node.y, 24));
+      };
+      const nx = oldX + v.vx * dt, ny = oldY + v.vy * dt;
+      if (valid(nx, ny)) { v.x = nx; v.y = ny; }
+      else if (valid(nx, oldY)) { v.x = nx; v.vy = 0; }
+      else if (valid(oldX, ny)) { v.y = ny; v.vx = 0; }
+      else { v.vx = 0; v.vy = 0; v.t = 0.4 + Math.random() * 0.6; }
+      const dx = v.x - oldX, dy = v.y - oldY;
+      if (Math.hypot(dx, dy) > 0.01) {
+        v.dir = Math.atan2(dy, dx);
+        // Animation advances with ground distance, not with wall-clock time.
+        v.steps += Math.hypot(dx, dy) * 0.25;
+      } else { v.vx = 0; v.vy = 0; }
     }
   }
 
@@ -2967,10 +3548,13 @@ export class Engine {
         progress: Math.min(q.target, Math.round(this.questP[i])), target: q.target, reward: q.reward,
       })),
       allies: this.allies.map((a) => a.name),
+      specialists: this.specialistViews(),
       baseLevel: this.baseLevel(),
       buildOptions, upgradeOptions,
       raftReasons: this.raftBlockReasons(),
-      canRespawn: !this.diff.permadeath,
+      canRespawn: true,
+      recovery: this.deathReport && (this.pendingRespawn || this.recoveryNoticeT > 0)
+        ? { waking: this.wakeT > 0, remaining: this.recoveryNoticeT, report: this.deathReport } : null,
       outcome: this.outcome,
       teamScore: this.teamScore,
       mpCount: this.remotes.length,
@@ -3033,15 +3617,15 @@ export class Engine {
     c.fillStyle = "rgba(214,196,120,0.14)";
     c.beginPath(); c.arc(BASE.x + ox, BASE.y + oy, BASE.r * 0.5, 0, Math.PI * 2); c.fill();
 
-    // Join adjacent fence posts before drawing the individual posts above them.
-    this.drawFenceConnections(ox, oy);
-
     // plane wreck at crash site
     this.drawWreck(CRASH.x + ox, CRASH.y + oy);
 
     // collect drawables sorted by y
     interface DrawItem { y: number; fn: () => void; }
     const items: DrawItem[] = [];
+    // The rails are actual upright structures, not a shadow under every
+    // character. Sort them by their ground anchors along with all entities.
+    this.drawFenceConnections(ox, oy, (y, fn) => items.push({ y, fn }));
     const camL = this.camX - 80, camR = this.camX + this.viewW + 80, camT = this.camY - 230, camB = this.camY + this.viewH + 80;
     const inView = (x: number, y: number) => x > camL && x < camR && y > camT && y < camB;
     // A tall roof can remain visible even when its anchor is below the screen.
@@ -3058,7 +3642,8 @@ export class Engine {
       }
     }
     for (const s of this.structures) {
-      if (!(s.type === "house" || s.type === "forge" || s.type === "tower" ? inViewBuilding(s.x, s.y) : inView(s.x, s.y))) continue;
+      const tall = s.type === "house" || s.type === "forge" || s.type === "tower" || s.type === "wall" || s.type === "gate";
+      if (!(tall ? inViewBuilding(s.x, s.y) : inView(s.x, s.y))) continue;
       items.push({ y: s.y, fn: () => this.drawStructure(s, ox, oy, tnow) });
     }
     for (const m of this.monsters) {
@@ -3067,7 +3652,11 @@ export class Engine {
     }
     for (const v of this.villagers) {
       if (!inView(v.x, v.y)) continue;
-      items.push({ y: v.y, fn: () => this.drawHumanoid(v.x + ox, v.y + oy, v.look, Math.atan2(this.py - v.y, this.px - v.x), Math.hypot(v.vx, v.vy) > 8, tnow * 6) });
+      items.push({ y: v.y, fn: () => this.drawVillager(v, ox, oy, tnow) });
+    }
+    for (const rescue of this.rescues) {
+      if (this.specialists[rescue.id].hired || !inView(rescue.x, rescue.y)) continue;
+      items.push({ y: rescue.y, fn: () => this.drawRescue(rescue, ox, oy, tnow) });
     }
     for (const al of this.allies) {
       if (al.downT > 0 || !inView(al.x, al.y)) continue;
@@ -3088,8 +3677,16 @@ export class Engine {
             this.drawHumanoid(x, y, "maya", al.dir, walking, tnow * (pace > 210 ? 13 : 9));
             this.drawArcherBow(x, y, al.dir);
           }
+        } else if (al.id === "mage") {
+          const x = al.x + ox, y = al.y + oy, direction = viewFromAngle(al.dir);
+          this.drawShadow(x, y + 2, 13);
+          c.save(); c.translate(Math.round(x), Math.round(y + 2));
+          const drawn = this.settings.craftPix && drawReferenceResident(c, "mage-blue", direction.view, direction.flip, walking, tnow);
+          c.restore();
+          if (!drawn) this.drawHumanoid(x, y, "maya", al.dir, walking, tnow * 9);
         } else {
-          this.drawHumanoid(al.x + ox, al.y + oy, al.id, al.dir, walking, tnow * (pace > 210 ? 13 : 9), 1, al.atkCd > 0.48 ? "attack" : pace > 210 ? "run" : walking ? "walk" : undefined, al.atkCd > 0.48 ? undefined : al.id === "bren" ? "pick" : al.id === "tito" ? "axe" : "sword", 2);
+          const look = al.id === "guard" ? "player" : al.id === "miner" ? "bren" : al.id;
+          this.drawHumanoid(al.x + ox, al.y + oy, look, al.dir, walking, tnow * (pace > 210 ? 13 : 9), 1, al.atkCd > 0.48 ? "attack" : pace > 210 ? "run" : walking ? "walk" : undefined, al.atkCd > 0.48 ? undefined : al.id === "bren" || al.id === "miner" ? "pick" : al.id === "tito" ? "axe" : "sword", 2);
           if (al.atkCd > 0.48) this.drawAllyWeapon(al.x + ox, al.y + oy, al.dir - 0.7 + (0.7-al.atkCd)*8, al.id, walking ? tnow * 9 : 0);
         }
         this.drawName(al.name, al.x + ox, al.y + oy - 99, "#ffe9b0");
@@ -3143,7 +3740,10 @@ export class Engine {
 
     // projectiles
     for (const p of this.projectiles) {
-      if (p.kind === "ally" || p.kind === "player") {
+      if (p.kind === "magic") {
+        c.fillStyle = "rgba(137,211,255,0.35)"; c.beginPath(); c.arc(p.x + ox, p.y + oy, 9, 0, Math.PI * 2); c.fill();
+        c.fillStyle = "#cceeff"; c.beginPath(); c.arc(p.x + ox, p.y + oy, 4, 0, Math.PI * 2); c.fill();
+      } else if (p.kind === "ally" || p.kind === "player") {
         c.save(); c.translate(p.x + ox, p.y + oy); c.rotate(Math.atan2(p.vy, p.vx));
         c.fillStyle = "#6f482a"; c.fillRect(-13, -1, 22, 3);
         c.fillStyle = "#d9e6eb"; c.beginPath(); c.moveTo(12, 0); c.lineTo(6, -4); c.lineTo(6, 4); c.closePath(); c.fill();
@@ -3232,7 +3832,7 @@ export class Engine {
       // The cached HUD only occupies the top and bottom of the screen. Avoid
       // blending its large transparent center onto the world every frame.
       const top = Math.min(120, this.viewH);
-      const bottom = Math.max(top, this.viewH - (this.viewW < 700 ? 142 : 190));
+      const bottom = this.hudBottomStart();
       c.drawImage(this.hudCv, 0, 0, this.viewW, top, 0, 0, this.viewW, top);
       if (bottom < this.viewH) {
         const height = this.viewH - bottom;
@@ -3325,7 +3925,8 @@ export class Engine {
     const wob = this.shakingNodes.has(n) ? Math.sin(n.wob * Math.PI * 6) * 3 * (1 - n.wob) : 0;
     const hpr = n.hp / n.maxHp;
     if (n.hp <= 0) { drawSprite(c, "stump", x, y + 4); return; }
-    const dark = this.tileAt(n.x, n.y) === T_DARK;
+    const ground = this.tileAt(n.x, n.y), dark = ground === T_DARK;
+    let tallDeposit = false;
     if (n.type === "tree" || n.type === "pine") {
       const name = n.skin ?? (n.type === "tree" ? (dark ? "tree_dark" : "tree") : dark ? "pine_dark" : "pine");
       this.drawShadow(x, y + 4, 23);
@@ -3346,7 +3947,17 @@ export class Engine {
       const isPlant = n.type === "bush" || n.type === "berry";
       const supported = isPlant && (!n.skin || n.skin === "snow_bush");
       const variant = n.skin === "snow_bush" ? 5 : n.type === "berry" ? 3 : [0, 1, 2, 4][Math.abs(Math.floor(n.x / 73) + Math.floor(n.y / 59)) % 4];
-      const reference = supported && this.settings.craftPix && drawReferencePlant(c, variant, x + Math.round(wob), y + 4, n.type === "berry" ? 58 : 54);
+      let reference = supported && this.settings.craftPix && drawReferencePlant(c, variant, x + Math.round(wob), y + 4, n.type === "berry" ? 58 : 54);
+      if (!isPlant && this.settings.craftPix) {
+        const sample = Math.abs(Math.floor(n.x / 61) + Math.floor(n.y / 47));
+        const snow = ground === T_SNOW || ground === T_ICE || ground === T_SNOW_PATH;
+        const deposit = n.type === "rock"
+          ? snow ? (sample % 2 ? 4 : 1) : dark ? 6 : ground === T_MINERAL ? (sample % 2 ? 2 : 3) : sample % 4
+          : snow ? 3 : dark ? (n.type === "crystal" ? 8 : sample % 2 ? 1 : 4)
+            : n.type === "crystal" ? (sample % 2 ? 8 : 9) : sample % 10;
+        tallDeposit = drawReferenceDeposit(c, n.type === "rock" ? "rock" : "mineral", deposit, x + Math.round(wob), y + 4, n.type === "rock" ? 68 : 74);
+        reference = tallDeposit;
+      }
       if (!reference) {
         this.drawShadow(x, y + 3, 14);
         const imported = n.type === "bush" && !n.skin && this.settings.craftPix && drawCraftPlant(c, "bush", x + Math.round(wob), y + 4);
@@ -3354,7 +3965,7 @@ export class Engine {
       }
     }
     if (hpr < 1) {
-      const top = n.type === "tree" || n.type === "pine" ? y - 86 : y - 42;
+      const top = n.type === "tree" || n.type === "pine" || tallDeposit ? y - 86 : y - 42;
       c.fillStyle = "rgba(0,0,0,0.55)"; c.fillRect(x - 16, top, 32, 5);
       c.fillStyle = "#8ae06a"; c.fillRect(x - 16, top, 32 * hpr, 5);
     }
@@ -3422,20 +4033,25 @@ export class Engine {
     c.restore();
   }
   drawFencePost(style:FenceStyle,x:number,y:number,rotation:number,alpha=1,tint?:string){
+    const c = this.ctx;
     if (style === "stone" && this.settings.craftPix && hasReferenceObject("castle_wall")) {
-      const c = this.ctx, sideView = Math.abs(Math.sin(rotation)) > Math.abs(Math.cos(rotation));
-      c.save(); c.translate(x, y); c.scale(sideView ? 0.68 : 1, 1); c.globalAlpha *= alpha;
+      const sideView = Math.abs(Math.sin(rotation)) > Math.abs(Math.cos(rotation));
+      c.save(); c.translate(x, y); c.scale(sideView ? 0.68 : 1, 1.4); c.globalAlpha *= alpha;
       drawReferenceObject(c, "castle_wall", 0, 0, 1); c.restore(); return;
     }
-    if(style==="rustic")this.drawRusticPost(x,y,rotation,alpha,tint);
-    else if(style==="stone")this.drawStonePost(x,y,rotation,alpha,tint);
-    else if(style==="hedge")this.drawHedgePost(x,y,rotation,alpha,tint);
-    else this.drawPalisadePost(x,y,rotation,alpha,tint);
+    // Raise the upright elements rather than rotating the sprite onto the
+    // ground: wood starts as a fence and masonry becomes a taller wall.
+    c.save(); c.translate(x, y); c.scale(1, style === "rustic" ? 1.6 : style === "stone" ? 2.5 : 1.8);
+    if(style==="rustic")this.drawRusticPost(0,0,rotation,alpha,tint);
+    else if(style==="stone")this.drawStonePost(0,0,rotation,alpha,tint);
+    else if(style==="hedge")this.drawHedgePost(0,0,rotation,alpha,tint);
+    else this.drawPalisadePost(0,0,rotation,alpha,tint);
+    c.restore();
   }
   drawStyledGate(s:Structure,x:number,y:number,alpha=1,tint?:string){
     if (s.fenceStyle === "stone" && this.settings.craftPix && hasReferenceObject("castle_gate")) {
       const c = this.ctx, sideView = Math.abs(Math.sin(s.rotation)) > Math.abs(Math.cos(s.rotation));
-      c.save(); c.translate(x, y); c.scale(sideView ? 0.68 : 1, 1); c.globalAlpha *= alpha;
+      c.save(); c.translate(x, y); c.scale(sideView ? 0.68 : 1, 1.4); c.globalAlpha *= alpha;
       drawReferenceObject(c, "castle_gate", 0, 0, 1);
       if (!s.open) {
         if (!drawReferenceObject(c, "castle_grate", 0, -2, 1)) {
@@ -3447,13 +4063,16 @@ export class Engine {
       }
       c.restore(); return;
     }
+    const c = this.ctx;
+    c.save(); c.translate(x, y); c.scale(1, s.fenceStyle === "stone" ? 2 : 1.7);
     if(s.fenceStyle==="stone"){
-      this.drawPalisadeGate(s,x,y,alpha,tint??"#7d8990");
-      this.drawStonePost(x-27,y,s.rotation,alpha,tint);this.drawStonePost(x+27,y,s.rotation,alpha,tint);
+      this.drawPalisadeGate(s,0,0,alpha,tint??"#7d8990");
+      this.drawStonePost(-27,0,s.rotation,alpha,tint);this.drawStonePost(27,0,s.rotation,alpha,tint);
     }else if(s.fenceStyle==="hedge"){
-      this.drawPalisadeGate(s,x,y,alpha,tint??"#6b7442");
-      this.drawHedgePost(x-27,y,s.rotation,alpha,tint);this.drawHedgePost(x+27,y,s.rotation,alpha,tint);
-    }else this.drawPalisadeGate(s,x,y,alpha,tint??(s.fenceStyle==="rustic"?"#aa7952":undefined));
+      this.drawPalisadeGate(s,0,0,alpha,tint??"#6b7442");
+      this.drawHedgePost(-27,0,s.rotation,alpha,tint);this.drawHedgePost(27,0,s.rotation,alpha,tint);
+    }else this.drawPalisadeGate(s,0,0,alpha,tint??(s.fenceStyle==="rustic"?"#aa7952":undefined));
+    c.restore();
   }
   drawStructure(s: Structure, ox: number, oy: number, tnow: number) {
     const c = this.ctx;
@@ -3464,9 +4083,11 @@ export class Engine {
         const key = `${s.fenceStyle}:${s.x}:${s.y}:${s.rotation}`;
         let cached = this.fencePosts.get(key);
         if (!cached) {
-          const left = Math.floor(s.x - 30), top = Math.floor(s.y - 40);
+          const left = Math.floor(s.x - 40), top = Math.floor(s.y - 100);
           const canvas = document.createElement("canvas");
-          canvas.width = Math.ceil(s.x + 30) - left; canvas.height = Math.ceil(s.y + 30) - top;
+          // Rotated foot braces can extend below the taller post. Leave enough
+          // transparent margin so cached and direct renders match on diagonals.
+          canvas.width = Math.ceil(s.x + 40) - left; canvas.height = Math.ceil(s.y + 48) - top;
           const painter = canvas.getContext("2d");
           if (painter) {
             this.ctx = painter;
@@ -3483,12 +4104,12 @@ export class Engine {
         if (cached) c.drawImage(cached.canvas, cached.left + ox, cached.top + oy);
         else this.drawFencePost(s.fenceStyle, x, y + 5, s.rotation);
       }
-      if(s.hp<s.maxHp) this.drawStructureHealth(s,x,y-35);
+      if(s.hp<s.maxHp) this.drawStructureHealth(s,x,y-(s.fenceStyle === "stone" ? 125 : 75));
       return;
     }
     if(s.type==="gate") {
       this.drawStyledGate(s,x,y+5);
-      if(s.hp<s.maxHp) this.drawStructureHealth(s,x,y-50);
+      if(s.hp<s.maxHp) this.drawStructureHealth(s,x,y-110);
       return;
     }
     let name: string = s.type;
@@ -3496,13 +4117,14 @@ export class Engine {
     const sz = spriteSize(name);
     const referenceName = s.type === "tower" ? "castle_tower" : s.type === "forge" || s.type === "house" ? s.type : null;
     const referenceBuilding = referenceName && this.settings.craftPix && hasReferenceObject(referenceName) ? referenceName : null;
+    if (s.type === "campfire") {
+      c.fillStyle = `rgba(255,150,60,${0.08 + Math.sin(tnow * 9) * 0.015})`;
+      c.beginPath(); c.ellipse(x, y + 2, 38, 13, 0, 0, Math.PI * 2); c.fill();
+    }
     c.save(); c.translate(x, y + 6); c.rotate(s.rotation);
     if (!referenceBuilding || !drawReferenceObject(c, referenceBuilding, 0, 0, REFERENCE_SCALE[referenceBuilding])) drawSprite(c, name, 0, 0);
     if (s.type === "farm" && this.settings.craftPix) drawCraftPlant(c, "crate", 52, 4);
     c.restore();
-    if (s.type === "campfire") {
-      const g = 0.35 + Math.sin(tnow * 9) * 0.08;c.fillStyle = `rgba(255,150,60,${g * 0.35})`;c.beginPath(); c.arc(x, y - 10, 40, 0, Math.PI * 2); c.fill();
-    }
     if (s.type === "forge" && !referenceBuilding) {const g = Math.sin(tnow * 7) * 0.5 + 0.5;c.fillStyle = `rgba(255,120,40,${0.15 + g * 0.15})`;c.beginPath(); c.arc(x, y - 16, 30, 0, Math.PI * 2); c.fill();}
     if (s.type === "tower" && !referenceBuilding) {c.fillStyle = `rgba(255,220,120,${0.18 + Math.sin(tnow * 3) * 0.06})`;c.beginPath(); c.arc(x, y - 100, 26, 0, Math.PI * 2); c.fill();}
     const buildingHeight = referenceBuilding ? (referenceBuilding === "house" ? 250 : referenceBuilding === "forge" ? 210 : 196) * REFERENCE_SCALE[referenceBuilding] : sz.h;
@@ -3518,10 +4140,12 @@ export class Engine {
     const hop = moving && a.kind === "rabbit" ? -Math.abs(Math.sin(tnow * 14)) * 6 : moving ? -Math.abs(Math.sin(tnow * 10)) * 2 : 0;
     this.drawShadow(x, y + 2, a.kind === "goat" ? 16 : 10);
     drawSprite(this.ctx, a.kind, x, y + 2, { flip: a.dir < 0 ? a.kind !== "goat" : a.kind === "goat", dy: hop });
-    if (a.hp < (a.kind === "goat" ? 26 : a.kind === "goose" ? 14 : 10)) {
+    const maxHp = (a.kind === "goat" ? 26 : a.kind === "goose" ? 14 : 10) * (a.rare ? 1.5 : 1);
+    if (a.rare) this.drawName("RARO ✦", x, y - 44, "#ffe59b");
+    if (a.hp < maxHp) {
       const c = this.ctx;
       c.fillStyle = "rgba(0,0,0,0.55)"; c.fillRect(x - 10, y - 40, 20, 3);
-      c.fillStyle = "#e04a4a"; c.fillRect(x - 10, y - 40, 20 * clamp(a.hp / 26, 0, 1), 3);
+      c.fillStyle = "#e04a4a"; c.fillRect(x - 10, y - 40, 20 * clamp(a.hp / maxHp, 0, 1), 3);
     }
   }
 
@@ -3539,6 +4163,7 @@ export class Engine {
       c.fillStyle = "#f4dfa9"; c.fillText("VAZIO", x, y - 79); c.restore();
     }
     if (!ch.opened) {
+      if (ch.rare) this.drawName("TESOURO ✦", x, y - 48, "#ffe59b");
       const g = 0.5 + Math.sin(tnow * 4) * 0.4;
       c.fillStyle = `rgba(255,226,138,${g * 0.55})`;
       c.beginPath(); c.arc(x, y - (referenceChest ? 76 : baseChest ? 50 : 36) - Math.sin(tnow * 3) * 3, 3, 0, Math.PI * 2); c.fill();
@@ -3562,6 +4187,20 @@ export class Engine {
     c.restore();
   }
 
+  drawVillager(v: Villager, ox: number, oy: number, tnow: number) {
+    const c = this.ctx, x = v.x + ox, y = v.y + oy;
+    const walking = Math.hypot(v.vx, v.vy) > 1;
+    const dir = v.dir ?? Math.PI / 2;
+    const index = Math.max(0, Number(v.look.slice(1)) || 0);
+    // A small contact shadow meets the feet, without casting shadows on buildings.
+    this.drawShadow(x, y + 2, 10);
+    const facing = viewFromAngle(dir);
+    c.save(); c.translate(Math.round(x), Math.round(y + 2));
+    const imported = this.settings.craftPix && drawCraftVillager(c, facing.view, facing.flip, index, walking, v.steps ?? 0, tnow + index * 0.3);
+    c.restore();
+    if (!imported) drawCharacter(c, v.look, x, y + 2, dir, walking, v.steps ?? 0, { craftPix: false });
+  }
+
   drawHumanoid(x: number, y: number, lookId: string, dir: number, walking: boolean, cycle: number, alpha = 1, action?: "walk" | "run" | "attack", carryTool?: ToolKey, toolLevel = 1) {
     this.drawShadow(x, y + 2, 13);
     drawCharacter(this.ctx, lookId, x, y + 2, dir, walking, cycle, {
@@ -3569,6 +4208,22 @@ export class Engine {
       craftPix: this.settings.craftPix, heroLevel: this.tools.sword,
       attackProgress: 1 - this.attackT / 0.22,
     });
+  }
+
+  drawRescue(rescue: RescueEncounter, ox: number, oy: number, tnow: number) {
+    const c = this.ctx, x = rescue.x + ox, y = rescue.y + oy;
+    const facing = viewFromAngle(Math.atan2(this.py - rescue.y, this.px - rescue.x));
+    const drawReferencePerson = (look: "archer" | "archer-hood" | "mage-blue", dx: number, dy: number) => {
+      this.drawShadow(x + dx, y + dy + 2, 12);
+      c.save(); c.translate(Math.round(x + dx), Math.round(y + dy + 2));
+      const ok = this.settings.craftPix && drawReferenceResident(c, look, facing.view, facing.flip, false, tnow);
+      c.restore();
+      if (!ok) this.drawHumanoid(x + dx, y + dy, "maya", 0, false, 0);
+    };
+    if (rescue.id === "archer") { drawReferencePerson("archer", -42, 0); drawReferencePerson("archer-hood", 42, 0); }
+    else if (rescue.id === "mage") drawReferencePerson("mage-blue", 0, 0);
+    else this.drawHumanoid(x, y, rescue.id === "guard" ? "player" : "bren", 0, false, 0, 1, undefined, rescue.id === "guard" ? "sword" : "pick", 1);
+    this.drawName(this.specialists[rescue.id].rescued ? "A SALVO · CONVIDAR" : "PRECISA DE AJUDA", x, y - 105, this.specialists[rescue.id].rescued ? "#baffc3" : "#ffdf9b");
   }
 
   drawName(name: string, x: number, y: number, color: string) {
@@ -3582,6 +4237,17 @@ export class Engine {
   drawPlayer(ox: number, oy: number, tnow: number) {
     const c = this.ctx;
     const x = this.px + ox, y = this.py + oy;
+    if (this.wakeT > 0) {
+      const rise = clamp((1.35 - this.wakeT) / 1.1, 0, 1);
+      this.drawShadow(x, y + 2, 18);
+      c.save(); c.translate(x, y - 4); c.rotate((1 - rise) * Math.PI / 2);
+      drawCharacter(c, "player", 0, 0, Math.PI / 2, false, 0, { craftPix: this.settings.craftPix, heroLevel: this.tools.sword });
+      c.fillStyle = "#9c3435"; c.fillRect(-5, -27, 7, 3);
+      c.fillStyle = "#d77468"; c.fillRect(-4, -27, 4, 1);
+      c.restore();
+      this.drawName(this.opts.playerName, x, y - (rise > 0.6 ? 99 : 45), "#dff1ff");
+      return;
+    }
     const blink = this.invulnT > 0 && Math.sin(tnow * 40) > 0;
     if (this.rollT > 0) {
       c.save(); c.translate(x, y - 20); c.rotate((0.26 - this.rollT) * 24 * (Math.cos(this.pdir) >= 0 ? 1 : -1)); c.translate(-x, -(y - 20));
@@ -3664,11 +4330,14 @@ export class Engine {
       c.lineWidth = m.type === "hulk" ? 5 : 3;
       c.beginPath(); c.arc(x, y - 12, reach, m.dir - 0.55, m.dir + 0.55); c.stroke();
     }
-    if (m.hp < m.maxHp) {
+    if (m.hp < m.maxHp || m.rare) {
       const sz = spriteSize(sprite);
       const top = y - (imported ? 102 : sz.h) - 8 + bob;
-      c.fillStyle = "rgba(0,0,0,0.55)"; c.fillRect(x - 16, top, 32, 4);
-      c.fillStyle = "#e04a4a"; c.fillRect(x - 16, top, 32 * clamp(m.hp / m.maxHp, 0, 1), 4);
+      if (m.rare) this.drawName("RARO ✦", x, top - 5, "#ffe59b");
+      if (m.hp < m.maxHp) {
+        c.fillStyle = "rgba(0,0,0,0.55)"; c.fillRect(x - 16, top, 32, 4);
+        c.fillStyle = "#e04a4a"; c.fillRect(x - 16, top, 32 * clamp(m.hp / m.maxHp, 0, 1), 4);
+      }
     }
   }
 
@@ -3723,7 +4392,7 @@ export class Engine {
     }
   }
 
-  drawFenceConnections(ox: number, oy: number) {
+  drawFenceConnections(ox: number, oy: number, enqueue?: (y: number, draw: () => void) => void) {
     if (this.structures.length < 2) return;
     const reach = this.fenceSpec(this.territoryLevel).fenceRadius + 80;
     const bx = BASE.x + ox, by = BASE.y + oy;
@@ -3754,46 +4423,76 @@ export class Engine {
         if (first.fenceStyle === "stone" && second.fenceStyle === "stone" && this.settings.craftPix && hasReferenceObject("castle_wall")) continue;
         const x1 = first.x + ox, y1 = first.y + oy, x2 = second.x + ox, y2 = second.y + oy;
         if (Math.max(x1, x2) < -40 || Math.min(x1, x2) > this.viewW + 40 || Math.max(y1, y2) < -60 || Math.min(y1, y2) > this.viewH + 40) continue;
-        // At native 1x resolution the baked rails match the original canvas
-        // geometry. Other render scales keep the vector path for crispness.
-        if (this.dpr !== 1) { this.drawFenceLink(c, first.fenceStyle, x1, y1, x2, y2); continue; }
-        const key = `${first.fenceStyle}:${first.x}:${first.y}:${second.x}:${second.y}`;
-        let cached = this.fenceLinks.get(key);
-        if (!cached) {
-          const left = Math.floor(Math.min(first.x, second.x) - 20), top = Math.floor(Math.min(first.y, second.y) - 36);
-          const right = Math.ceil(Math.max(first.x, second.x) + 20), bottom = Math.ceil(Math.max(first.y, second.y) + 12);
-          const canvas = document.createElement("canvas"); canvas.width = right - left; canvas.height = bottom - top;
-          const painter = canvas.getContext("2d");
-          if (!painter) { this.drawFenceLink(c, first.fenceStyle, x1, y1, x2, y2); continue; }
-          this.drawFenceLink(painter, first.fenceStyle, first.x - left, first.y - top, second.x - left, second.y - top);
-          cached = { canvas, left, top };
-          if (this.fenceLinks.size >= 128) {
-            const oldest = this.fenceLinks.keys().next().value;
-            if (oldest !== undefined) this.fenceLinks.delete(oldest);
+        const draw = () => {
+          // At native 1x resolution the baked rails match the original canvas
+          // geometry. Other render scales keep the vector path for crispness.
+          if (this.dpr !== 1) { this.drawFenceLink(c, first.fenceStyle, x1, y1, x2, y2); return; }
+          const key = `${first.fenceStyle}:${first.x}:${first.y}:${second.x}:${second.y}`;
+          let cached = this.fenceLinks.get(key);
+          if (!cached) {
+            const left = Math.floor(Math.min(first.x, second.x) - 20), top = Math.floor(Math.min(first.y, second.y) - 100);
+            const right = Math.ceil(Math.max(first.x, second.x) + 20), bottom = Math.ceil(Math.max(first.y, second.y) + 20);
+            const canvas = document.createElement("canvas"); canvas.width = right - left; canvas.height = bottom - top;
+            const painter = canvas.getContext("2d");
+            if (!painter) { this.drawFenceLink(c, first.fenceStyle, x1, y1, x2, y2); return; }
+            this.drawFenceLink(painter, first.fenceStyle, first.x - left, first.y - top, second.x - left, second.y - top);
+            cached = { canvas, left, top };
+            if (this.fenceLinks.size >= 128) {
+              const oldest = this.fenceLinks.keys().next().value;
+              if (oldest !== undefined) this.fenceLinks.delete(oldest);
+            }
+            this.fenceLinks.set(key, cached);
           }
-          this.fenceLinks.set(key, cached);
-        }
-        c.drawImage(cached.canvas, cached.left + ox, cached.top + oy);
+          c.drawImage(cached.canvas, cached.left + ox, cached.top + oy);
+        };
+        if (enqueue) enqueue((first.y + second.y) / 2, draw); else draw();
       }
     }
   }
 
   drawFenceLink(c: CanvasRenderingContext2D, style: FenceStyle, x1: number, y1: number, x2: number, y2: number) {
-      if(style==="stone"){
-        c.strokeStyle="#3f4950";c.lineWidth=28;c.beginPath();c.moveTo(x1,y1-8);c.lineTo(x2,y2-8);c.stroke();
-        c.strokeStyle="#7e8d96";c.lineWidth=23;c.beginPath();c.moveTo(x1,y1-10);c.lineTo(x2,y2-10);c.stroke();
-        c.strokeStyle="#bcc7cb";c.lineWidth=5;c.beginPath();c.moveTo(x1,y1-20);c.lineTo(x2,y2-20);c.stroke();
-        const len=Math.hypot(x2-x1,y2-y1),steps=Math.max(1,Math.floor(len/11));
-        for(let i=1;i<steps;i++){const t=i/steps,x=x1+(x2-x1)*t,y=y1+(y2-y1)*t;c.fillStyle=i%2?"#5c6971":"#9da9ae";c.fillRect(x-2,y-20,3,23);}
-      }else if(style==="hedge"){
-        c.strokeStyle="#4c3927";c.lineWidth=8;c.beginPath();c.moveTo(x1,y1-6);c.lineTo(x2,y2-20);c.moveTo(x1,y1-20);c.lineTo(x2,y2-6);c.stroke();
-        const len=Math.hypot(x2-x1,y2-y1),steps=Math.max(2,Math.floor(len/7));
-        for(let i=0;i<=steps;i++){const t=i/steps,x=x1+(x2-x1)*t,y=y1+(y2-y1)*t-12;c.fillStyle=i%2?"#568846":"#79aa50";c.beginPath();c.arc(x,y+(i%3-1)*4,6,0,Math.PI*2);c.fill();if(i%4===0){c.fillStyle="#b4d378";c.fillRect(x-2,y-3,3,2);}}
-      }else{
-        const heights=style==="rustic"?[7,18]:[5,13,21];
-        for(const height of heights){c.strokeStyle="#37241a";c.lineWidth=8;c.beginPath();c.moveTo(x1,y1-height);c.lineTo(x2,y2-height);c.stroke();c.strokeStyle=style==="rustic"?"#a8734b":height===13?"#b77c48":"#8f5c37";c.lineWidth=5;c.beginPath();c.moveTo(x1,y1-height-1);c.lineTo(x2,y2-height-1);c.stroke();c.strokeStyle="rgba(245,199,120,.55)";c.lineWidth=1;c.beginPath();c.moveTo(x1,y1-height-3);c.lineTo(x2,y2-height-3);c.stroke();}
-        if(style==="palisade")for(const t of [.25,.75]){const x=x1+(x2-x1)*t,y=y1+(y2-y1)*t;c.fillStyle="#d6ad68";c.fillRect(Math.round(x-2),Math.round(y-17),4,12);c.fillStyle="#f1d69b";c.fillRect(Math.round(x-1),Math.round(y-16),1,10);c.fillStyle="#31343a";c.fillRect(Math.round(x-1),Math.round(y-14),3,3);}
+    const len = Math.hypot(x2 - x1, y2 - y1);
+    const point = (t: number) => ({ x: x1 + (x2 - x1) * t, y: y1 + (y2 - y1) * t });
+    const rail = (height: number, dark: string, light: string) => {
+      c.strokeStyle = dark; c.lineWidth = 8; c.beginPath(); c.moveTo(x1, y1 - height); c.lineTo(x2, y2 - height); c.stroke();
+      c.strokeStyle = light; c.lineWidth = 5; c.beginPath(); c.moveTo(x1, y1 - height - 1); c.lineTo(x2, y2 - height - 1); c.stroke();
+      c.strokeStyle = "rgba(245,199,120,.55)"; c.lineWidth = 1; c.beginPath(); c.moveTo(x1, y1 - height - 3); c.lineTo(x2, y2 - height - 3); c.stroke();
+    };
+    if (style === "stone") {
+      // Full-height masonry instead of a thick line lying on the ground.
+      c.fillStyle = "#56626b"; c.beginPath(); c.moveTo(x1, y1 + 3); c.lineTo(x1, y1 - 67); c.lineTo(x2, y2 - 67); c.lineTo(x2, y2 + 3); c.closePath(); c.fill();
+      c.fillStyle = "#87969e"; c.beginPath(); c.moveTo(x1, y1 - 2); c.lineTo(x1, y1 - 63); c.lineTo(x2, y2 - 63); c.lineTo(x2, y2 - 2); c.closePath(); c.fill();
+      for (const h of [17, 34, 51]) { c.strokeStyle = "#55616a"; c.lineWidth = 2; c.beginPath(); c.moveTo(x1, y1 - h); c.lineTo(x2, y2 - h); c.stroke(); }
+      c.strokeStyle = "#c5ced0"; c.lineWidth = 4; c.beginPath(); c.moveTo(x1, y1 - 65); c.lineTo(x2, y2 - 65); c.stroke();
+      for (let i = 1, steps = Math.max(1, Math.floor(len / 11)); i < steps; i++) {
+        const { x, y } = point(i / steps); c.fillStyle = i % 2 ? "#5c6971" : "#b1bec3";
+        c.fillRect(x - 1, y - 49, 2, 14); c.fillRect(x + 3, y - 16, 2, 14);
       }
+    } else if (style === "hedge") {
+      rail(12, "#4c3927", "#856647"); rail(31, "#4c3927", "#856647");
+      const steps = Math.max(2, Math.floor(len / 7));
+      for (let i = 0; i <= steps; i++) {
+        const { x, y } = point(i / steps);
+        for (const h of [14, 30, 46]) {
+          c.fillStyle = (i + h) % 3 ? "#568846" : "#79aa50"; c.beginPath(); c.arc(x, y - h + (i % 3 - 1) * 3, 7, 0, Math.PI * 2); c.fill();
+        }
+        if (i % 4 === 0) { c.fillStyle = "#b4d378"; c.fillRect(x - 2, y - 45, 3, 2); }
+      }
+    } else {
+      if (style === "palisade") {
+        // Narrow, pointed logs rise between the posts; each remains vertical
+        // on screen even where the circular footprint turns sideways.
+        const steps = Math.max(2, Math.floor(len / 7));
+        for (let i = 1; i < steps; i++) {
+          const { x, y } = point(i / steps);
+          c.fillStyle = "#4a2d1d"; c.beginPath(); c.moveTo(x - 4, y + 1); c.lineTo(x - 4, y - 47); c.lineTo(x, y - 56); c.lineTo(x + 4, y - 47); c.lineTo(x + 4, y + 1); c.closePath(); c.fill();
+          c.fillStyle = i % 2 ? "#a86c42" : "#bf8550"; c.fillRect(x - 2, y - 46, 4, 44);
+          c.fillStyle = "#dfad6c"; c.fillRect(x - 1, y - 42, 1, 34);
+        }
+      }
+      const heights = style === "rustic" ? [12, 30] : [12, 32, 48];
+      for (const height of heights) rail(height, "#37241a", style === "rustic" ? "#a8734b" : "#96623a");
+    }
   }
 
   drawPlacement(ox: number, oy: number) {
@@ -3864,16 +4563,63 @@ export class Engine {
   }
 
   /* ---------------- HUD ---------------- */
+  /** HUD regions share a row on small screens rather than overlapping. */
+  hudLayout() {
+    const compact = this.viewW < 790;
+    if (!compact) return {
+      compact,
+      health: { x: 8, width: 236 },
+      day: { x: this.viewW / 2 - 150, width: 300 },
+      score: { x: this.viewW - 180, width: 170 },
+    };
+    const available = this.viewW - 24; // margins and two 4px gaps
+    const healthWidth = Math.floor(available * 0.32);
+    const dayWidth = Math.floor(available * 0.36);
+    const scoreWidth = available - healthWidth - dayWidth;
+    return {
+      compact,
+      health: { x: 8, width: healthWidth },
+      day: { x: 12 + healthWidth, width: dayWidth },
+      score: { x: 16 + healthWidth + dayWidth, width: scoreWidth },
+    };
+  }
+
+  hotbarLayout() {
+    const small = this.viewW < 760;
+    const gap = 4;
+    // Nine slots plus a separator and 8px of border on each side.
+    const slot = small ? Math.min(40, Math.floor((this.viewW - 62) / 9)) : 46;
+    const total = 9 * (slot + gap) + 14 - gap;
+    return { small, gap, slot, total, x: Math.round((this.viewW - total) / 2), y: this.viewH - slot - 14 };
+  }
+
+  minimapLayout() {
+    const compact = this.viewW < 700;
+    const size = compact ? 92 : 140;
+    return {
+      size,
+      x: compact ? 12 : this.viewW - size - 12,
+      // On a phone the map sits below the joystick, above the full hotbar and
+      // opposite the touch actions instead of covering item counts.
+      y: compact ? this.viewH - size - this.hotbarLayout().slot - 28 : this.viewH - size - 12,
+    };
+  }
+
+  hudBottomStart() {
+    return Math.max(Math.min(120, this.viewH), this.viewH - (this.viewW < 700 ? 185 : 190));
+  }
+
   renderHud() {
     const c = this.ctx;
     const w = this.viewW;
+    const layout = this.hudLayout();
     const underAttack = this.underAttackNow();
     c.textAlign = "left";
 
     // top-left: hp + stamina (pixel panel)
     const bx = 14, by = 14;
-    this.panel(bx - 6, by - 6, 236, 52);
-    const barW = 186;
+    this.panel(layout.health.x, by - 6, layout.health.width, 52);
+    const barW = layout.health.width - 50;
     c.fillStyle = "#3a1414"; c.fillRect(bx + 24, by + 2, barW, 13);
     const hpw = barW * clamp(this.hp / this.maxHp, 0, 1);
     c.fillStyle = this.hp / this.maxHp < 0.3 ? "#ff4040" : "#e04a4a";
@@ -3881,7 +4627,7 @@ export class Engine {
     c.fillStyle = "rgba(255,255,255,0.25)"; if (hpw > 1) c.fillRect(bx + 24, by + 2, hpw, 3);
     c.font = "700 11px Nunito, 'Trebuchet MS', system-ui, sans-serif"; c.fillStyle = "#fff";
     c.textAlign = "center";
-    c.fillText(`${Math.ceil(this.hp)} / ${this.maxHp}`, bx + 24 + barW / 2, by + 12);
+    c.fillText(`${Math.ceil(this.hp)} / ${this.maxHp}`, bx + 24 + barW / 2, by + 12, barW - 2);
     c.textAlign = "left";
     // Legible pixel heart with two lobes and a tapered point, rather than the
     // old rectangular cross. It remains inside the same compact HUD panel.
@@ -3901,26 +4647,31 @@ export class Engine {
 
     // top-center: day/phase/zone
     c.textAlign = "center";
-    this.panel(w / 2 - 150, 8, 300, 44);
-    c.font = "800 14px Nunito, 'Trebuchet MS', system-ui, sans-serif"; c.fillStyle = "#ffe9b0";
-    c.fillText(`Dia ${this.day} · ${this.phaseLabel()}`, w / 2, 26);
-    c.font = "600 12px Nunito, 'Trebuchet MS', system-ui, sans-serif"; c.fillStyle = "#b8c8d8";
-    c.fillText(this.zoneName(), w / 2, 43);
-    // clock arc
-    const prog = (this.time % CYCLE) / CYCLE;
-    c.strokeStyle = "rgba(255,255,255,0.25)"; c.lineWidth = 3;
-    c.beginPath(); c.arc(w / 2 - 128, 30, 12, 0, Math.PI * 2); c.stroke();
-    c.strokeStyle = this.isNight() ? "#8ab0ff" : "#ffd34d";
-    c.beginPath(); c.arc(w / 2 - 128, 30, 12, -Math.PI / 2, -Math.PI / 2 + prog * Math.PI * 2); c.stroke();
+    const dayCenter = layout.day.x + layout.day.width / 2;
+    this.panel(layout.day.x, 8, layout.day.width, 44);
+    c.font = `800 ${layout.compact ? 12 : 14}px Nunito, 'Trebuchet MS', system-ui, sans-serif`; c.fillStyle = "#ffe9b0";
+    const phase = layout.compact ? this.phaseLabel().replace(/^\S+\s+/u, "") : this.phaseLabel();
+    c.fillText(`Dia ${this.day} · ${phase}`, dayCenter, 26, layout.day.width - 10);
+    c.font = `600 ${layout.compact ? 10 : 12}px Nunito, 'Trebuchet MS', system-ui, sans-serif`; c.fillStyle = "#b8c8d8";
+    c.fillText(this.zoneName(), dayCenter, 43, layout.day.width - 10);
+    // The clock ring is omitted on compact screens to make room for the text.
+    if (!layout.compact) {
+      const prog = (this.time % CYCLE) / CYCLE;
+      c.strokeStyle = "rgba(255,255,255,0.25)"; c.lineWidth = 3;
+      c.beginPath(); c.arc(w / 2 - 128, 30, 12, 0, Math.PI * 2); c.stroke();
+      c.strokeStyle = this.isNight() ? "#8ab0ff" : "#ffd34d";
+      c.beginPath(); c.arc(w / 2 - 128, 30, 12, -Math.PI / 2, -Math.PI / 2 + prog * Math.PI * 2); c.stroke();
+    }
 
     // score top-right
     c.textAlign = "right";
-    this.panel(w - 180, 8, 170, 44);
-    c.font = "800 16px Nunito, 'Trebuchet MS', system-ui, sans-serif"; c.fillStyle = "#ffd34d";
-    c.fillText(`${this.score.toLocaleString("pt-BR")} pts`, w - 20, 27);
-    c.font = "11px system-ui"; c.fillStyle = "#b8c8d8";
+    this.panel(layout.score.x, 8, layout.score.width, 44);
+    const scoreRight = layout.score.x + layout.score.width - 10;
+    c.font = `800 ${layout.compact ? 13 : 16}px Nunito, 'Trebuchet MS', system-ui, sans-serif`; c.fillStyle = "#ffd34d";
+    c.fillText(`${this.score.toLocaleString("pt-BR")} pts`, scoreRight, 27, layout.score.width - 14);
+    c.font = `${layout.compact ? 9 : 11}px system-ui`; c.fillStyle = "#b8c8d8";
     const mpTxt = this.opts.mode === "multi" ? ` · 👥${this.remotes.length + 1}` : "";
-    c.fillText(`💀 ${this.kills} · 🏕️ nv.${this.baseLevel()}${mpTxt}`, w - 20, 44);
+    c.fillText(`💀 ${this.kills} · 🏕️ nv.${this.baseLevel()}${mpTxt}`, scoreRight, 44, layout.score.width - 14);
 
     this.renderHotbar();
 
@@ -3960,15 +4711,18 @@ export class Engine {
       this.rr(w / 2 - 132, 56, 264, 26, 8); c.stroke();
       c.font = "bold 13px system-ui, sans-serif";
       c.fillStyle = "#ffe2e2";
-      c.fillText("⚠ BASE SOB ATAQUE — DEFENDA A CERCA!", w / 2, 74);
+      const baseThreat = dist2(this.px, this.py, BASE.x, BASE.y) < this.territoryRadius() ** 2 ||
+        this.monsters.some((m) => m.siege && dist2(m.x, m.y, BASE.x, BASE.y) < (this.territoryRadius() + 350) ** 2);
+      c.fillText(baseThreat ? "⚠ BASE SOB ATAQUE — DEFENDA A CERCA!" : "⚠ CRIATURAS PRÓXIMAS — FIQUE ATENTO!", w / 2, 74);
     }
     if (this.settings.showFps) {
-      c.textAlign = "right";
+      c.textAlign = this.viewW < 700 ? "left" : "right";
       c.font = "bold 11px ui-monospace, monospace";
       c.fillStyle = this.fps < 45 ? "#ffb46a" : "#9fe3a0";
       const gate = this.structures.find((s) => s.type === "gate");
       const gateTxt = gate ? ` · ${gate.open ? "🚪 aberto" : "🚪 fechado"}` : "";
-      c.fillText(`${this.fps} FPS${gateTxt}`, w - 12, this.viewH - (this.viewW < 700 ? 118 : 166));
+      const mini = this.minimapLayout();
+      c.fillText(`${this.fps} FPS${gateTxt}`, this.viewW < 700 ? mini.x : w - 12, mini.y - 8);
     }
     this.renderMinimap();
   }
@@ -3988,15 +4742,10 @@ export class Engine {
 
   renderHotbar() {
     const c = this.ctx;
-    const w = this.viewW;
-    const small = w < 760;
-    const slot = small ? 40 : 46;
-    const gap = 4;
+    const { small, slot, gap, total, x: x0, y: y0 } = this.hotbarLayout();
+    const smallScale = Math.min(1, slot / 40);
     const tools: ToolKey[] = ["axe", "pick", "sword"];
     const res: ResKey[] = ["wood", "stone", "fiber", "food", "iron", "crystal"];
-    const total = tools.length * (slot + gap) + 14 + res.length * (slot + gap) - gap;
-    const x0 = Math.round(w / 2 - total / 2);
-    const y0 = this.viewH - slot - 14;
     this.panel(x0 - 8, y0 - 8, total + 16, slot + 16);
     let x = x0;
     c.imageSmoothingEnabled = false;
@@ -4009,8 +4758,8 @@ export class Engine {
       c.strokeRect(x + 0.5, y0 + 0.5, slot - 1, slot - 1);
       const icon = t === "sword" && this.combatWeapon === "bow" ? "bow" : t;
       if (!this.settings.craftPix || !drawReferenceIcon(c, icon, x + 4, y0 + 3, slot - 8)) {
-        if (icon === "bow") drawSprite(c, "tool_bow", x + slot / 2, y0 + slot * 0.85, { scale: small ? 2 : 2.3 });
-        else drawToolSprite(c, t, x + slot * 0.3, y0 + slot * 0.68, -Math.PI / 4, small ? 1.7 : 2.0);
+        if (icon === "bow") drawSprite(c, "tool_bow", x + slot / 2, y0 + slot * 0.85, { scale: small ? 2 * smallScale : 2.3 });
+        else drawToolSprite(c, t, x + slot * 0.3, y0 + slot * 0.68, -Math.PI / 4, small ? 1.7 * smallScale : 2.0);
       }
       c.font = "800 9px Nunito, system-ui, sans-serif"; c.fillStyle = "#cfc8bc";
       c.fillText(`${i + 1}`, x + 4, y0 + 10);
@@ -4028,9 +4777,9 @@ export class Engine {
       c.strokeStyle = "#4a4050"; c.lineWidth = 1;
       c.strokeRect(x + 0.5, y0 + 0.5, slot - 1, slot - 1);
       if (!this.settings.craftPix || !drawReferenceIcon(c, r, x + 4, y0 + 3, slot - 8)) {
-        drawSprite(c, "it_" + r, x + slot / 2, y0 + slot * 0.72, { scale: small ? 3 : 3.5 });
+        drawSprite(c, "it_" + r, x + slot / 2, y0 + slot * 0.72, { scale: small ? 3 * smallScale : 3.5 });
       }
-      c.font = "800 11px Nunito, system-ui, sans-serif";
+      c.font = `800 ${slot < 34 ? 9 : 11}px Nunito, system-ui, sans-serif`;
       c.textAlign = "right";
       c.fillStyle = "rgba(0,0,0,0.7)"; c.fillText(`${n}`, x + slot - 3, y0 + slot - 3);
       c.fillStyle = n > 0 ? "#fff6dc" : "#8a8290"; c.fillText(`${n}`, x + slot - 4, y0 + slot - 4);
@@ -4047,8 +4796,7 @@ export class Engine {
   renderMinimap() {
     if (!this.mini) return;
     const c = this.ctx;
-    const size = this.viewW < 700 ? 92 : 140;
-    const mx = this.viewW - size - 12, my = this.viewH - size - 12;
+    const { size, x: mx, y: my } = this.minimapLayout();
     c.globalAlpha = 0.88;
     c.fillStyle = "#0a0e14";
     this.rr(mx - 3, my - 3, size + 6, size + 6, 8); c.fill();
@@ -4242,6 +4990,14 @@ export class Engine {
       if (vis > 0.55 || near) c.fillText(`${meters}m`, px + p.lx, py + p.ly + 11);
     }
     c.globalAlpha = 1;
+    // Mark possible rescues as rumours; each is completed independently.
+    for (const rescue of this.rescues) {
+      if (this.specialists[rescue.id].hired) continue;
+      const x = mx + rescue.x * sx, y = my + rescue.y * sy;
+      c.fillStyle = "#35231c"; c.beginPath(); c.arc(x, y, 8, 0, Math.PI * 2); c.fill();
+      c.fillStyle = this.specialists[rescue.id].rescued ? "#9df2a8" : "#ffd36a";
+      c.font = "bold 12px system-ui, sans-serif"; c.textAlign = "center"; c.fillText("!", x, y + 4);
+    }
     // player
     const ppx = mx + this.px * sx, ppy = my + this.py * sy;
     c.save();
@@ -4467,6 +5223,7 @@ export class Engine {
   destroy() {
     this.destroyed = true;
     cancelAnimationFrame(this.rafId);
+    window.removeEventListener("pointerdown", this.onAudioGesture);
     window.removeEventListener("keydown", this.onKeyDown);
     window.removeEventListener("keyup", this.onKeyUp);
     window.removeEventListener("blur", this.onBlur);

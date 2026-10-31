@@ -196,7 +196,7 @@ try {
       const layer = document.createElement("canvas"); layer.width = width; layer.height = height;
       game.ctx = layer.getContext("2d"); game.renderHud();
       const pixels = game.ctx.getImageData(0, 0, width, height).data;
-      const top = Math.min(120, height), bottom = Math.max(top, height - (width < 700 ? 142 : 190));
+      const top = Math.min(120, height), bottom = game.hudBottomStart();
       let escaped = 0;
       for (let y = top; y < bottom; y++) for (let x = 0; x < width; x++) if (pixels[(y * width + x) * 4 + 3]) escaped++;
       results.push({ width, height, escaped });

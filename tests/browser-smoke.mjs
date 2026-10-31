@@ -86,9 +86,13 @@ try {
   await windSounds.click();
   assert.equal(await windSounds.getAttribute("aria-pressed"), "false");
   await windSounds.click();
+  const ambientSounds = config.getByRole("button", { name: /Riachos e fogueiras/ });
+  await ambientSounds.click();
+  assert.equal(await ambientSounds.getAttribute("aria-pressed"), "false");
+  await ambientSounds.click();
   await page.waitForFunction(() => {
     const settings = JSON.parse(localStorage.getItem("umbra-settings-v1") ?? "{}");
-    return settings.fpsCap === 0 && settings.treeMotion === true && settings.creatureSounds === true && settings.windSounds === true && settings.craftPix === true;
+    return settings.fpsCap === 0 && settings.treeMotion === true && settings.creatureSounds === true && settings.windSounds === true && settings.ambientSounds === true && settings.craftPix === true;
   });
   await page.screenshot({ path: screenshotPath("configuracoes-audio") });
   await config.getByRole("button", { name: "Pronto" }).click();

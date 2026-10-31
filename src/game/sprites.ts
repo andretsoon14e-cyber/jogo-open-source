@@ -432,13 +432,27 @@ S.berry = {
 };
 
 /* structures */
+// Original fallback designed for this game: a ring of stones, crossed logs,
+// and two flame frames. Unlike the old floating flame it has a grounded base.
 S.campfire0 = {
-  legend: { f: "#ffb030", F: "#ff6a1a", y: "#fff0a0", w: "#8a5a32", W: "#5e3a1c", s: "#6e6e6a" },
-  rows: [".......y........", "......fyf.......", "......fff.......", ".....fFfFf......", "....fFFfFFf.....", "....FFfffFF.....", "...fFFfyfFFf....", "...FFFfffFFF....", "..wwWFFFFFWww...", ".wwwwWWWWwwwww..", "..sWwwwwwwwWs...", ".ss.........ss.."],
+  legend: { f: "#ffad35", F: "#db4b20", y: "#fff1a0", w: "#aa7041", W: "#603a25", t: "#d9ad75", s: "#55514d", S: "#9c9b8f" },
+  rows: [
+    "..........y..........", "..........f..........", ".......f.fy..........", ".......Fffy..f.......",
+    ".......FffF.ff.......", "......FFfyFfFf.......", "......FffyfFFf.......", ".....FFfyyyfFFf......",
+    ".....FfyyyyyfFf......", "......FFyyyFFf.......", ".....wwFFFFFww.......", "...sswwwWWWwwwss.....",
+    "..sSSSwwwwwWwSSSs....", ".sSSSWWwwwwWWWSSSs...", ".sSSttWWwwWWttSSSs...", "..sSSttwwtttSSSSs....",
+    "...ssSSSSSSSSss......", ".....ssssssss........",
+  ],
 };
 S.campfire1 = {
   legend: S.campfire0.legend,
-  rows: ["........y.......", "......f.yf......", "......fff.......", "......fFfF......", "....fFFfFFf.....", "....FFfyfFF.....", "...fFFfffFFf....", "...FFFfffFFF....", "..wwWFFFFFWww...", ".wwwwWWWWwwwww..", "..sWwwwwwwwWs...", ".ss.........ss.."],
+  rows: [
+    "........y............", "........f............", "........yf..f........", "......f.yff.F........",
+    "......ffFff.Ff.......", "......fFfyFfFF.......", ".....fFFfyffFf.......", ".....fFFfyyfFFf......",
+    "......FfyyyyyFf......", "......FFyyyFFf.......", ".....wwFFFFFww.......", "...sswwwWWWwwwss.....",
+    "..sSSSwwwwwWwSSSs....", ".sSSSWWwwwwWWWSSSs...", ".sSSttWWwwWWttSSSs...", "..sSSttwwtttSSSSs....",
+    "...ssSSSSSSSSss......", ".....ssssssss........",
+  ],
 };
 S.wall = {
   legend: { w: "#a8783f", W: "#7a532a", d: "#54371a", r: "#c9a26a", k: "#3a2612" },

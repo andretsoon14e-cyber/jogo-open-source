@@ -6,7 +6,7 @@ import { hasCraftOrcs } from "@/game/craftpix";
 import { hasReferenceScene, referenceIconUrl, referenceObjectUrl } from "@/game/reference-art";
 import { GAME_TITLE } from "@/game/identity";
 import { BESTIARY, EQUIPMENT, SITES, type EquipmentKey } from "@/game/world-content";
-import { RES_LABEL, TOOL_LABEL, type GamePanel, type Snapshot, type ResKey, type ToolKey, type CombatWeapon, type FenceStyle } from "@/game/engine";
+import { RES_LABEL, TOOL_LABEL, type GamePanel, type Snapshot, type ResKey, type ToolKey, type CombatWeapon, type FenceStyle, type SpecialistId, type SpecialistDuty } from "@/game/engine";
 import { Icon } from "./Icons";
 
 export const SpriteThumb = memo(function SpriteThumb({ name, size = 46, character = false, view = "down", tool = "axe", craftPix = true, level = 1 }: { name: string; size?: number; character?: boolean; view?: "up" | "down" | "side"; tool?: ToolKey | "bow"; craftPix?: boolean; level?: number }) {
@@ -43,10 +43,12 @@ interface Props {
   onTool: (tool: ToolKey) => void;
   onCombatWeapon: (weapon: CombatWeapon) => void;
   onEat: () => void;
+  onSpecialistDuty: (id: SpecialistId, duty: SpecialistDuty) => void;
+  onSpecialistUpgrade: (id: SpecialistId) => void;
 }
 
 const resourceNames: ResKey[] = ["wood", "stone", "fiber", "food", "iron", "crystal"];
-const titleFor = { build: "Oficina da Clareira", forge: "Forja & melhorias", inventory: "Mochila & equipamento", bestiary: "O Diário da Ilha" };
+const titleFor = { build: "Oficina da Clareira", forge: "Forja & melhorias", inventory: "Mochila & equipamento", bestiary: "O Diário da Ilha", people: "Pessoas & tarefas" };
 
 function Costs({ cost, inv, craftPix }: { cost: Partial<Record<ResKey, number>>; inv: Record<ResKey, number>; craftPix: boolean }) {
   return <div className="journal-costs">{Object.entries(cost).map(([k,n]) => (
@@ -94,7 +96,7 @@ export default function FieldJournal(props: Props) {
         <button className="journal-close" aria-label="Fechar caderno" onClick={onClose}><Icon name="close" size={19} /></button>
       </header>
       <nav className="journal-tabs" aria-label="Seções do caderno">
-        {([ ["build","Construir","build"], ["forge","Melhorar","sword"], ["inventory","Mochila","bag"], ["bestiary","Registros","help"] ] as const).map(([key,title,icon]) => (
+        {([ ["build","Construir","build"], ["forge","Melhorar","sword"], ["inventory","Mochila","bag"], ["people","Pessoas","users"], ["bestiary","Registros","help"] ] as const).map(([key,title,icon]) => (
           <button key={key} className={panel === key ? "active" : ""} onClick={() => props.onPanel(key)}><Icon name={icon} size={15} /><span>{title}</span></button>
         ))}
       </nav>
@@ -196,6 +198,26 @@ export default function FieldJournal(props: Props) {
         </main>
       </div>}
 
+      {panel === "people" && <div className="p-3 sm:p-5">
+        <p className="text-sm leading-relaxed text-[#795b3b] mb-4">Encontre os sinais <b>!</b> no mapa e afaste as criaturas para resgatar sobreviventes. Depois, converse para convidá-los: um profissional por encontro, começando no nível 1. Moradores comuns continuam desarmados.</p>
+        <div className="grid sm:grid-cols-2 gap-3">
+          {snap.specialists.map((person) => <article key={person.id} className="journal-page" aria-label={person.name}>
+            <div className="flex justify-between gap-3 items-start"><div><h3 className="font-display text-xl">{person.name}</h3><p className="text-xs text-[#795b3b]">{person.role}</p></div><b className="text-xs text-[#447a58]">{person.hired ? `Nível ${person.level}` : person.rescued ? "A salvo" : "A resgatar"}</b></div>
+            {!person.hired ? <p className="text-xs leading-relaxed mt-3">{person.rescued ? "Aproxime-se e use Interagir para convidar à equipe." : person.hint + ". Derrote as criaturas do encontro e depois converse."}</p> : <>
+              <p className="text-xs font-bold mt-3 mb-1">Tarefa</p>
+              <div role="group" aria-label={`Tarefa de ${person.name}`} className="flex flex-wrap gap-1.5">
+                {(person.id === "miner" ? [["mine", "Minerar"], ["rest", "Descansar"]] : [["follow", "Acompanhar"], ["defend", "Defender base"], ["train", "Treinar"]]).map(([duty, label]) => <button key={duty} type="button" aria-pressed={person.duty === duty} className={`journal-button small ${person.duty === duty ? "" : "muted"}`} onClick={() => props.onSpecialistDuty(person.id, duty as SpecialistDuty)}>{label}</button>)}
+              </div>
+              {person.id === "miner" ? <p className="text-xs mt-3 leading-relaxed">Construa uma pedreira. Durante o dia e sem perigo próximo, o minerador produz ferro. Depois que você coletar cristal pela primeira vez, ele também encontra cristal.</p> : <>
+                <p className="text-xs mt-3 leading-relaxed">Treino diurno na base, sem inimigos: <b>{Math.min(person.training, person.trainingTarget)}/{person.trainingTarget}s</b>. Feche o caderno para o tempo passar.</p>
+                {person.weaponLevel < 3 && <div className="mt-2"><Costs cost={person.upgradeCost} inv={snap.inv} craftPix={props.craftPix} /></div>}
+                <button type="button" className="journal-button small w-full mt-2" disabled={!!person.upgradeReason || !person.affordable} onClick={() => props.onSpecialistUpgrade(person.id)}>{person.upgradeReason || (person.affordable ? "Forjar próximo equipamento" : "Faltam materiais")}</button>
+              </>}
+            </>}
+          </article>)}
+        </div>
+      </div>}
+
       {panel === "bestiary" && <div className="p-3 sm:p-5">
         <div className="flex gap-2 mb-4"><button className={`journal-button small ${bookTab === "creatures" ? "" : "muted"}`} onClick={() => setBookTab("creatures")}>Bestiário · {snap.seenCreatures.length}</button><button className={`journal-button small ${bookTab === "places" ? "" : "muted"}`} onClick={() => setBookTab("places")}>Atlas de ruínas · {snap.discoveredSites.length}/{SITES.length}</button></div>
         <div className="journal-book-grid">
@@ -233,8 +255,13 @@ export function OutcomePanel({ won, snap, onRespawn, onRestart, onScores, onMenu
         <div className="flex justify-center items-center gap-1 h-28 mb-3">
           {won ? [48,76,48].map((size,i) => <svg key={i} width={size} height={size} viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1l3.4 7 7.6 1.1-5.5 5.4 1.3 7.5-6.8-3.6-6.8 3.6 1.3-7.5L1 9.1 8.6 8z" fill={i===1?"#e7ad3f":"#c38d39"} stroke="#855124" strokeWidth="1.2"/><path d="M12 3l2.2 6-2.2 4-2.7-4z" fill="#f9d676"/></svg>) : <svg width="90" height="90" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 2l8 7 8-7 3 3-8 7 8 8-3 3-8-8-8 8-3-3 8-8-8-7z" fill="#526e8c" stroke="#33485e" strokeWidth="1.5"/></svg>}
         </div>
-        <h2 className="font-display text-4xl">{won ? "Um novo amanhecer" : "A noite venceu"}</h2>
-        <p className="text-sm leading-relaxed text-[#80613e] mt-3">{won ? `Você e Rian escaparam depois de ${snap.day} dias. A cidade está no horizonte — a clareira viverá na memória.` : `Você caiu no dia ${snap.day}. ${snap.canRespawn ? "Ainda há uma chance: volte à fogueira e proteja seu reino." : "A morte é permanente nesta dificuldade. A próxima expedição começa agora."}`}</p>
+        <h2 className="font-display text-4xl">{won ? "Um novo amanhecer" : "Você caiu"}</h2>
+        <p className="text-sm leading-relaxed text-[#80613e] mt-3">{won ? `Você e Rian escaparam depois de ${snap.day} dias. A cidade está no horizonte — a clareira viverá na memória.` : `Você caiu no dia ${snap.day}. Acordará ferido na base, com pouca vida e energia.`}</p>
+        {!won && snap.recovery && <div className="journal-page text-left mt-4 text-sm leading-relaxed" aria-label="Consequências da queda">
+          <p><b>Saque:</b> {snap.recovery.report.percent}% dos recursos comuns carregados. Ferro, cristal, ferramentas e equipamentos foram preservados.</p>
+          <p className="mt-1"><b>Base:</b> {snap.recovery.report.destroyed} estruturas destruídas e {snap.recovery.report.damaged} danificadas.</p>
+          <p className="text-xs mt-1 opacity-75">A dificuldade e a pressão da onda determinam os estragos.</p>
+        </div>}
         <div className="font-display text-2xl my-5 text-[#78502d]">{snap.score.toLocaleString("pt-BR")} pontos</div>
         <div className="grid grid-cols-2 gap-3">
           {!won && snap.canRespawn ? <button className="journal-button col-span-2" onClick={onRespawn}>Renascer na fogueira</button> : null}

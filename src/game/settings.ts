@@ -17,6 +17,7 @@ export interface GameSettings {
   treeMotion: boolean;
   creatureSounds: boolean;
   windSounds: boolean;
+  ambientSounds: boolean;
   craftPix: boolean;
 }
 
@@ -27,7 +28,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   autoSave: true,
   controls: "kb-mouse",
   music: true,
-  musicVol: 0.55,
+  musicVol: 0.35,
   sfxVol: 0.7,
   voice: true,
   sensitivity: 1,
@@ -35,6 +36,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   treeMotion: true,
   creatureSounds: true,
   windSounds: true,
+  ambientSounds: true,
   craftPix: true,
 };
 

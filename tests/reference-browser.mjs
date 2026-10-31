@@ -10,13 +10,13 @@ await build({ entryPoints: ["tests/browser-entry.ts"], bundle: true, platform: "
 async function image(width, height, color) {
   return sharp({ create: { width, height, channels: 4, background: color } }).png().toBuffer();
 }
-const sizes = { archer: [768, 1152], icons: [512, 64], plants: [384, 64], bow: [64, 64], menu: [960, 640], forge: [260, 210], house: [220, 250], chest: [100, 82], chapel: [240, 294], market: [200, 176], camp: [200, 200], sewer: [200, 87], castle_wall: [44, 84], castle_tower: [112, 196], castle_gate: [82, 70], castle_grate: [31, 25] };
+const sizes = { archer: [768, 1152], "archer-hood": [768, 1152], "mage-blue": [1152, 768], "mage-red": [1152, 768], minerals: [960, 96], rocks: [768, 96], icons: [512, 64], plants: [384, 64], bow: [64, 64], menu: [960, 640], forge: [260, 210], house: [220, 250], chest: [100, 82], chapel: [240, 294], market: [200, 176], camp: [200, 200], sewer: [200, 87], castle_wall: [44, 84], castle_tower: [112, 196], castle_gate: [82, 70], castle_grate: [31, 25] };
 const fixtures = {};
 for (const [key, [width, height]] of Object.entries(sizes)) fixtures[`${key}.png`] = await image(width, height, key === "bow" ? "#993344" : "#68a438");
 
 const browser = await chromium.launch({ headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage"], ...(process.env.CHROMIUM_EXECUTABLE_PATH ? { executablePath: process.env.CHROMIUM_EXECUTABLE_PATH } : {}) });
 try {
-  for (const scenario of ["missing", "complete", "broken-archer", "broken-object"]) {
+  for (const scenario of ["missing", "complete", "broken-archer", "broken-object", "broken-resident"]) {
     const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
@@ -25,10 +25,10 @@ try {
       if (pathname === "/") return route.fulfill({ status: 200, contentType: "text/html", body: '<canvas style="width:1280px;height:720px"></canvas>' });
       if (pathname === "/referencias/manifest.json") {
         if (scenario === "missing") return route.fulfill({ status: 404, body: "" });
-        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ version: 1, archer: true, icons: true, plants: true, bow: true, menu: true, objects: Object.fromEntries(["forge", "house", "chest", "chapel", "market", "camp", "sewer", "castle_wall", "castle_tower", "castle_gate", "castle_grate"].map((x) => [x, true])), scenes: { forge: true, chapel: true, market: true, camp: true, sewer: true } }) });
+        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ version: 1, archer: true, archerHood: true, mageBlue: true, mageRed: true, minerals: true, rocks: true, icons: true, plants: true, bow: true, menu: true, objects: Object.fromEntries(["forge", "house", "chest", "chapel", "market", "camp", "sewer", "castle_wall", "castle_tower", "castle_gate", "castle_grate"].map((x) => [x, true])), scenes: { forge: true, chapel: true, market: true, camp: true, sewer: true } }) });
       }
       const name = pathname.split("/").at(-1);
-      if ((scenario === "broken-archer" && name === "archer.png") || (scenario === "broken-object" && name === "chapel.png")) return route.fulfill({ status: 200, contentType: "image/png", body: fixtures["sewer.png"] });
+      if ((scenario === "broken-archer" && name === "archer.png") || (scenario === "broken-object" && name === "chapel.png") || (scenario === "broken-resident" && ["mage-blue.png", "minerals.png"].includes(name))) return route.fulfill({ status: 200, contentType: "image/png", body: fixtures["sewer.png"] });
       if (pathname.startsWith("/referencias/") && fixtures[name]) return route.fulfill({ status: 200, contentType: "image/png", body: fixtures[name] });
       return route.fulfill({ status: 404, body: "" });
     });
@@ -47,6 +47,14 @@ try {
       const objects = { chapel: drewChapel, sewer: api.drawReferenceObject(ctx, "sewer", 100, 200), forge: api.drawReferenceObject(ctx, "forge", 100, 200), house: api.drawReferenceObject(ctx, "house", 100, 200), chest: api.drawReferenceObject(ctx, "chest", 100, 200) };
       const icon = { wood: api.drawReferenceIcon(ctx, "it_wood", 1, 2, 32), bow: api.drawReferenceIcon(ctx, "tool_bow", 1, 2, 32), unknown: api.drawReferenceIcon(ctx, "it_stone", 1, 2, 32), thumb: !!api.referenceIconUrl("tool_axe"), cached: api.referenceIconUrl("tool_axe") === api.referenceIconUrl("axe") };
       const newAssets = { plant: api.drawReferencePlant(ctx, 5, 100, 100), menu: !!api.referenceMenuUrl(), bowThumb: !!api.referenceIconUrl("tool_bow"), castleWall: api.hasReferenceObject("castle_wall"), castleGate: api.hasReferenceObject("castle_gate"), castleGrate: api.hasReferenceObject("castle_grate"), castleTower: api.hasReferenceObject("castle_tower") };
+      const regional = {
+        blue: api.drawReferenceResident(ctx, "mage-blue", "side", true, true, 0),
+        red: api.drawReferenceResident(ctx, "mage-red", "up", false, false, 0.2),
+        hood: api.drawReferenceResident(ctx, "archer-hood", "down", false, true, 0),
+        archer: api.drawReferenceResident(ctx, "archer", "down", false, false, 0),
+        mineral: api.drawReferenceDeposit(ctx, "mineral", 9, 100, 100),
+        rock: api.drawReferenceDeposit(ctx, "rock", 7, 100, 100),
+      };
       const paperdollBow = api.getCharacterUrl("player", "up", "bow", true, 2) !== api.getCharacterUrl("player", "up", "sword", true, 2);
       const directCalls = calls.slice();
       const frame = {
@@ -58,6 +66,9 @@ try {
       const events = [];
       const make = (continueSave = false) => new api.Engine({ canvas, mode: "single", difficulty: "dificil", playerName: "Teste", seed: 77, continueSave, onUi: (event) => events.push(event) });
       const game = make(); game.skipCutscene(); game.escort.active = false; game.updateSpawns = () => {};
+      calls.length = 0;
+      for (const resident of game.villagers) game.drawVillager(resident, 0, 0, 0);
+      const residentSources = calls.map((call) => call.src.split("/").at(-1));
       game.tileAt = () => 2;
       game.structures = []; game.monsters = [];
       game.questP[1] = 19;
@@ -67,28 +78,26 @@ try {
       const recruited = game.allies.map((a) => a.id);
       game.saveGame(true);
       const key = game.saveKey(), saved = JSON.parse(localStorage.getItem(key));
-      const saveNew = saved.allies.filter((id) => id === "archer").length;
+      const questDoesNotHire = !saved.allies.includes("archer");
       game.destroy();
-      const loadedNew = make(true);
-      const newCount = loadedNew.allies.filter((a) => a.id === "archer").length;
-      loadedNew.destroy();
-      saved.allies = saved.allies.filter((id) => id !== "archer");
+      delete saved.specialists; saved.allies.push("archer"); saved.tools.sword = 2;
       localStorage.setItem(key, JSON.stringify(saved));
       const loadedOld = make(true);
       const oldCount = loadedOld.allies.filter((a) => a.id === "archer").length;
+      const oldLevel = loadedOld.specialistLevel(loadedOld.specialists.archer);
       loadedOld.saveGame(true);
       const upgradedSave = JSON.parse(localStorage.getItem(key)).allies.filter((id) => id === "archer").length;
       loadedOld.destroy();
-      saved.questDone[1] = false; saved.questP[1] = 19;
+      saved.allies = saved.allies.filter((id) => id !== "archer");
       localStorage.setItem(key, JSON.stringify(saved));
-      const beforeQuest = make(true);
-      const premature = beforeQuest.allies.some((a) => a.id === "archer");
-      beforeQuest.destroy();
+      const completedOldQuest = make(true);
+      const premature = completedOldQuest.allies.some((a) => a.id === "archer");
+      completedOldQuest.destroy();
       localStorage.removeItem(key);
 
       const fight = make(); fight.skipCutscene(); fight.escort.active = false; fight.tileAt = () => 2; fight.structures = []; fight.monsters = []; fight.projectiles = [];
       fight.px = 1100; fight.py = 1100; fight.hp = 100; fight.invulnT = 0;
-      fight.allies = []; fight.recruitArcher();
+      fight.allies = []; fight.specialists.archer.rescued = true; fight.hireSpecialist("archer");
       const archer = fight.allies[0]; archer.x = 1000; archer.y = 1100;
       fight.spawnMonster(1300, 1100, "imp");
       fight.monsters[0].hp = 3; fight.monsters[0].speed = 0; fight.monsters[0].t = 99;
@@ -210,7 +219,7 @@ try {
       const renderedArcher = calls.some((call) => call.src.endsWith("/archer.png"));
       fight.destroy();
       ctx.drawImage = original;
-      return { status, drewArcher, objects, icon, newAssets, paperdollBow, calls: directCalls, frame, recruited, saveNew, newCount, oldCount, upgradedSave, premature, arrow, combat, closed, open, noTunnel, hostileDamage, noTarget, monsterAtBuilding, buildingShots, placedFootprints, shadowCalls, closedChestArt, openChestArt, castleWall, closedCastleGate, openCastleGate, towerFootprint, castleTower, footprint, placement, front, escaped, solidCamp, firstRingFree, campCollisions, disabledFootprint, escort, scene, disabled, renderedArcher };
+      return { status, drewArcher, objects, icon, newAssets, regional, residentSources, paperdollBow, calls: directCalls, frame, recruited, questDoesNotHire, oldCount, oldLevel, upgradedSave, premature, arrow, combat, closed, open, noTunnel, hostileDamage, noTarget, monsterAtBuilding, buildingShots, placedFootprints, shadowCalls, closedChestArt, openChestArt, castleWall, closedCastleGate, openCastleGate, towerFootprint, castleTower, footprint, placement, front, escaped, solidCamp, firstRingFree, campCollisions, disabledFootprint, escort, scene, disabled, renderedArcher };
     });
     const assets = scenario !== "missing", archer = assets && scenario !== "broken-archer", chapel = assets && scenario !== "broken-object";
     assert.equal(result.status.archer, archer, scenario);
@@ -219,13 +228,22 @@ try {
     for (const key of ["sewer", "forge", "house", "chest"]) assert.equal(result.objects[key], assets, `${scenario}: ${key}`);
     assert.deepEqual(result.icon, { wood: assets, bow: assets, unknown: false, thumb: assets, cached: true }, `${scenario}: ícones e fallback`);
     assert.deepEqual(result.newAssets, { plant: assets, menu: assets, bowThumb: assets, castleWall: assets, castleGate: assets, castleGrate: assets, castleTower: assets }, `${scenario}: plantas, menu, arco e castelo`);
+    const intactRegional = assets && scenario !== "broken-resident";
+    assert.deepEqual(result.regional, { blue: intactRegional, red: assets, hood: assets, archer, mineral: intactRegional, rock: assets }, `${scenario}: moradores e depósitos com fallback independente`);
+    assert.equal(result.residentSources.some((name) => ["mage-red.png", "mage-blue.png", "archer-hood.png", "archer.png"].includes(name)), false, `${scenario}: moradores comuns não usam roupas de especialistas`);
+    if (assets) {
+      if (intactRegional) {
+        assert.deepEqual(result.calls.find((call) => call.src.endsWith("/mage-blue.png")).args.slice(0, 4), [0, 480, 96, 96], "maga caminha para a esquerda");
+        assert.deepEqual(result.calls.find((call) => call.src.endsWith("/minerals.png")).args.slice(0, 4), [864, 0, 96, 96], "último minério usa sua própria célula");
+      }
+    }
     assert.equal(result.paperdollBow, true, `${scenario}: retrato mostra o arco selecionado`);
     if (archer) assert.deepEqual(result.calls.find((call) => call.src.endsWith("/archer.png")).args.slice(0, 4), [384, 864, 96, 96], "ataque para a esquerda, quadro 5");
     if (assets) assert.deepEqual(result.calls.find((call) => call.src.endsWith("/icons.png")).args, [192, 0, 64, 64, 1, 2, 32, 32], "madeira usa o recorte certo da folha");
     assert.deepEqual(result.frame, { idle: { x: 0, y: 0, size: 64 }, left: { x: 0, y: 320, size: 64 }, right: { x: 0, y: 384, size: 64 }, attackUp: { x: 672, y: 1056, size: 96 } });
-    assert.equal(result.recruited.filter((x) => x === "archer").length, 1);
+    assert.equal(result.recruited.filter((x) => x === "archer").length, 0);
     assert.ok(result.recruited.includes("maya"));
-    assert.deepEqual([result.saveNew, result.newCount, result.oldCount, result.upgradedSave, result.premature], [1, 1, 1, 1, false]);
+    assert.deepEqual([result.questDoesNotHire, result.oldCount, result.oldLevel, result.upgradedSave, result.premature], [true, 1, 2, 1, false]);
     assert.deepEqual(result.arrow, { count: 1, kind: "ally" });
     assert.deepEqual(result.combat, { hp: 100, kills: 1, quest: 1, count: 0 }, "flecha atravessa jogador sem causar fogo amigo e registra o abate");
     assert.deepEqual(result.closed, { hp: 20, arrows: 0 });

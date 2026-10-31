@@ -42,6 +42,8 @@ try {
       { name: "floresta", quality: "leve", x: 104 * 32, y: 95 * 32, monsters: 0 },
       { name: "ruínas", quality: "auto", x: 45 * 32, y: 77 * 32 + 80, monsters: 0 },
       { name: "neve e gelo", quality: "auto", x: 137 * 32 + 100, y: 43 * 32 - 70, monsters: 0 },
+      { name: "riacho e correnteza", quality: "auto", x: 38 * 32, y: 84 * 32, monsters: 0 },
+      { name: "campos de cristal", quality: "auto", x: 76 * 32, y: 40 * 32 + 90, monsters: 0 },
       { name: "combate com 24 criaturas", quality: "auto", x: 104 * 32, y: 88 * 32, monsters: 24 },
       { name: "base com 8 fogueiras e 24 criaturas", quality: "auto", x: 104 * 32, y: 88 * 32, monsters: 24, fires: 8 },
       { name: "cerco com 63 trechos e 24 criaturas", quality: "auto", x: 104 * 32, y: 88 * 32, monsters: 24, walls: 63 },
@@ -57,7 +59,7 @@ try {
       game.territoryLevel = scene.kingdom ? 4 : 1; game.fenceRing = 1;
       game.centerCamera(); game.monsters = []; game.structures = []; game.particles = []; game.floaters = [];
       game.allies = initialAllies.slice();
-      if (scene.archer) { game.recruitArcher(); const ally = game.allies.at(-1); ally.x = game.px - 60; ally.y = game.py + 30; }
+      if (scene.archer) { game.specialists.archer.rescued = true; game.hireSpecialist("archer"); const ally = game.allies.at(-1); ally.x = game.px - 60; ally.y = game.py + 30; }
       for (let i = 0; i < (scene.fires ?? 0); i++) {
         const a = i / scene.fires * Math.PI * 2;
         game.structures.push({ type: "campfire", x: game.px + Math.cos(a) * 110, y: game.py + Math.sin(a) * 110, hp: 100, maxHp: 100, prodT: 0, open: false, rotation: 0, fenceStyle: "palisade" });

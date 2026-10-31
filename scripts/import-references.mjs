@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
-import { makeArcher, makeReferenceObject } from "./reference-art-core.mjs";
+import { makeArcher, makeMage, makeReferenceObject } from "./reference-art-core.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -34,6 +34,7 @@ const hashes = {
   22: "8ccd79e95524660a2d240df09f5cd98ae330406b73ba57a9d0f9840c6efe267b",
   24: "a959d6700a841036706d7954b958a220fed6a14291fc84ce071e5135224ffa8c",
   26: "38daec85c43b6727365c29a5e26ea02d6780d312fb7df0205c6911bd25525c82",
+  28: "83e5befa6ea59c425e7841308b0a7237e26b163387840c9c45d8cfa1cb5e363d",
   30: "a6469375a638239e4874bc273e0fe404a3fca2a9673c5ef7b7f92c7c633c5995",
   31: "6335370c86058d68942252ebd2dd9eb7471133aabdb0bb43784f91ab412fc09d",
   36: "bbc91be1fc8650df3b4c40185a65bd89a422d122a2129feef934322b4a74c8a2",
@@ -41,6 +42,11 @@ const hashes = {
   42: "bd7494f255a915ba2ca15cd3073b65a008c93264aacd1f33bf3ab0ef54c43e46",
   49: "3deefb2ced5debc2653347936adfd3aa80815bd4b18ea0f1598e92217a201a70",
   50: "9fdca436088aad169408a5d161c1045df8fb64431e20ba0b68039998d9e6d566",
+  52: "155e7e177eb19cf80b11b8669d7b3ea0ba8b1a609ab7f0c3154c0ae27c5d1ed5",
+  54: "63de1486683ed0ed2d627c4904b09b0cbc42ab54694b8d4c61ebad947617efe8",
+  60: "d866683c2168ffe24b553da24553d547f93ae05fd65331a9c87f486c824f2a95",
+  62: "acf91cd4ccfc21a9089ea39d52e3ac4b11f33c66ee9c2e1c58b5feb9aa82fb8f",
+  65: "2911ade165ebcd0cdd17a9b076e07e66730d784d1f715830ceffe314aa3e9f63",
 };
 const objects = {
   forge: { id: 8, left: 55, top: 50, width: 795, height: 640, targetWidth: 260, targetHeight: 210, mainOnly: true },
@@ -74,6 +80,21 @@ const scenes = {
   sewer: { id: 15, top: 230, height: 970 },
 };
 
+// Largest examples from each row of the supplied mineral and rock sheets.
+// Keeping the atlas local avoids publishing extractable third-party artwork.
+const mineralRows = [[30, 250], [280, 215], [495, 215], [710, 215], [930, 205]];
+const rockRows = [[70, 220], [350, 205], [630, 215], [920, 210]];
+async function makeDepositAtlas(input, rows, sides) {
+  const size = 96, pieces = [];
+  for (const [top, height] of rows) for (const [left, width] of sides) {
+    const crop = await makeReferenceObject(input, { left, top, width, height, targetWidth: width, targetHeight: height, mainOnly: true, shadowBelow: 0.55 });
+    // Preserve aspect ratio and ground the silhouette inside each cell.
+    const { data, info } = await sharp(crop).trim({ threshold: 5 }).resize(90, 90, { fit: "inside", kernel: "nearest" }).png().toBuffer({ resolveWithObject: true });
+    pieces.push({ input: data, left: pieces.length * size + Math.floor((size - info.width) / 2), top: size - info.height });
+  }
+  return sharp({ create: { width: rows.length * sides.length * size, height: size, channels: 4, background: "#00000000" } }).composite(pieces).png({ compressionLevel: 9 }).toBuffer();
+}
+
 async function main() {
   const inputs = {};
   for (const [id, expected] of Object.entries(hashes)) {
@@ -88,10 +109,16 @@ async function main() {
     inputs[id] = data;
   }
   if (!!inputs[30] !== !!inputs[31]) throw new Error("As duas imagens do arqueiro (image-30.png e image-31.png) precisam estar juntas.");
+  if (inputs[60] && !inputs[28]) throw new Error("O arqueiro de capuz precisa das imagens image-60.png e image-28.png juntas.");
 
   const generated = new Map();
-  const manifest = { version: 1, archer: !!inputs[30], icons: !!inputs[13], plants: !!inputs[41], bow: !!inputs[36], menu: !!inputs[42], objects: {}, scenes: {} };
+  const manifest = { version: 1, archer: !!inputs[30], archerHood: !!inputs[60], mageBlue: !!inputs[62], mageRed: !!inputs[65], minerals: !!inputs[52], rocks: !!inputs[54], icons: !!inputs[13], plants: !!inputs[41], bow: !!inputs[36], menu: !!inputs[42], objects: {}, scenes: {} };
   if (inputs[30]) generated.set("archer.png", await makeArcher(inputs));
+  if (inputs[60]) generated.set("archer-hood.png", await makeArcher(inputs, { idleWalkId: 60, runAttackId: 28, walkStep: 128 }));
+  if (inputs[62]) generated.set("mage-blue.png", await makeMage(inputs[62], "blue"));
+  if (inputs[65]) generated.set("mage-red.png", await makeMage(inputs[65], "red"));
+  if (inputs[52]) generated.set("minerals.png", await makeDepositAtlas(inputs[52], mineralRows, [[65, 240], [995, 255]]));
+  if (inputs[54]) generated.set("rocks.png", await makeDepositAtlas(inputs[54], rockRows, [[65, 215], [930, 220]]));
   if (inputs[41]) {
     const pieces = [];
     for (const [index, [left, top, width, height]] of plantCrops.entries()) {
@@ -126,7 +153,7 @@ async function main() {
   if (!generated.size) throw new Error("Nenhuma das imagens reconhecidas foi encontrada.");
 
   mkdirSync(output, { recursive: true });
-  const known = ["archer.png", "icons.png", "plants.png", "bow.png", "menu.png", ...Object.keys(objects).map((n) => `${n}.png`), ...Object.keys(scenes).map((n) => `scene-${n}.png`)];
+  const known = ["archer.png", "archer-hood.png", "mage-blue.png", "mage-red.png", "minerals.png", "rocks.png", "icons.png", "plants.png", "bow.png", "menu.png", ...Object.keys(objects).map((n) => `${n}.png`), ...Object.keys(scenes).map((n) => `scene-${n}.png`)];
   for (const [name, buffer] of generated) {
     const temp = path.join(output, `.${name}.tmp`); writeFileSync(temp, buffer); renameSync(temp, path.join(output, name));
   }

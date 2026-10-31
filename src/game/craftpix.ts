@@ -9,6 +9,7 @@ export interface CraftPixStatus { hero: boolean; orcs: boolean; plants: boolean;
 const status: CraftPixStatus = { hero: false, orcs: false, plants: false };
 const heroes: HTMLImageElement[] = [];
 let rianHero: HTMLCanvasElement | null = null;
+const villagerHeroes: HTMLCanvasElement[] = [];
 const orcs: HTMLImageElement[] = [];
 let plants: HTMLImageElement | null = null;
 let loading: Promise<CraftPixStatus> | null = null;
@@ -45,6 +46,38 @@ function makeRianHero(source: HTMLImageElement): HTMLCanvasElement | null {
   } catch { return null; }
 }
 
+/** Reuse the unarmed, plainly dressed level-one body/head already supplied in
+ * the pack. Only palette shades change; no weapons, silhouettes or new art are
+ * introduced. Atlases are prepared once, never recolored on each frame. */
+function makeVillagerHeroes(source: HTMLImageElement): HTMLCanvasElement[] {
+  const hair = [0x2b2023, 0x3b2c33, 0x4d3945, 0x684f5a, 0x876c7d];
+  const cloth = [0x2d312b, 0x3f433d, 0x5e615a, 0x6f736a, 0x868b7c, 0xa0a387];
+  const variants = [
+    { hair: [0x29201e, 0x4c332b, 0x674539, 0x8a604a, 0xb18365], cloth: [0x303a31, 0x465b42, 0x65835a, 0x78996a, 0x9db588, 0xbac9a4] },
+    { hair: [0x241d1b, 0x3c3028, 0x5b4634, 0x806648, 0xa98a65], cloth: [0x40302e, 0x63433c, 0x875b4b, 0xa2725b, 0xbf9475, 0xd2b596] },
+    { hair: [0x252027, 0x42323d, 0x654b5a, 0x8c6f7b, 0xb29498], cloth: [0x2b353b, 0x3c505b, 0x587282, 0x698a97, 0x89a8ae, 0xacbfbd] },
+    { hair: [0x211d1a, 0x362c22, 0x524331, 0x76644a, 0x9c8662], cloth: [0x3a3530, 0x554c3b, 0x796d50, 0x92835f, 0xb2a37e, 0xcab999] },
+    { hair: [0x251d1b, 0x4a3027, 0x6c4331, 0x945f40, 0xbc8963], cloth: [0x362f39, 0x55445b, 0x765f7c, 0x907592, 0xac95ae, 0xc6b3c1] },
+  ];
+  return variants.flatMap((palette) => {
+    try {
+      const canvas = document.createElement("canvas"); canvas.width = source.naturalWidth; canvas.height = 512;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      if (!ctx) return [];
+      ctx.drawImage(source, 0, 0);
+      const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const colors = new Map<number, number>([...hair.map((color, i): [number, number] => [color, palette.hair[i]]), ...cloth.map((color, i): [number, number] => [color, palette.cloth[i]])]);
+      for (let i = 0; i < pixels.data.length; i += 4) {
+        if (!pixels.data[i + 3]) continue;
+        const replacement = colors.get((pixels.data[i] << 16) | (pixels.data[i + 1] << 8) | pixels.data[i + 2]);
+        if (replacement !== undefined) { pixels.data[i] = replacement >> 16; pixels.data[i + 1] = (replacement >> 8) & 255; pixels.data[i + 2] = replacement & 255; }
+      }
+      ctx.putImageData(pixels, 0, 0);
+      return [canvas];
+    } catch { return []; }
+  });
+}
+
 /** Each pack can fail independently; missing/corrupt art always falls back. */
 export function loadCraftPix(): Promise<CraftPixStatus> {
   if (typeof window === "undefined" || typeof Image === "undefined" || typeof fetch === "undefined") return Promise.resolve({ ...status });
@@ -58,7 +91,8 @@ export function loadCraftPix(): Promise<CraftPixStatus> {
       const flags = manifest as { hero?: unknown; orcs?: unknown; plants?: unknown };
       const tasks: Promise<void>[] = [];
       if (flags.hero === true) tasks.push(Promise.all([1, 2, 3].map((n) => image(`hero-${n}`, 384, 1088))).then((loaded) => {
-        heroes.splice(0, heroes.length, ...loaded); rianHero = makeRianHero(loaded[1]); status.hero = true;
+        heroes.splice(0, heroes.length, ...loaded); rianHero = makeRianHero(loaded[1]);
+        villagerHeroes.splice(0, villagerHeroes.length, ...makeVillagerHeroes(loaded[0])); status.hero = true;
       }).catch(() => {}));
       if (flags.orcs === true) tasks.push(Promise.all([1, 2, 3].map((n) => image(`orc-${n}`, 512, 768))).then((loaded) => {
         orcs.splice(0, orcs.length, ...loaded); status.orcs = true;
@@ -114,6 +148,15 @@ export function drawCraftHero(ctx: CanvasRenderingContext2D, view: View, flip: b
   } else {
     ctx.drawImage(atlas, frame.x, frame.y + (sword ? 512 : 0), 32, 32, -16 * scale, -28 * scale, 32 * scale, 32 * scale);
   }
+  return true;
+}
+
+/** Villager feet use the same anchor as the hero and a distance-based walk cycle. */
+export function drawCraftVillager(ctx: CanvasRenderingContext2D, view: View, flip: boolean, index: number, walking: boolean, cycle: number, idleTime: number, scale = 3): boolean {
+  const atlas = villagerHeroes[mod(index, villagerHeroes.length || 1)];
+  if (!atlas) return false;
+  const frame = heroFrame(view, flip, walking ? "walk" : "idle", cycle, idleTime);
+  ctx.drawImage(atlas, frame.x, frame.y, 32, 32, -16 * scale, -28 * scale, 32 * scale, 32 * scale);
   return true;
 }
 

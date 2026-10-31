@@ -4,7 +4,12 @@ export class Sfx {
   vol = 0.35;
   private noiseBuffer: AudioBuffer | null = null;
   private nextCreatureAt = 0;
+  private nextAnimalAt = 0;
   private nextWindAt = 0;
+  private nextWaterAt = 0;
+  private nextFireAt = 0;
+  private nextBirdAt = 0;
+  private nextHitAt = 0;
 
   ensure() {
     if (!this.ctx && typeof window !== "undefined") {
@@ -29,7 +34,7 @@ export class Sfx {
   }
 
   tone(f: number, dur: number, type: OscillatorType, vol: number, slide = 0) {
-    if (!this.ctx || this.vol <= 0 || vol <= 0) return;
+    if (!this.ctx || this.ctx.state !== "running" || this.vol <= 0 || vol <= 0) return;
     const t = this.ctx.currentTime;
     const o = this.ctx.createOscillator(), g = this.ctx.createGain();
     o.type = type; o.frequency.setValueAtTime(f, t);
@@ -41,13 +46,24 @@ export class Sfx {
   }
 
   noise(dur: number, vol: number) {
-    if (!this.ctx || this.vol <= 0 || vol <= 0) return;
+    if (!this.ctx || this.ctx.state !== "running" || this.vol <= 0 || vol <= 0) return;
     const t = this.ctx.currentTime;
     const source = this.noiseSource(this.ctx);
     const gain = this.ctx.createGain();
     gain.gain.setValueAtTime(vol * this.vol, t);
     gain.gain.linearRampToValueAtTime(0, t + dur);
     source.connect(gain); gain.connect(this.ctx.destination);
+    source.start(t, 0, Math.min(dur, 1));
+  }
+
+  private filteredNoise(dur: number, vol: number, frequency: number) {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== "running" || this.vol <= 0 || vol <= 0) return;
+    const t = ctx.currentTime, source = this.noiseSource(ctx), filter = ctx.createBiquadFilter(), gain = ctx.createGain();
+    filter.type = "bandpass"; filter.frequency.value = frequency; filter.Q.value = 0.6;
+    gain.gain.setValueAtTime(this.vol * vol, t);
+    gain.gain.linearRampToValueAtTime(0, t + dur);
+    source.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
     source.start(t, 0, Math.min(dur, 1));
   }
 
@@ -100,23 +116,98 @@ export class Sfx {
     const ctx = this.ctx;
     if (!ctx || ctx.state !== "running" || this.vol <= 0 || ctx.currentTime < this.nextWindAt) return;
     const t = ctx.currentTime;
-    this.nextWindAt = t + 7 + Math.random() * 5;
+    this.nextWindAt = t + 3 + Math.random() * 2;
     const source = this.noiseSource(ctx);
     const filter = ctx.createBiquadFilter();
     filter.type = "bandpass"; filter.frequency.value = 420; filter.Q.value = 0.45;
     const gain = ctx.createGain();
     gain.gain.setValueAtTime(0, t);
-    gain.gain.linearRampToValueAtTime(this.vol * 0.12, t + 0.4);
+    gain.gain.linearRampToValueAtTime(this.vol * 0.24, t + 0.4);
     gain.gain.linearRampToValueAtTime(0, t + 0.98);
     source.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
     source.start(t, 0, 1);
   }
 
+  /** Soft birdsong during the day, synthesized in two short phrases. */
+  bird() {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== "running" || this.vol <= 0 || ctx.currentTime < this.nextBirdAt) return;
+    const t = ctx.currentTime; this.nextBirdAt = t + 10 + Math.random() * 8;
+    const root = 1250 + Math.random() * 280;
+    for (let i = 0; i < 2; i++) {
+      const at = t + i * 0.16, osc = ctx.createOscillator(), gain = ctx.createGain();
+      osc.type = "sine"; osc.frequency.setValueAtTime(root * (i ? 1.12 : 1), at);
+      osc.frequency.exponentialRampToValueAtTime(root * (i ? 1.3 : 1.16), at + 0.12);
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, this.vol * 0.12), at + 0.025);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.13);
+      osc.connect(gain); gain.connect(ctx.destination); osc.start(at); osc.stop(at + 0.15);
+    }
+  }
+
+  /** Brief, distinct animal calls, louder nearby and throttled across flocks. */
+  animal(kind: "rabbit" | "goose" | "goat", proximity: number) {
+    const ctx = this.ctx, strength = Math.max(0, Math.min(1, proximity));
+    if (!ctx || ctx.state !== "running" || this.vol <= 0 || strength < 0.05 || ctx.currentTime < this.nextAnimalAt) return;
+    const t = ctx.currentTime;
+    this.nextAnimalAt = t + 3.5 + Math.random() * 2;
+    const pitch = kind === "goose" ? 290 : kind === "goat" ? 190 : 720;
+    const duration = kind === "goose" ? 0.32 : kind === "goat" ? 0.42 : 0.18;
+    const oscillator = ctx.createOscillator(), gain = ctx.createGain(), filter = ctx.createBiquadFilter();
+    oscillator.type = kind === "rabbit" ? "sine" : kind === "goat" ? "triangle" : "sawtooth";
+    oscillator.frequency.setValueAtTime(pitch, t);
+    oscillator.frequency.exponentialRampToValueAtTime(pitch * (kind === "rabbit" ? 1.3 : 0.78), t + duration);
+    filter.type = "lowpass"; filter.frequency.value = kind === "goose" ? 1050 : 1600;
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, this.vol * strength * 0.42), t + 0.025);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+    oscillator.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
+    oscillator.start(t); oscillator.stop(t + duration + 0.01);
+  }
+
+  /** Water and fire reuse a one-second noise buffer and stop on their own. */
+  water(proximity: number) {
+    const ctx = this.ctx, strength = Math.max(0, Math.min(1, proximity));
+    if (!ctx || ctx.state !== "running" || this.vol <= 0 || strength < 0.05 || ctx.currentTime < this.nextWaterAt) return;
+    const t = ctx.currentTime; this.nextWaterAt = t + 0.95;
+    const source = this.noiseSource(ctx), filter = ctx.createBiquadFilter(), gain = ctx.createGain();
+    filter.type = "bandpass"; filter.frequency.value = 750; filter.Q.value = 0.5;
+    gain.gain.setValueAtTime(0, t);
+    gain.gain.linearRampToValueAtTime(this.vol * strength * 0.24, t + 0.2);
+    gain.gain.linearRampToValueAtTime(0, t + 0.98);
+    source.connect(filter); filter.connect(gain); gain.connect(ctx.destination); source.start(t, 0, 1);
+  }
+
+  fire(proximity: number) {
+    const ctx = this.ctx, strength = Math.max(0, Math.min(1, proximity));
+    if (!ctx || ctx.state !== "running" || this.vol <= 0 || strength < 0.05 || ctx.currentTime < this.nextFireAt) return;
+    const t = ctx.currentTime; this.nextFireAt = t + 1.3;
+    const source = this.noiseSource(ctx), filter = ctx.createBiquadFilter(), gain = ctx.createGain();
+    filter.type = "bandpass"; filter.frequency.value = 1300; filter.Q.value = 0.7;
+    gain.gain.setValueAtTime(this.vol * strength * 0.15, t);
+    gain.gain.linearRampToValueAtTime(0, t + 0.42);
+    source.connect(filter); filter.connect(gain); gain.connect(ctx.destination); source.start(t, 0, 0.42);
+  }
+
   chop() { this.tone(180, 0.09, "square", 0.5, -60); this.noise(0.06, 0.3); }
   mine() { this.tone(520, 0.05, "square", 0.35, -200); this.noise(0.08, 0.45); }
-  swing() { this.noise(0.05, 0.18); }
-  hit() { this.tone(140, 0.12, "sawtooth", 0.6, -70); this.noise(0.08, 0.4); }
-  hurt() { this.tone(220, 0.25, "sawtooth", 0.55, -140); }
+  swing() { this.filteredNoise(0.08, 0.14, 1100); }
+  hit() {
+    const ctx = this.ctx;
+    if (!ctx || ctx.state !== "running" || this.vol <= 0 || ctx.currentTime < this.nextHitAt) return;
+    this.nextHitAt = ctx.currentTime + 0.09;
+    this.tone(145, 0.11, "sine", 0.27, -75);
+    this.filteredNoise(0.09, 0.24, 750);
+  }
+  hurt() { this.tone(170, 0.22, "triangle", 0.28, -95); this.filteredNoise(0.12, 0.12, 480); }
+  monsterDeath(type: string, proximity: number) {
+    const strength = Math.max(0, Math.min(1, proximity));
+    if (strength <= 0.05) return;
+    const deep = type === "brute" || type === "hulk" || type === "demon" || type === "orc";
+    this.tone(deep ? 105 : 190, 0.28, "triangle", 0.24 * strength, deep ? -55 : -100);
+    this.filteredNoise(0.18, 0.19 * strength, deep ? 360 : 620);
+  }
+  structureBreak() { this.tone(100, 0.18, "sine", 0.25, -55); this.filteredNoise(0.18, 0.3, 500); }
   pickup() { this.tone(660, 0.07, "sine", 0.4, 220); this.tone(990, 0.09, "sine", 0.25, 120); }
   build() { this.tone(330, 0.12, "triangle", 0.5, 80); this.tone(440, 0.18, "triangle", 0.35, 110); }
   eat() { this.tone(300, 0.08, "sine", 0.4, 60); this.tone(380, 0.1, "sine", 0.3, 60); }

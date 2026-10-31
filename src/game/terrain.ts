@@ -4,7 +4,7 @@
    each chunk is painted once and reused: big FPS win.
    ========================================================= */
 
-export const T_WATER = 0, T_SAND = 1, T_GRASS = 2, T_DARK = 3, T_PATH = 4, T_ROCK = 5, T_CAVE = 6, T_BRIDGE = 7, T_SNOW = 8, T_ICE = 9, T_RUIN = 10, T_SNOW_PATH = 11, T_NECRO = 12;
+export const T_WATER = 0, T_SAND = 1, T_GRASS = 2, T_DARK = 3, T_PATH = 4, T_ROCK = 5, T_CAVE = 6, T_BRIDGE = 7, T_SNOW = 8, T_ICE = 9, T_RUIN = 10, T_SNOW_PATH = 11, T_NECRO = 12, T_MINERAL = 13;
 
 export function tileHash(x: number, y: number, s: number) {
   let n = (x * 374761393 + y * 668265263 + s * 1274126177) | 0;
@@ -27,9 +27,10 @@ const PAL: Record<number, Pal> = {
   [T_RUIN]: { base: "#a29c86", alt: "#98947c", dark: "#777963", light: "#bbb5a0" },
   [T_SNOW_PATH]: { base: "#bdac87", alt: "#b5a481", dark: "#95815e", light: "#d3c7a7" },
   [T_NECRO]: { base: "#565e57", alt: "#505750", dark: "#343b3a", light: "#777b68" },
+  [T_MINERAL]: { base: "#6c604f", alt: "#625747", dark: "#453f37", light: "#94836a" },
 };
 // which terrain visually overlaps which (higher wins on borders)
-const PRIO: Record<number, number> = { [T_WATER]: 0, [T_SAND]: 1, [T_PATH]: 2, [T_GRASS]: 3, [T_DARK]: 4, [T_ROCK]: 5, [T_CAVE]: 6, [T_BRIDGE]: 1.5, [T_SNOW]: 7, [T_ICE]: 6.5, [T_RUIN]: 2.5, [T_SNOW_PATH]: 3, [T_NECRO]: 7.5 };
+const PRIO: Record<number, number> = { [T_WATER]: 0, [T_SAND]: 1, [T_PATH]: 2, [T_GRASS]: 3, [T_DARK]: 4, [T_ROCK]: 5, [T_CAVE]: 6, [T_BRIDGE]: 1.5, [T_SNOW]: 7, [T_ICE]: 6.5, [T_RUIN]: 2.5, [T_SNOW_PATH]: 3, [T_NECRO]: 7.5, [T_MINERAL]: 5.5 };
 
 export class Terrain {
   private chunks = new Map<number, { cv: HTMLCanvasElement; last: number }>();
@@ -260,13 +261,13 @@ export class Terrain {
     } else if (t === T_SAND) {
       if (h > 0.6) { c.fillStyle = h > 0.85 ? "#cbb48a" : "#f3e6b2"; c.fillRect(px + Math.floor(h * 22), py + Math.floor((1 - h) * 18), h > 0.9 ? 6 : 3, 3); }
       if (h > 0.94) { c.fillStyle = "#f7f3e8"; c.fillRect(px + 14, py + 12, 5, 3); c.fillStyle = "#d9b7a0"; c.fillRect(px + 15, py + 13, 3, 1); }
-    } else if (t === T_ROCK || t === T_CAVE) {
+    } else if (t === T_ROCK || t === T_CAVE || t === T_MINERAL) {
       if (h > 0.55) {
         c.fillStyle = t === T_CAVE ? "rgba(0,0,0,0.35)" : "rgba(0,0,0,0.18)";
         c.fillRect(px + 4 + Math.floor(h * 8), py + 12, 10, 2);
         c.fillRect(px + 14, py + 6, 2, 8);
       }
-      if (t === T_CAVE && h > 0.9) { c.fillStyle = "#6fd3dc"; c.fillRect(px + 20, py + 20, 3, 3); c.fillStyle = "#b070f0"; c.fillRect(px + 8, py + 24, 2, 2); }
+      if ((t === T_CAVE || t === T_MINERAL) && h > 0.9) { c.fillStyle = "#6fd3dc"; c.fillRect(px + 20, py + 20, 3, 3); c.fillStyle = "#b070f0"; c.fillRect(px + 8, py + 24, 2, 2); }
       if (t === T_ROCK && h > 0.86) { c.fillStyle = "#a8a192"; c.fillRect(px + 6, py + 20, 6, 4); c.fillStyle = "#6a6458"; c.fillRect(px + 6, py + 23, 6, 1); }
     } else if (t === T_WATER) {
       if (h > 0.82) { c.fillStyle = "rgba(255,255,255,0.18)"; c.fillRect(px + 6, py + 14, 10, 2); }
@@ -281,13 +282,17 @@ export class Terrain {
 
 /** Animated water highlights drawn on top of baked chunks (cheap). */
 export function drawWaterAnim(ctx: CanvasRenderingContext2D, tiles: Uint8Array, W: number, H: number, TILE: number, x0: number, y0: number, x1: number, y1: number, ox: number, oy: number, now: number) {
-  ctx.fillStyle = "rgba(255,255,255,0.22)";
+  ctx.fillStyle = "rgba(225,250,255,0.35)";
   for (let ty = y0; ty <= y1; ty++) {
     for (let tx = x0; tx <= x1; tx++) {
       if (tiles[ty * W + tx] !== T_WATER) continue;
-      const ph = Math.sin(tx * 1.7 + ty * 2.3 + now * 2.2);
-      if (ph > 0.8) ctx.fillRect(tx * TILE + ox + 6 + Math.floor(ph * 6), ty * TILE + oy + 12, 12, 3);
-      else if (ph < -0.92) ctx.fillRect(tx * TILE + ox + 16, ty * TILE + oy + 22, 8, 2);
+      const wave = Math.sin(tx * 1.7 + ty * 2.3 + now * 2.2);
+      const flow = Math.floor((now * 8 + tx * 5 + ty * 3) % 22);
+      const x = tx * TILE + ox, y = ty * TILE + oy;
+      // Two small moving highlights per tile evoke a current without animating
+      // or rebaking terrain chunks; all drawing is clipped inside the tile.
+      ctx.fillRect(x + 2 + flow, y + 6 + (tx * 7 + ty * 11) % 10, 7, 2);
+      if (wave > -0.18) ctx.fillRect(x + 3 + (flow + 10) % 20, y + 21, 9, 2);
     }
   }
 }

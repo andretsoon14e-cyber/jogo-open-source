@@ -56,14 +56,14 @@ export function keepMainSilhouette(rgba, width, height) {
 }
 
 /** Pack the four directions and supplied animations from the two previews. */
-export async function makeArcher(previews) {
+export async function makeArcher(previews, { idleWalkId = 30, runAttackId = 31, walkStep = 138 } = {}) {
   const source = {};
-  for (const id of [30, 31]) source[id] = await sharp(previews[id]).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  for (const id of [idleWalkId, runAttackId]) source[id] = await sharp(previews[id]).removeAlpha().raw().toBuffer({ resolveWithObject: true });
   const definitions = [
-    { id: 30, action: "idle", count: 12, center: (i) => 100 + 128 * i, top: 712 },
-    { id: 30, action: "walk", count: 6, center: (i) => 100 + Math.round(138 * i), top: 155 },
-    { id: 31, action: "run", count: 8, center: (i) => 1028 + 98 * i, top: 155 },
-    { id: 31, action: "attack", count: 8, center: (i) => 100 + Math.round(138 * i), top: 712 },
+    { id: idleWalkId, action: "idle", count: 12, center: (i) => 100 + 128 * i, top: 712 },
+    { id: idleWalkId, action: "walk", count: 6, center: (i) => 100 + Math.round(walkStep * i), top: 155 },
+    { id: runAttackId, action: "run", count: 8, center: (i) => 1028 + 98 * i, top: 155 },
+    { id: runAttackId, action: "attack", count: 8, center: (i) => 100 + Math.round(138 * i), top: 712 },
   ];
   const pieces = [];
   for (const [actionIndex, def] of definitions.entries()) {
@@ -87,6 +87,37 @@ export async function makeArcher(previews) {
     }
   }
   return sharp({ create: { width: 768, height: 1152, channels: 4, background: "#00000000" } }).composite(pieces).png({ compressionLevel: 9 }).toBuffer();
+}
+
+/** Two resident appearances from the supplied mage previews, preserving the
+ * four directions and idle/walk animations. The original screenshots have
+ * different horizontal spacing; do not treat them as a uniform sprite sheet. */
+export async function makeMage(input, variant) {
+  const { data, info } = await sharp(input).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const idleCenters = variant === "blue"
+    ? [100, 212, 324, 436, 548, 660, 778, 896, 1014, 1132, 1250, 1368]
+    : Array.from({ length: 12 }, (_, i) => 98 + 128 * i);
+  const defs = [
+    { count: 12, centers: idleCenters, top: 700 },
+    { count: 6, centers: Array.from({ length: 6 }, (_, i) => (variant === "blue" ? 1032 : 1046) + 128 * i), top: 140 },
+  ];
+  const size = 96, pieces = [];
+  for (const [action, def] of defs.entries()) for (let row = 0; row < 4; row++) {
+    const count = action === 0 && row === 3 ? 4 : def.count;
+    for (let frame = 0; frame < count; frame++) {
+      const left = def.centers[frame] - size / 2, top = def.top + row * 118;
+      const rgb = Buffer.alloc(size * size * 3);
+      for (let y = 0; y < size; y++) {
+        const from = ((top + y) * info.width + left) * 3;
+        data.copy(rgb, y * size * 3, from, from + size * 3);
+      }
+      // The preview's gray oval begins just below the feet in these sheets;
+      // the game supplies a separate shadow anchored to the actual position.
+      const rgba = mattePreview(rgb, size, size, { shadowBelow: action === 0 ? 65 : 69 });
+      pieces.push({ input: await sharp(rgba, { raw: { width: size, height: size, channels: 4 } }).png().toBuffer(), left: frame * size, top: (action * 4 + row) * size });
+    }
+  }
+  return sharp({ create: { width: 1152, height: 768, channels: 4, background: "#00000000" } }).composite(pieces).png({ compressionLevel: 9 }).toBuffer();
 }
 
 /** Flood only the exterior backdrop: pale walls must stay opaque even when
