@@ -521,9 +521,9 @@ export default function GameClient() {
               <span className="text-[10px] text-amber-200 px-1 whitespace-nowrap">Seguir círculo</span>
               <button type="button" onClick={() => engineRef.current?.rotateFence(1)} aria-label="Girar cerca à direita" className="rounded bg-amber-900/80 border border-amber-600 text-amber-100 w-9 h-9 font-bold cursor-pointer hover:bg-amber-700">→</button>
             </div>
-          ) : (
+          ) : snap.placing.id !== "spike_trap" && snap.placing.id !== "barricade" ? (
             <button type="button" onClick={() => engineRef.current?.rotateStructure(1)} className="px-2 py-2 rounded bg-amber-900/80 border border-amber-600 text-amber-100 text-[11px] font-bold cursor-pointer hover:bg-amber-700 flex items-center gap-1"><Icon name="rotate" size={14}/>{snap.placing.facing === "frente" ? "Virar de lado" : "Virar de frente"} · R</button>
-          )}
+          ) : null}
           <button type="button" onClick={() => engineRef.current?.confirmPlace()} disabled={!snap.placing.valid} className="px-3 py-2 rounded bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-[11px] font-bold cursor-pointer flex items-center gap-1"><Icon name="check" size={12} /> Colocar{snap.placing.id === "wall" ? " 2" : ""}</button>
           <button type="button" onClick={() => engineRef.current?.cancelPlace()} className="px-2 py-2 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-bold cursor-pointer flex items-center gap-1"><Icon name="close" size={12} /> Sair</button>
         </div>
@@ -603,6 +603,7 @@ export default function GameClient() {
           onCraftEquipment={(id) => engineRef.current?.craftEquipment(id)}
           onFenceStyle={(style) => engineRef.current?.setFenceStyle(style)}
           onFenceRing={(ring) => engineRef.current?.setFenceRing(ring)}
+          onDefenseTier={(tier) => engineRef.current?.setDefenseTier(tier)}
           onExpandTerritory={() => engineRef.current?.upgradeTerritory()}
           onTool={(tool) => { engineRef.current?.setTool(tool); engineRef.current?.emitSnapshot(); }}
           onCombatWeapon={(weapon) => engineRef.current?.setCombatWeapon(weapon)}

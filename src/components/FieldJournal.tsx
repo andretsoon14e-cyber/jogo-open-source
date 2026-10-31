@@ -3,10 +3,10 @@
 import { memo, useEffect, useState } from "react";
 import { getCharacterUrl, getSpriteUrl } from "@/game/sprites";
 import { hasCraftOrcs } from "@/game/craftpix";
-import { hasReferenceScene, referenceIconUrl, referenceObjectUrl } from "@/game/reference-art";
+import { hasReferenceScene, referenceIconUrl, referenceObjectUrl, referenceSpikeUrl } from "@/game/reference-art";
 import { GAME_TITLE } from "@/game/identity";
 import { BESTIARY, EQUIPMENT, SITES, type EquipmentKey } from "@/game/world-content";
-import { RES_LABEL, TOOL_LABEL, type GamePanel, type Snapshot, type ResKey, type ToolKey, type CombatWeapon, type FenceStyle, type SpecialistId, type SpecialistDuty } from "@/game/engine";
+import { RES_LABEL, TOOL_LABEL, type GamePanel, type Snapshot, type ResKey, type ToolKey, type CombatWeapon, type FenceStyle, type DefenseTier, type SpecialistId, type SpecialistDuty } from "@/game/engine";
 import { Icon } from "./Icons";
 
 export const SpriteThumb = memo(function SpriteThumb({ name, size = 46, character = false, view = "down", tool = "axe", craftPix = true, level = 1 }: { name: string; size?: number; character?: boolean; view?: "up" | "down" | "side"; tool?: ToolKey | "bow"; craftPix?: boolean; level?: number }) {
@@ -14,8 +14,9 @@ export const SpriteThumb = memo(function SpriteThumb({ name, size = 46, characte
   // Sprites are generated with a browser canvas, unavailable during SSR.
   useEffect(() => {
     const refresh = () => {
-      const object = name === "fence_stone" ? "castle_wall" : name === "gate_stone" ? "castle_gate" : name === "tower" ? "castle_tower" : null;
-      setUrl(character ? getCharacterUrl(name, view, tool, craftPix, level) : (craftPix && object && referenceObjectUrl(object)) || (craftPix && referenceIconUrl(name)) || getSpriteUrl(name, craftPix));
+      const barricades = ["barricade_1", "barricade_2", "barricade_3", "barricade_4"] as const;
+      const object = name === "fence_stone" ? "castle_wall" : name === "gate_stone" ? "castle_gate" : name === "tower" ? "castle_tower" : name === "barricade" ? barricades[Math.max(0, Math.min(3, level - 1))] : null;
+      setUrl(character ? getCharacterUrl(name, view, tool, craftPix, level) : (craftPix && name === "spike_trap" && referenceSpikeUrl(level)) || (craftPix && object && referenceObjectUrl(object)) || (craftPix && referenceIconUrl(name)) || getSpriteUrl(name, craftPix));
     };
     refresh();
     window.addEventListener("craftpix-ready", refresh);
@@ -39,6 +40,7 @@ interface Props {
   onCraftEquipment: (id: EquipmentKey) => void;
   onFenceStyle: (style: FenceStyle) => void;
   onFenceRing: (ring: number) => void;
+  onDefenseTier: (tier: DefenseTier) => void;
   onExpandTerritory: () => void;
   onTool: (tool: ToolKey) => void;
   onCombatWeapon: (weapon: CombatWeapon) => void;
@@ -84,6 +86,7 @@ export default function FieldJournal(props: Props) {
   const [upgradeTool, setUpgradeTool] = useState<ToolKey>("axe");
   const [characterView, setCharacterView] = useState<"down" | "up" | "side">("up");
   const recipe = snap.buildOptions.find((b) => b.id === selected) ?? snap.buildOptions[0];
+  const defenseRecipe = recipe.id === "spike_trap" || recipe.id === "barricade";
   const creatures = BESTIARY.filter((entry) => entry.sprite !== "orc" || snap.seenCreatures.includes("orc") || (props.craftPix && hasCraftOrcs()));
   const creature = creatures[Math.min(creatureIndex, creatures.length - 1)];
   const site = SITES[siteIndex];
@@ -106,7 +109,7 @@ export default function FieldJournal(props: Props) {
           <h3 className="journal-ribbon">Receitas</h3>
           <div className="grid grid-cols-3 gap-1.5">
             {snap.buildOptions.map((b) => <button key={b.id} title={b.name} className={`journal-slot relative ${b.id === recipe.id ? "selected" : ""}`} onClick={() => setSelected(b.id)}>
-              <SpriteThumb name={b.id === "campfire" ? "campfire0" : b.id === "wall" ? `fence_${snap.fenceStyle}` : b.id === "gate" ? `gate_${snap.fenceStyle}` : b.id} size={52} />
+              <SpriteThumb name={b.id === "campfire" ? "campfire0" : b.id === "wall" ? `fence_${snap.fenceStyle}` : b.id === "gate" ? `gate_${snap.fenceStyle}` : b.id} size={52} craftPix={props.craftPix} level={snap.defenseTier} />
               {b.id === "wall" && <b className="absolute bottom-0 right-1 font-display text-[#6c492c] text-xs">×{snap.fencePieces}</b>}
               {b.locked && <span className="absolute right-1 top-0.5 text-xs opacity-60">•</span>}
             </button>)}
@@ -116,7 +119,14 @@ export default function FieldJournal(props: Props) {
         </aside>
         <main className="journal-page recipe-detail">
           <span className="journal-eyebrow">PLANTA DE CONSTRUÇÃO</span>
-          <div className="recipe-art"><SpriteThumb name={recipe.id === "campfire" ? "campfire0" : recipe.id === "wall" ? `fence_${snap.fenceStyle}` : recipe.id === "gate" ? `gate_${snap.fenceStyle}` : recipe.id} size={128} /></div>
+          <div className={`recipe-art ${defenseRecipe ? "defense-recipe-art" : ""}`}><SpriteThumb name={recipe.id === "campfire" ? "campfire0" : recipe.id === "wall" ? `fence_${snap.fenceStyle}` : recipe.id === "gate" ? `gate_${snap.fenceStyle}` : recipe.id} size={defenseRecipe ? 108 : 128} craftPix={props.craftPix} level={snap.defenseTier} /></div>
+          {defenseRecipe && <div className="my-2">
+            <p className="text-center text-xs font-bold text-[#785939] mb-1">Nível da defesa</p>
+            <div role="group" aria-label="Escolher nível da defesa" className="defense-tier-grid">
+              {snap.defenseTiers.map((option) => <button type="button" key={option.tier} aria-pressed={snap.defenseTier === option.tier} disabled={option.locked} title={option.reason || (recipe.id === "spike_trap" ? `${option.spikeDamage} de dano` : `${option.barricadeHp} de vida`)} onClick={() => props.onDefenseTier(option.tier)} className={`journal-button small ${snap.defenseTier === option.tier ? "" : "muted"}`}>Nv. {option.tier}</button>)}
+            </div>
+            <p className="text-center text-[10px] text-[#785939] mt-2">Níveis 2, 3 e 4 exigem reino 3, 6 e 10; os dois últimos também precisam de forja.</p>
+          </div>}
           {recipe.id === "wall" && <div className="grid grid-cols-2 gap-1.5 mb-4">
             {snap.fenceStyles.map((style) => <button key={style.id} disabled={style.locked} title={style.desc} onClick={() => props.onFenceStyle(style.id)} className={`journal-slot min-h-20! p-1! flex-col relative ${snap.fenceStyle === style.id ? "selected" : ""} ${style.locked ? "opacity-45" : ""}`}>
               <SpriteThumb name={`fence_${style.id}`} size={48} />

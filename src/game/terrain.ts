@@ -4,6 +4,8 @@
    each chunk is painted once and reused: big FPS win.
    ========================================================= */
 
+import { drawReferenceBridge, drawReferenceRipple, hasReferenceObject, type ReferenceBridge } from "@/game/reference-art";
+
 export const T_WATER = 0, T_SAND = 1, T_GRASS = 2, T_DARK = 3, T_PATH = 4, T_ROCK = 5, T_CAVE = 6, T_BRIDGE = 7, T_SNOW = 8, T_ICE = 9, T_RUIN = 10, T_SNOW_PATH = 11, T_NECRO = 12, T_MINERAL = 13;
 
 export function tileHash(x: number, y: number, s: number) {
@@ -32,11 +34,51 @@ const PAL: Record<number, Pal> = {
 // which terrain visually overlaps which (higher wins on borders)
 const PRIO: Record<number, number> = { [T_WATER]: 0, [T_SAND]: 1, [T_PATH]: 2, [T_GRASS]: 3, [T_DARK]: 4, [T_ROCK]: 5, [T_CAVE]: 6, [T_BRIDGE]: 1.5, [T_SNOW]: 7, [T_ICE]: 6.5, [T_RUIN]: 2.5, [T_SNOW_PATH]: 3, [T_NECRO]: 7.5, [T_MINERAL]: 5.5 };
 
+interface BridgeRegion {
+  x: number; y: number; width: number; height: number;
+  tiles: { x: number; y: number }[]; art: ReferenceBridge;
+  canvas?: HTMLCanvasElement;
+}
+
+/** Find crossings without changing terrain, RNG, resource indices or saves. */
+export function collectBridgeRegions(tiles: Uint8Array, W: number, H: number): BridgeRegion[] {
+  const seen = new Uint8Array(W * H), regions: BridgeRegion[] = [];
+  for (let start = 0; start < W * H; start++) {
+    if (seen[start] || tiles[start] !== T_BRIDGE) continue;
+    const queue = [start], cells: { x: number; y: number }[] = [];
+    seen[start] = 1;
+    let minX = W, minY = H, maxX = 0, maxY = 0, waterNS = 0, waterEW = 0;
+    for (let head = 0; head < queue.length; head++) {
+      const at = queue[head], x = at % W, y = Math.floor(at / W);
+      cells.push({ x, y });
+      minX = Math.min(minX, x); minY = Math.min(minY, y); maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+      for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+        const next = ny * W + nx;
+        if (tiles[next] === T_WATER) { if (dy) waterNS++; else waterEW++; }
+        else if (tiles[next] === T_BRIDGE && !seen[next]) { seen[next] = 1; queue.push(next); }
+      }
+    }
+    // Dry foundations and unusual enormous merged crossings retain the normal
+    // ground instead of stretching a bridge across unrelated constructions.
+    const width = maxX - minX + 1, height = maxY - minY + 1;
+    if (!waterNS && !waterEW || width > 14 || height > 14) continue;
+    const horizontal = waterNS === waterEW ? width >= height : waterNS > waterEW;
+    const stone = tileHash(minX, minY, 211) > 0.52;
+    const art: ReferenceBridge = stone ? horizontal ? "bridge_stone_h" : "bridge_stone_v" : horizontal ? "bridge_wood_h" : "bridge_wood_v";
+    regions.push({ x: minX, y: minY, width, height, tiles: cells, art });
+  }
+  return regions;
+}
+
 export class Terrain {
   private chunks = new Map<number, { cv: HTMLCanvasElement; last: number }>();
   private overview: HTMLCanvasElement | null = null;
+  private bridges: BridgeRegion[];
   readonly CH = 16; // tiles per chunk side
   constructor(private tiles: Uint8Array, private W: number, private H: number, private TILE: number) {
+    this.bridges = collectBridgeRegions(tiles, W, H);
     this.buildOverview();
   }
 
@@ -66,7 +108,32 @@ export class Terrain {
     return this.tiles[y * this.W + x];
   }
 
-  invalidateAll() { this.chunks.clear(); this.buildOverview(); }
+  invalidateAll() {
+    this.chunks.clear(); this.bridges = collectBridgeRegions(this.tiles, this.W, this.H); this.buildOverview();
+  }
+
+  /** Bake each small crossing once, clipping it to actual traversable tiles.
+   * A missing/disabled image leaves the ordinary terrain unchanged. */
+  drawBridges(ctx: CanvasRenderingContext2D, camX: number, camY: number, viewW: number, viewH: number, ox: number, oy: number) {
+    for (const bridge of this.bridges) {
+      const x = bridge.x * this.TILE, y = bridge.y * this.TILE;
+      const width = bridge.width * this.TILE, height = bridge.height * this.TILE;
+      if (x + width < camX || y + height < camY || x > camX + viewW || y > camY + viewH) continue;
+      if (!bridge.canvas) {
+        if (!hasReferenceObject(bridge.art)) continue;
+        const canvas = document.createElement("canvas"); canvas.width = width; canvas.height = height;
+        const painter = canvas.getContext("2d");
+        if (!painter) continue;
+        painter.imageSmoothingEnabled = false;
+        painter.beginPath();
+        for (const tile of bridge.tiles) painter.rect((tile.x - bridge.x) * this.TILE, (tile.y - bridge.y) * this.TILE, this.TILE, this.TILE);
+        painter.clip();
+        if (!drawReferenceBridge(painter, bridge.art, 0, 0, width, height)) continue;
+        bridge.canvas = canvas;
+      }
+      ctx.drawImage(bridge.canvas, x + ox, y + oy);
+    }
+  }
 
   draw(ctx: CanvasRenderingContext2D, camX: number, camY: number, viewW: number, viewH: number, ox: number, oy: number, now: number) {
     const cpx = this.CH * this.TILE;
@@ -281,7 +348,7 @@ export class Terrain {
 }
 
 /** Animated water highlights drawn on top of baked chunks (cheap). */
-export function drawWaterAnim(ctx: CanvasRenderingContext2D, tiles: Uint8Array, W: number, H: number, TILE: number, x0: number, y0: number, x1: number, y1: number, ox: number, oy: number, now: number) {
+export function drawWaterAnim(ctx: CanvasRenderingContext2D, tiles: Uint8Array, W: number, H: number, TILE: number, x0: number, y0: number, x1: number, y1: number, ox: number, oy: number, now: number, referenceArt = false) {
   ctx.fillStyle = "rgba(225,250,255,0.35)";
   for (let ty = y0; ty <= y1; ty++) {
     for (let tx = x0; tx <= x1; tx++) {
@@ -293,6 +360,9 @@ export function drawWaterAnim(ctx: CanvasRenderingContext2D, tiles: Uint8Array, 
       // or rebaking terrain chunks; all drawing is clipped inside the tile.
       ctx.fillRect(x + 2 + flow, y + 6 + (tx * 7 + ty * 11) % 10, 7, 2);
       if (wave > -0.18) ctx.fillRect(x + 3 + (flow + 10) % 20, y + 21, 9, 2);
+      // Sparse animated rings from the supplied effects sheet; no per-frame
+      // allocations and never on land or on a walkable bridge.
+      if (referenceArt && tileHash(tx, ty, 91) > 0.9) drawReferenceRipple(ctx, now * 5 + tx + ty, x + TILE / 2, y + TILE / 2);
     }
   }
 }

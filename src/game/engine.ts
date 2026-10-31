@@ -5,7 +5,7 @@
 import { drawSign, drawFlag } from "@/game/art";
 import { drawSprite, drawSwaySprite, drawCharacter, drawToolSprite, spriteSize, getBaked, SPRITES, SCALE, viewFromAngle } from "@/game/sprites";
 import { drawCraftOrc, drawCraftPlant, drawCraftVillager, hasCraftHero, hasCraftOrcs, loadCraftPix } from "@/game/craftpix";
-import { drawReferenceArcher, drawReferenceDeposit, drawReferenceIcon, drawReferenceObject, drawReferencePlant, drawReferenceResident, hasReferenceArcher, hasReferenceObject, hasReferenceScene, loadReferenceArt, type ReferenceObject, type ReferenceScene, type ResidentLook } from "@/game/reference-art";
+import { drawReferenceArcher, drawReferenceDeposit, drawReferenceIcon, drawReferenceLightning, drawReferenceObject, drawReferencePlant, drawReferenceResident, drawReferenceSpikes, hasReferenceArcher, hasReferenceObject, hasReferenceScene, loadReferenceArt, type ReferenceObject, type ReferenceScene, type ResidentLook } from "@/game/reference-art";
 import { Terrain, drawWaterAnim } from "@/game/terrain";
 import { MusicManager } from "@/game/music";
 import { Sfx } from "@/game/sfx";
@@ -20,6 +20,7 @@ export type ResKey = "wood" | "stone" | "fiber" | "food" | "iron" | "crystal";
 export type ToolKey = "axe" | "pick" | "sword";
 export type CombatWeapon = "sword" | "bow";
 export type FenceStyle = "rustic" | "palisade" | "stone" | "hedge";
+export type DefenseTier = 1 | 2 | 3 | 4;
 export type SpecialistId = "archer" | "mage" | "guard" | "miner";
 export type SpecialistDuty = "follow" | "defend" | "train" | "mine" | "rest";
 
@@ -100,6 +101,8 @@ export interface Snapshot {
   territory: { level: number; maxLevel: number; radius: number; nextRadius: number | null; cost: Partial<Record<ResKey, number>>; locked: boolean; reason: string; affordable: boolean };
   fenceRing: number;
   fencePieces: number;
+  defenseTier: DefenseTier;
+  defenseTiers: { tier: DefenseTier; locked: boolean; reason: string; spikeDamage: number; barricadeHp: number }[];
 }
 export interface TutorialView {
   id: string; title: string; text: string; keys: string[]; step: number; total: number;
@@ -147,16 +150,33 @@ const VILLAGE_AREA_RADIUS = 760;
 const BASE = { x: 104 * TILE, y: 88 * TILE, r: 15 * TILE };
 const CAVE = { x: 98 * TILE, y: 30 * TILE, r: 13 * TILE };
 const REFERENCE_LABELS: Record<ReferenceScene, string> = { forge: "forja", chapel: "capela", market: "mercado", camp: "acampamento", sewer: "esgoto" };
-const REFERENCE_SCALE: Record<ReferenceObject, number> = { forge: 0.8, house: 1.1, chest: 1, chapel: 1.25, market: 1.25, camp: 1, sewer: 0.75, castle_wall: 1, castle_tower: 1, castle_gate: 1, castle_grate: 1 };
+const REFERENCE_SCALE: Record<ReferenceObject, number> = {
+  forge: 0.8, house: 1.1, chest: 1, chapel: 1.25, market: 1.25, camp: 1, sewer: 0.75,
+  castle_wall: 1, castle_tower: 1, castle_gate: 1, castle_grate: 1,
+  house_half_timber: 1.1, house_wood_a: 1.1, house_wood_b: 1.1, house_stone: 1.1,
+  bridge_wood_h: 1, bridge_wood_v: 1, bridge_stone_h: 1, bridge_stone_v: 1,
+  barricade_1: 0.75, barricade_2: 0.75, barricade_3: 0.75, barricade_4: 0.75,
+};
 // A wider village keeps generous gaps between the larger houses and the trail.
 const VILLAGE_HOUSES = [[-550, -230], [-550, 130], [-410, 490], [-50, 500], [310, 500]] as const;
+const HOUSE_ART: ReferenceObject[] = ["house", "house_half_timber", "house_wood_a", "house_wood_b", "house_stone"];
+const BARRICADE_ART: ReferenceObject[] = ["barricade_1", "barricade_2", "barricade_3", "barricade_4"];
+function houseArt(index: number): ReferenceObject | null {
+  const preferred = HOUSE_ART[((index % HOUSE_ART.length) + HOUSE_ART.length) % HOUSE_ART.length];
+  if (hasReferenceObject(preferred)) return preferred;
+  if (hasReferenceObject("house")) return "house";
+  return HOUSE_ART.find((name) => hasReferenceObject(name)) ?? null;
+}
+function placedHouseArt(x: number, y: number) {
+  // Stable across reloads, and does not consume the world-generation RNG.
+  return houseArt(Math.abs(Math.floor(x / 16) * 3 + Math.floor(y / 16)) % HOUSE_ART.length);
+}
 // Solid footprints cover the tent and houses, with room to approach their
 // entrances. The escort's route stays clear; players already inside can exit.
 const STATIC_BUILDINGS: { name: ReferenceObject; x: number; y: number; halfWidth: number; depth: number }[] = [
   { name: "chapel", x: VILLAGE.x + 145, y: VILLAGE.y - 200, halfWidth: 112, depth: 26 },
   { name: "market", x: VILLAGE.x + 220, y: VILLAGE.y + 35, halfWidth: 82, depth: 23 },
   { name: "camp", x: BASE.x - 130, y: BASE.y - 120, halfWidth: 78, depth: 155 },
-  ...VILLAGE_HOUSES.map(([x, y]) => ({ name: "house" as const, x: VILLAGE.x + x, y: VILLAGE.y + y, halfWidth: 108, depth: 210 })),
 ];
 const CRASH = { x: 97 * TILE, y: 171 * TILE };
 // Wake up beside the wreck, never inside it. The landing is made walkable
@@ -213,8 +233,9 @@ interface Monster {
   defeated?: boolean;
 }
 interface Projectile { x: number; y: number; vx: number; vy: number; t: number; dmg: number; kind?: "ally" | "player" | "magic"; }
-type StructType = "campfire" | "wall" | "gate" | "workbench" | "house" | "farm" | "sawmill" | "quarry" | "forge" | "tower" | "raft";
-interface Structure { type: StructType; x: number; y: number; prodT: number; hp: number; maxHp: number; open: boolean; rotation: number; fenceStyle: FenceStyle; }
+type StructType = "campfire" | "wall" | "gate" | "spike_trap" | "barricade" | "workbench" | "house" | "farm" | "sawmill" | "quarry" | "forge" | "tower" | "raft";
+interface Structure { type: StructType; x: number; y: number; prodT: number; hp: number; maxHp: number; open: boolean; rotation: number; fenceStyle: FenceStyle; tier?: DefenseTier; }
+interface MagicEffect { x: number; y: number; remaining: number; }
 interface Particle { x: number; y: number; vx: number; vy: number; t: number; max: number; c: string; s: number; grav: number; }
 interface Floater { x: number; y: number; t: number; text: string; c: string; }
 interface Ally { id: string; name: string; color: string; x: number; y: number; vx: number; vy: number; atkCd: number; downT: number; dir: number; }
@@ -255,6 +276,8 @@ const STRUCT_DEF: Record<StructType, { name: string; icon: string; desc: string;
   campfire: { name: "Fogueira", icon: "🔥", desc: "Luz, cura lenta e salva o jogo ao interagir", cost: { wood: 20, stone: 10 }, lvl: 1 },
   wall: { name: "Cerca dupla", icon: "🧱", desc: "2 trechos conectados no círculo da base. Repare com E", cost: { wood: 12, stone: 4 }, lvl: 1 },
   gate: { name: "Portão", icon: "🚪", desc: "Porta da cerca: você passa, eles quebram. E abre/fecha", cost: { wood: 30, stone: 10 }, lvl: 1 },
+  spike_trap: { name: "Armadilha de espinhos", icon: "⚔️", desc: "Espinhos atravessáveis ferem invasores; não atingem você nem aliados.", cost: { wood: 12, stone: 5 }, lvl: 0 },
+  barricade: { name: "Barricada", icon: "🛡️", desc: "Barreira sólida que atrasa invasores. Repare com madeira.", cost: { wood: 20, stone: 5 }, lvl: 0 },
   workbench: { name: "Bancada", icon: "🛠️", desc: "Desbloqueia construções avançadas", cost: { wood: 45, stone: 25, fiber: 10 }, lvl: 2 },
   farm: { name: "Fazenda", icon: "🌱", desc: "Produz comida durante o dia", cost: { wood: 35, fiber: 20 }, lvl: 1 },
   sawmill: { name: "Serraria", icon: "🪚", desc: "Produz madeira lentamente", cost: { wood: 65, stone: 30 }, lvl: 2 },
@@ -264,7 +287,17 @@ const STRUCT_DEF: Record<StructType, { name: string; icon: string; desc: string;
   tower: { name: "Torre de Vigia", icon: "🗼", desc: "Revela monstros no minimapa", cost: { wood: 75, stone: 55, iron: 10 }, lvl: 2 },
   raft: { name: "Balsa de Fuga", icon: "⛵", desc: "Sua passagem para fora da ilha (construa na praia)", cost: { wood: 600, stone: 280, fiber: 260, iron: 160, crystal: 60 }, lvl: 4 },
 };
-const BUILD_ORDER: StructType[] = ["campfire", "wall", "gate", "farm", "workbench", "house", "sawmill", "quarry", "tower", "forge", "raft"];
+const BUILD_ORDER: StructType[] = ["campfire", "wall", "gate", "spike_trap", "barricade", "farm", "workbench", "house", "sawmill", "quarry", "tower", "forge", "raft"];
+const DEFENSE_TIERS: { tier: DefenseTier; realm: number; forge: boolean; damage: number; trapHp: number; barricadeHp: number; trapCost: Partial<Record<ResKey, number>>; barricadeCost: Partial<Record<ResKey, number>> }[] = [
+  { tier: 1, realm: 0, forge: false, damage: 8, trapHp: 100, barricadeHp: 200, trapCost: { wood: 12, stone: 5 }, barricadeCost: { wood: 20, stone: 5 } },
+  { tier: 2, realm: 3, forge: false, damage: 12, trapHp: 150, barricadeHp: 320, trapCost: { wood: 20, stone: 10, iron: 2 }, barricadeCost: { wood: 28, stone: 10, iron: 3 } },
+  { tier: 3, realm: 6, forge: true, damage: 18, trapHp: 210, barricadeHp: 480, trapCost: { wood: 18, stone: 18, iron: 7 }, barricadeCost: { wood: 35, stone: 20, iron: 8 } },
+  { tier: 4, realm: 10, forge: true, damage: 25, trapHp: 280, barricadeHp: 700, trapCost: { wood: 20, stone: 28, iron: 12, crystal: 2 }, barricadeCost: { wood: 45, stone: 30, iron: 16, crystal: 3 } },
+];
+const TRAP_REARM = 1.4;
+function defenseTier(value: unknown): DefenseTier {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 4 ? value as DefenseTier : 1;
+}
 const FENCE_DEF: Record<FenceStyle, { name: string; desc: string; hp: number; cost: Partial<Record<ResKey, number>>; lockLevel: number }> = {
   rustic: { name: "Cerca rústica", desc: "Tábuas claras com travessas. Barata e rápida de reparar.", hp: 245, cost: { wood: 9, fiber: 2 }, lockLevel: 0 },
   palisade: { name: "Paliçada reforçada", desc: "Estacas afiadas, ferragens, cordas e escoras.", hp: 390, cost: { wood: 13, stone: 3, iron: 1 }, lockLevel: 0 },
@@ -286,7 +319,7 @@ interface SaveData {
   px: number; py: number; hp: number; maxHp: number;
   inv: Record<ResKey, number>; tools: Record<ToolKey, number>;
   time: number; day: number; score: number; kills: number; deaths: number;
-  structures: { type: StructType; x: number; y: number; hp?: number; open?: boolean; rotation?: number; fenceStyle?: FenceStyle }[];
+  structures: { type: StructType; x: number; y: number; hp?: number; open?: boolean; rotation?: number; fenceStyle?: FenceStyle; tier?: DefenseTier }[];
   questP: number[]; questDone: boolean[];
   allies: string[]; visited: string[];
   nodeHp: [number, number, number][];
@@ -299,6 +332,7 @@ interface SaveData {
   creatureKills?: Record<string, number>;
   equipment?: Partial<Record<EquipmentKey, boolean>>;
   fenceStyle?: FenceStyle;
+  defenseTier?: DefenseTier;
   combatWeapon?: CombatWeapon;
   territoryLevel?: number;
   fenceRing?: number;
@@ -333,6 +367,7 @@ export class Engine {
   monsters: Monster[] = [];
   drops: Drop[] = [];
   projectiles: Projectile[] = [];
+  magicEffects: MagicEffect[] = [];
   structures: Structure[] = [];
   particles: Particle[] = [];
   floaters: Floater[] = [];
@@ -352,6 +387,7 @@ export class Engine {
   placeRotation = 0;
   fenceSlot = 0;
   fenceStyle: FenceStyle = "palisade";
+  defenseTier: DefenseTier = 1;
   territoryLevel = 1;
   fenceRing = 1;
   private fenceSpaceCache: { ring: number; structures: Structure[]; length: number; references: string; pieces: 1 | 2; reserveGate: boolean } | null = null;
@@ -1669,10 +1705,23 @@ export class Engine {
     if (this.placing === "wall" || this.placing === "gate") this.updatePlacement();
     this.sfx.ui(); this.emitSnapshot();
   }
+  defenseTierReason(tier: DefenseTier): string {
+    const def = DEFENSE_TIERS[tier - 1];
+    if (this.baseLevel() < def.realm) return `Requer reino nível ${def.realm}`;
+    if (def.forge && !this.structures.some((s) => s.type === "forge")) return "Requer Forja";
+    return "";
+  }
+  setDefenseTier(tier: DefenseTier) {
+    if (defenseTier(tier) !== tier) return;
+    const reason = this.defenseTierReason(tier);
+    if (reason) { this.toast(reason); return; }
+    this.defenseTier = tier;
+    this.sfx.ui(); this.emitSnapshot(); this.saveGame();
+  }
   /** If isolated sockets remain, allow a single wall rather than leaving an
    * unclosable hole after the ring's one gate was already built. */
   wallPurchaseSize(): 1 | 2 {
-    const references = this.settings.craftPix ? ["camp", "house", "market", "chapel", "forge", "castle_tower"].map((name) => hasReferenceObject(name as ReferenceObject) ? "1" : "0").join("") : "off";
+    const references = this.settings.craftPix ? ["camp", ...HOUSE_ART, "market", "chapel", "forge", "castle_tower"].map((name) => hasReferenceObject(name as ReferenceObject) ? "1" : "0").join("") : "off";
     const cached = this.fenceSpaceCache;
     if (cached && cached.ring === this.fenceRing && cached.structures === this.structures && cached.length === this.structures.length && cached.references === references) return cached.pieces;
     const { slots } = this.fenceSpec();
@@ -1699,7 +1748,8 @@ export class Engine {
   }
   costFor(type: StructType): Partial<Record<ResKey, number>> {
     if (type === "wall") return this.fenceStyleCost();
-    const base = STRUCT_DEF[type].cost;
+    const selected = DEFENSE_TIERS[this.defenseTier - 1];
+    const base = type === "spike_trap" ? selected.trapCost : type === "barricade" ? selected.barricadeCost : STRUCT_DEF[type].cost;
     const m = this.diff.resMult * (this.allies.some((a) => a.id === "tito") ? 0.8 : 1);
     const built = this.structures.filter((s) => s.type === type).length;
     const grown = 1 + built * 0.35;
@@ -1716,10 +1766,12 @@ export class Engine {
   baseLevel() {
     return this.structures.reduce((acc, s) => acc + STRUCT_DEF[s.type].lvl, 0);
   }
-  structMaxHp(type: StructType, style: FenceStyle = this.fenceStyle) {
+  structMaxHp(type: StructType, style: FenceStyle = this.fenceStyle, tier: DefenseTier = this.defenseTier) {
+    const defense = DEFENSE_TIERS[defenseTier(tier) - 1];
     const base: Record<StructType, number> = {
-      campfire: 180, wall: FENCE_DEF[style].hp, gate: Math.round(FENCE_DEF[style].hp * 1.35), workbench: 200, house: 380, farm: 200,
-      sawmill: 230, quarry: 260, forge: 300, tower: 320, raft: 400,
+      campfire: 180, wall: FENCE_DEF[style].hp, gate: Math.round(FENCE_DEF[style].hp * 1.35),
+      spike_trap: defense.trapHp, barricade: defense.barricadeHp,
+      workbench: 200, house: 380, farm: 200, sawmill: 230, quarry: 260, forge: 300, tower: 320, raft: 400,
     };
     return Math.round(base[type] * (this.diff.resMult >= 3 ? 1.55 : this.diff.resMult >= 2 ? 1.3 : 1));
   }
@@ -1732,7 +1784,7 @@ export class Engine {
     if (s.hp <= 0) {
       const i = this.structures.indexOf(s);
       if (i >= 0) { this.structures.splice(i, 1); this.fenceSpaceCache = null; }
-      const label = s.type === "gate" ? "🚪 O PORTÃO CAIU! Eles estão entrando!" : "🧱 Sua cerca foi quebrada!";
+      const label = s.type === "gate" ? "🚪 O PORTÃO CAIU! Eles estão entrando!" : s.type === "barricade" ? "🛡️ Uma barricada foi quebrada!" : "🧱 Sua cerca foi quebrada!";
       this.toast(label);
       this.spawnParticles(s.x, s.y, "#c9a26a", 22, 240);
       this.shake = Math.min(14, this.shake + 7);
@@ -1748,6 +1800,10 @@ export class Engine {
   }
   structLock(type: StructType): string {
     const def = STRUCT_DEF[type];
+    if (type === "spike_trap" || type === "barricade") {
+      const reason = this.defenseTierReason(this.defenseTier);
+      if (reason) return reason;
+    }
     if (type === "wall") {
       this.wallPurchaseSize();
       if (this.fenceSpaceCache?.reserveGate) return "Coloque o portão antes de fechar as lacunas";
@@ -1776,6 +1832,9 @@ export class Engine {
   rotateStructure(direction = 1) {
     if (!this.placing) return;
     if (this.placing === "wall" || this.placing === "gate") { this.rotateFence(direction); return; }
+    // These ground/single-sprite defenses have a circular footprint; rotating
+    // their upright reference would make the barricade lie on the ground.
+    if (this.placing === "spike_trap" || this.placing === "barricade") return;
     this.placeRotation = Math.abs(this.placeRotation % Math.PI) > 0.1 ? 0 : Math.PI / 2;
     this.updatePlacement(); this.sfx.ui(); this.emitSnapshot();
   }
@@ -1878,16 +1937,22 @@ export class Engine {
   referenceStructureAt(x: number, y: number): boolean {
     if (!this.settings.craftPix) return false;
     if (dist2(x, y, VILLAGE.x, VILLAGE.y) > 1000 * 1000 && dist2(x, y, BASE.x, BASE.y) > 450 * 450) return false;
-    return STATIC_BUILDINGS.some((b) => hasReferenceObject(b.name) && Math.abs(x - b.x) < b.halfWidth && y > b.y - b.depth && y < b.y + 8);
+    if (STATIC_BUILDINGS.some((b) => hasReferenceObject(b.name) && Math.abs(x - b.x) < b.halfWidth && y > b.y - b.depth && y < b.y + 8)) return true;
+    return VILLAGE_HOUSES.some(([hx, hy], index) => {
+      const art = houseArt(index);
+      const bx = VILLAGE.x + hx, by = VILLAGE.y + hy;
+      const depth = art === "house" ? 210 : 160;
+      return !!art && Math.abs(x - bx) < 108 && y > by - depth && y < by + 8;
+    });
   }
 
   placedStructureContains(s: Structure, x: number, y: number, radius = 24): boolean {
-    const reference = s.type === "tower" ? "castle_tower" : s.type === "house" || s.type === "forge" ? s.type : null;
+    const reference = s.type === "tower" ? "castle_tower" : s.type === "house" ? placedHouseArt(s.x, s.y) : s.type === "forge" ? "forge" : null;
     if (reference && this.settings.craftPix && hasReferenceObject(reference)) {
       const dx = x - s.x, dy = y - (s.y + 6), cos = Math.cos(s.rotation), sin = Math.sin(s.rotation);
       const along = dx * cos + dy * sin, depth = -dx * sin + dy * cos;
-      const halfWidth = reference === "house" ? 108 : reference === "forge" ? 88 : 48;
-      const height = reference === "house" ? 210 : reference === "forge" ? 125 : 150;
+      const halfWidth = s.type === "house" ? 108 : reference === "forge" ? 88 : 48;
+      const height = s.type === "house" ? reference === "house" ? 210 : 160 : reference === "forge" ? 125 : 150;
       return Math.abs(along) < halfWidth && depth > -height && depth < 8;
     }
     return dist2(s.x, s.y, x, y) < radius * radius;
@@ -1915,6 +1980,7 @@ export class Engine {
       }
     }
     if (dist2(x, y, this.px, this.py) < 18 * 18 && type !== "campfire" && type !== "wall" && type !== "gate") return "Você está no caminho";
+    if (type === "barricade" && this.monsters.some((m) => m.hp > 0 && dist2(x, y, m.x, m.y) < (m.r + 25) ** 2)) return "Uma criatura está no caminho";
     if (type === "gate" && this.structures.some((s) => s.type === "gate" && Math.abs(Math.hypot(s.x - BASE.x, s.y - BASE.y) - this.fenceSpec().fenceRadius) < 12)) return "Já existe um portão neste perímetro";
     return "";
   }
@@ -1945,6 +2011,8 @@ export class Engine {
   confirmPlace(): boolean {
     const type = this.placing;
     if (!type) return false;
+    const lock = this.structLock(type);
+    if (lock) { this.toast("🔒 " + lock); return false; }
     this.updatePlacement();
     if (this.placeReason) { this.toast("⛔ " + this.placeReason); this.sfx.ui(); return false; }
     const cost = this.costFor(type);
@@ -1958,7 +2026,8 @@ export class Engine {
     for (const p of positions) {
       const ring = type === "wall" || type === "gate";
       const rotation = ring ? Math.atan2(p.y - BASE.y, p.x - BASE.x) + Math.PI / 2 : this.placeRotation;
-      this.structures.push({ type, x: p.x, y: p.y, prodT: 0, hp: mhp, maxHp: mhp, open: false, rotation, fenceStyle: this.fenceStyle });
+      this.structures.push({ type, x: p.x, y: p.y, prodT: 0, hp: mhp, maxHp: mhp, open: false, rotation, fenceStyle: this.fenceStyle,
+        ...(type === "spike_trap" || type === "barricade" ? { tier: this.defenseTier } : {}) });
       for (const n of this.nearbyNodes(p.x, p.y)) {
         if (n.hp > 0 && dist2(n.x, n.y, p.x, p.y) < 24 * 24) { n.hp = 0; n.respawn = 200; this.depletedNodes.add(n); }
       }
@@ -2178,7 +2247,7 @@ export class Engine {
         px: this.px, py: this.py, hp: this.hp, maxHp: this.maxHp,
         inv: { ...this.inv }, tools: { ...this.tools },
         time: this.time, day: this.day, score: this.score, kills: this.kills, deaths: this.deaths,
-        structures: this.structures.map((s) => ({ type: s.type, x: s.x, y: s.y, hp: s.hp, open: s.open, rotation: s.rotation, fenceStyle: s.fenceStyle })),
+        structures: this.structures.map((s) => ({ type: s.type, x: s.x, y: s.y, hp: s.hp, open: s.open, rotation: s.rotation, fenceStyle: s.fenceStyle, tier: s.tier })),
         questP: [...this.questP], questDone: [...this.questDone],
         allies: this.allies.map((a) => a.id), visited: [...this.visited],
         nodeHp,
@@ -2187,7 +2256,7 @@ export class Engine {
         escortIndex: this.escort.i,
         discoveredSites: [...this.discoveredSites], claimedSites: [...this.claimedSites],
         seenCreatures: [...this.seenCreatures], creatureKills: { ...this.creatureKills }, equipment: { ...this.equipment },
-        fenceStyle: this.fenceStyle, combatWeapon: this.combatWeapon,
+        fenceStyle: this.fenceStyle, defenseTier: this.defenseTier, combatWeapon: this.combatWeapon,
         territoryLevel: this.territoryLevel, fenceRing: this.fenceRing, buildPatrolDay: this.buildPatrolDay,
         pendingRespawn: this.pendingRespawn, deathReport: this.deathReport,
         specialists: this.specialists, crystalDiscovered: this.crystalDiscovered,
@@ -2217,12 +2286,15 @@ export class Engine {
       this.buildPatrolDay = Number.isFinite(d.buildPatrolDay) ? Math.max(0, d.buildPatrolDay!) : d.structures.length ? this.day : 0;
       this.territoryLevel = Number.isInteger(d.territoryLevel) ? clamp(d.territoryLevel!, 1, TERRITORIES.length) : 1;
       this.fenceRing = Number.isInteger(d.fenceRing) ? clamp(d.fenceRing!, 1, this.territoryLevel) : this.territoryLevel;
+      this.defenseTier = defenseTier(d.defenseTier);
       this.structures = d.structures.map((s) => {
         const fenceStyle = s.fenceStyle ?? "palisade";
-        const mhp = this.structMaxHp(s.type, fenceStyle);
+        const tier = defenseTier(s.tier);
+        const mhp = this.structMaxHp(s.type, fenceStyle, tier);
         const ring = s.type === "wall" || s.type === "gate";
         const rotation = s.rotation ?? (ring ? Math.atan2(s.y - BASE.y, s.x - BASE.x) + Math.PI / 2 : 0);
-        return { type: s.type, x: s.x, y: s.y, prodT: 0, hp: Math.min(s.hp ?? mhp, mhp), maxHp: mhp, open: !!s.open, rotation, fenceStyle };
+        return { type: s.type, x: s.x, y: s.y, prodT: 0, hp: Math.min(s.hp ?? mhp, mhp), maxHp: mhp, open: !!s.open, rotation, fenceStyle,
+          ...(s.type === "spike_trap" || s.type === "barricade" ? { tier } : {}) };
       });
       this.layFenceFoundations(this.structures.filter((s) => (s.type === "wall" || s.type === "gate") && Math.hypot(s.x - BASE.x, s.y - BASE.y) > TERRITORIES[0].fenceRadius + 40));
       // A structure from an older save may predate a newly carved creek. Give
@@ -2335,7 +2407,7 @@ export class Engine {
     this.structures = this.structures.filter((s) => {
       // A fire remains as the recovery point, and a raft is not an attack target.
       if (s.type === "campfire" || s.type === "raft") return true;
-      const exposed = s.type === "wall" || s.type === "gate" || s.type === "farm";
+      const exposed = s.type === "wall" || s.type === "gate" || s.type === "farm" || s.type === "spike_trap" || s.type === "barricade";
       const chance = destruction * (exposed ? 1 : 0.6);
       const roll = rng();
       if (roll < chance) {
@@ -2400,7 +2472,7 @@ export class Engine {
     this.invulnT = 5; this.wakeT = 2.8; this.recoveryNoticeT = 10;
     // Survivors retreat before the player wakes; nearby enemies cannot chain-kill.
     this.monsters = this.monsters.filter((m) => dist2(m.x, m.y, this.px, this.py) >= 600 ** 2);
-    this.projectiles = []; this.spawnCooldown = 16; this.raidPeak = 0;
+    this.projectiles = []; this.magicEffects = []; this.spawnCooldown = 16; this.raidPeak = 0;
     this.state = "playing";
     this.toast("Você acordou ferido na base. Reúna forças e repare os estragos.");
     this.saveGame();
@@ -2593,7 +2665,7 @@ export class Engine {
     if (this.baseChestContains(x, y)) return true;
     for (const s of this.structures) {
       if (s.type === "gate" && s.open) continue;
-      if ((s.type === "wall" || s.type === "gate" || s.type === "house" || s.type === "tower" || s.type === "forge") && this.placedStructureContains(s, x, y, 25)) return true;
+      if ((s.type === "wall" || s.type === "gate" || s.type === "barricade" || s.type === "house" || s.type === "tower" || s.type === "forge") && this.placedStructureContains(s, x, y, 25)) return true;
     }
     return false;
   }
@@ -2602,7 +2674,7 @@ export class Engine {
     let best: Structure | null = null;
     let bd = Infinity;
     for (const st of this.structures) {
-      if (st.type !== "wall" && st.type !== "gate") continue;
+      if (st.type !== "wall" && st.type !== "gate" && st.type !== "barricade") continue;
       if (st.type === "gate" && st.open) continue;
       const d = dist2(st.x, st.y, m.x, m.y);
       if (d < bd) { bd = d; best = st; }
@@ -2698,7 +2770,9 @@ export class Engine {
               this.projectiles.push({ x: m.x, y: m.y, vx: Math.cos(a) * 330, vy: Math.sin(a) * 330, t: 2, dmg: m.dmg });
               this.sfx.swing();
             } else if (m.siege) {
-              if (siegeTarget) {
+              // A target can disappear or change during a windup; never damage
+              // a distant barricade/fence after colliding with another object.
+              if (siegeTarget && dist2(m.x, m.y, siegeTarget.x, siegeTarget.y) < (m.r + 45) ** 2) {
                 const structDmg = (m.type === "hulk" ? 34 : m.type === "brute" ? 22 : m.type === "imp" ? 4 : 10) * this.diff.mDmg * (1 + (this.day - 1) * 0.04);
                 this.damageStructure(siegeTarget, structDmg);
                 this.sfx.hit();
@@ -2762,6 +2836,7 @@ export class Engine {
             const speed = Math.hypot(p.vx, p.vy) || 1;
             m.vx += p.vx / speed * 100; m.vy += p.vy / speed * 100;
             this.spawnParticles(m.x, m.y, "#ffd34d", 5, 120);
+            if (p.kind === "magic" && this.magicEffects.length < 24) this.magicEffects.push({ x: m.x, y: m.y, remaining: 0.55 });
             this.floaters.push({ x: m.x, y: m.y - 18, t: 0, text: `${p.dmg}`, c: "#ffeaa0" });
             this.sfx.hit();
             if (m.hp <= 0) this.killMonster(m);
@@ -3005,6 +3080,25 @@ export class Engine {
   updateStructures(dt: number) {
     const isDay = !this.isNight();
     for (const s of this.structures) {
+      if (s.type === "spike_trap" && dt > 0) {
+        s.prodT = Math.max(0, s.prodT - dt);
+        if (s.prodT <= 0) {
+          let triggered = false;
+          const damage = DEFENSE_TIERS[defenseTier(s.tier) - 1].damage;
+          for (const m of this.monsters) {
+            if (m.hp <= 0 || m.defeated || dist2(m.x, m.y, s.x, s.y) >= (30 + m.r * 0.5) ** 2) continue;
+            triggered = true;
+            m.hp -= damage; m.flash = 0.12; m.state = "hurt"; m.t = 0.12;
+            this.floaters.push({ x: m.x, y: m.y - 18, t: 0, text: `${damage}`, c: "#ffeaa0" });
+            if (m.hp <= 0) this.killMonster(m);
+          }
+          if (triggered) {
+            s.prodT = TRAP_REARM;
+            this.spawnParticles(s.x, s.y, "#d7d8df", 5, 80);
+            this.sfx.hit();
+          }
+        }
+      }
       if (s.type === "farm" || s.type === "sawmill" || s.type === "quarry") {
         if (s.type === "farm" && !isDay) continue;
         s.prodT += dt;
@@ -3089,6 +3183,10 @@ export class Engine {
     }
   }
   updateParticles(dt: number) {
+    for (let i = this.magicEffects.length - 1; i >= 0; i--) {
+      this.magicEffects[i].remaining -= dt;
+      if (this.magicEffects[i].remaining <= 0) this.magicEffects.splice(i, 1);
+    }
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i];
       p.t += dt;
@@ -3332,7 +3430,7 @@ export class Engine {
       if (this.referenceStructureAt(nx, ny) && !this.referenceStructureAt(this.px, this.py)) return false;
       if (this.baseChestContains(nx, ny) && !this.baseChestContains(this.px, this.py)) return false;
       for (const s of this.structures) {
-        if ((s.type === "wall" || s.type === "house" || s.type === "tower" || s.type === "forge") && this.placedStructureContains(s, nx, ny) && !this.placedStructureContains(s, this.px, this.py)) return false;
+        if ((s.type === "wall" || s.type === "barricade" || s.type === "house" || s.type === "tower" || s.type === "forge") && this.placedStructureContains(s, nx, ny) && !this.placedStructureContains(s, this.px, this.py)) return false;
       }
       return true;
     };
@@ -3357,7 +3455,8 @@ export class Engine {
     // Trees must not push the player through water, a building or the chest.
     if (this.tileAt(this.px, this.py) === T_WATER ||
         (this.referenceStructureAt(this.px, this.py) && !this.referenceStructureAt(dryX, dryY)) ||
-        (this.baseChestContains(this.px, this.py) && !this.baseChestContains(dryX, dryY))) { this.px = dryX; this.py = dryY; }
+        (this.baseChestContains(this.px, this.py) && !this.baseChestContains(dryX, dryY)) ||
+        this.structures.some((s) => s.type === "barricade" && this.placedStructureContains(s, this.px, this.py) && !this.placedStructureContains(s, dryX, dryY))) { this.px = dryX; this.py = dryY; }
     this.px = clamp(this.px, TILE, WPX - TILE);
     this.py = clamp(this.py, TILE, HPX - TILE);
 
@@ -3527,7 +3626,10 @@ export class Engine {
       const cost = this.costFor(t);
       const lock = this.structLock(t);
       return {
-        id: t, name: t === "wall" && this.wallPurchaseSize() === 1 ? "Cerca simples" : def.name, icon: def.icon, desc: t === "wall" && this.wallPurchaseSize() === 1 ? "Um trecho avulso para fechar a lacuna restante." : def.desc, cost,
+        id: t, name: t === "wall" && this.wallPurchaseSize() === 1 ? "Cerca simples" : def.name, icon: def.icon,
+        desc: t === "wall" && this.wallPurchaseSize() === 1 ? "Um trecho avulso para fechar a lacuna restante."
+          : t === "spike_trap" ? `${def.desc} Nível ${this.defenseTier}: ${DEFENSE_TIERS[this.defenseTier - 1].damage} de dano a cada ${TRAP_REARM.toFixed(1).replace(".", ",")} s.`
+          : t === "barricade" ? `${def.desc} Nível ${this.defenseTier}: ${this.structMaxHp("barricade")} de vida.` : def.desc, cost,
         affordable: this.canAfford(cost), locked: !!lock, lockReason: lock,
       };
     });
@@ -3567,6 +3669,11 @@ export class Engine {
       territory: { level: this.territoryLevel, maxLevel: TERRITORIES.length, radius: this.territoryRadius(), ...territoryUpgrade, locked: !!territoryUpgrade.reason },
       fenceRing: this.fenceRing,
       fencePieces: this.wallPurchaseSize(),
+      defenseTier: this.defenseTier,
+      defenseTiers: DEFENSE_TIERS.map((def) => {
+        const reason = this.defenseTierReason(def.tier);
+        return { tier: def.tier, locked: !!reason, reason, spikeDamage: def.damage, barricadeHp: this.structMaxHp("barricade", this.fenceStyle, def.tier) };
+      }),
       fenceStyles: (Object.keys(FENCE_DEF) as FenceStyle[]).map((id) => ({
         id, name: FENCE_DEF[id].name, desc: FENCE_DEF[id].desc, hp: this.structMaxHp("wall", id),
         cost: this.fenceStyleCost(id), locked: this.baseLevel() < FENCE_DEF[id].lockLevel,
@@ -3607,7 +3714,8 @@ export class Engine {
     const tnow = performance.now() / 1000;
     c.imageSmoothingEnabled = false;
     if (this.terrain) this.terrain.draw(c, this.camX, this.camY, this.viewW, this.viewH, ox, oy, tnow);
-    drawWaterAnim(c, this.tiles, W, H, TILE, x0, y0, x1, y1, ox, oy, tnow);
+    drawWaterAnim(c, this.tiles, W, H, TILE, x0, y0, x1, y1, ox, oy, tnow, this.settings.craftPix);
+    if (this.settings.craftPix) this.terrain?.drawBridges(c, this.camX, this.camY, this.viewW, this.viewH, ox, oy);
 
     // base clearing — stone posts so the camp is visible from far
     c.strokeStyle = "rgba(226,194,122,0.55)";
@@ -3642,7 +3750,7 @@ export class Engine {
       }
     }
     for (const s of this.structures) {
-      const tall = s.type === "house" || s.type === "forge" || s.type === "tower" || s.type === "wall" || s.type === "gate";
+      const tall = s.type === "house" || s.type === "forge" || s.type === "tower" || s.type === "wall" || s.type === "gate" || s.type === "barricade";
       if (!(tall ? inViewBuilding(s.x, s.y) : inView(s.x, s.y))) continue;
       items.push({ y: s.y, fn: () => this.drawStructure(s, ox, oy, tnow) });
     }
@@ -3713,10 +3821,10 @@ export class Engine {
         } });
       } else items.push({ y: prop.y, fn: () => drawSprite(c, prop.sprite, prop.x + ox, prop.y + oy) });
     }
-    if (this.settings.craftPix && hasReferenceObject("house")) {
-      for (const [hx, hy] of VILLAGE_HOUSES) {
-        const x = VILLAGE.x + hx, y = VILLAGE.y + hy;
-        if (inViewBuilding(x, y)) items.push({ y, fn: () => drawReferenceObject(c, "house", x + ox, y + oy, REFERENCE_SCALE.house) });
+    if (this.settings.craftPix && houseArt(0)) {
+      for (const [index, [hx, hy]] of VILLAGE_HOUSES.entries()) {
+        const x = VILLAGE.x + hx, y = VILLAGE.y + hy, name = houseArt(index);
+        if (name && inViewBuilding(x, y)) items.push({ y, fn: () => drawReferenceObject(c, name, x + ox, y + oy, REFERENCE_SCALE[name]) });
       }
     } else for (const [hx, hy] of [[-120, -60], [110, -80], [-90, 90], [120, 70], [0, -130]]) {
       const x = VILLAGE.x + hx, y = VILLAGE.y + hy + 24;
@@ -3737,6 +3845,20 @@ export class Engine {
 
     items.sort((a, b) => a.y - b.y);
     for (const it of items) it.fn();
+
+    // The mage's projectile keeps its existing damage and collision; the
+    // lightning is a short-lived impact animation, not an extra attack.
+    for (const effect of this.magicEffects) {
+      if (!inView(effect.x, effect.y)) continue;
+      const frame = Math.min(5, Math.floor((1 - effect.remaining / 0.55) * 6));
+      const x = effect.x + ox, y = effect.y + oy;
+      c.save(); c.globalAlpha = Math.min(1, effect.remaining / 0.14);
+      if (!this.settings.craftPix || !drawReferenceLightning(c, frame, x, y)) {
+        c.strokeStyle = "#d3f6ff"; c.lineWidth = 4;
+        c.beginPath(); c.moveTo(x - 5, y - 115); c.lineTo(x + 5, y - 78); c.lineTo(x - 4, y - 58); c.lineTo(x + 8, y - 32); c.lineTo(x, y); c.stroke();
+      }
+      c.restore();
+    }
 
     // projectiles
     for (const p of this.projectiles) {
@@ -4077,6 +4199,19 @@ export class Engine {
   drawStructure(s: Structure, ox: number, oy: number, tnow: number) {
     const c = this.ctx;
     const x = s.x + ox, y = s.y + oy;
+    if (s.type === "spike_trap") {
+      const elapsed = TRAP_REARM - s.prodT;
+      const frame = s.prodT > 0 && elapsed < 0.65 ? Math.min(5, Math.floor(elapsed * 9)) : 1;
+      if (!this.settings.craftPix || !drawReferenceSpikes(c, defenseTier(s.tier), frame, x, y + 6)) drawSprite(c, "spike_trap", x, y + 6);
+      if (s.hp < s.maxHp) this.drawStructureHealth(s, x, y - 55);
+      return;
+    }
+    if (s.type === "barricade") {
+      const art = BARRICADE_ART[defenseTier(s.tier) - 1];
+      if (!this.settings.craftPix || !drawReferenceObject(c, art, x, y + 6, REFERENCE_SCALE[art])) drawSprite(c, "barricade", x, y + 6);
+      if (s.hp < s.maxHp) this.drawStructureHealth(s, x, y - 100);
+      return;
+    }
     if(s.type==="wall") {
       if (this.dpr !== 1 || (s.fenceStyle === "stone" && this.settings.craftPix && hasReferenceObject("castle_wall"))) this.drawFencePost(s.fenceStyle, x, y + 5, s.rotation);
       else {
@@ -4115,7 +4250,7 @@ export class Engine {
     let name: string = s.type;
     if (s.type === "campfire") name = Math.floor(tnow * 8) % 2 ? "campfire1" : "campfire0";
     const sz = spriteSize(name);
-    const referenceName = s.type === "tower" ? "castle_tower" : s.type === "forge" || s.type === "house" ? s.type : null;
+    const referenceName = s.type === "tower" ? "castle_tower" : s.type === "house" ? placedHouseArt(s.x, s.y) : s.type === "forge" ? "forge" : null;
     const referenceBuilding = referenceName && this.settings.craftPix && hasReferenceObject(referenceName) ? referenceName : null;
     if (s.type === "campfire") {
       c.fillStyle = `rgba(255,150,60,${0.08 + Math.sin(tnow * 9) * 0.015})`;
@@ -4127,7 +4262,7 @@ export class Engine {
     c.restore();
     if (s.type === "forge" && !referenceBuilding) {const g = Math.sin(tnow * 7) * 0.5 + 0.5;c.fillStyle = `rgba(255,120,40,${0.15 + g * 0.15})`;c.beginPath(); c.arc(x, y - 16, 30, 0, Math.PI * 2); c.fill();}
     if (s.type === "tower" && !referenceBuilding) {c.fillStyle = `rgba(255,220,120,${0.18 + Math.sin(tnow * 3) * 0.06})`;c.beginPath(); c.arc(x, y - 100, 26, 0, Math.PI * 2); c.fill();}
-    const buildingHeight = referenceBuilding ? (referenceBuilding === "house" ? 250 : referenceBuilding === "forge" ? 210 : 196) * REFERENCE_SCALE[referenceBuilding] : sz.h;
+    const buildingHeight = referenceBuilding ? (s.type === "house" ? 250 : referenceBuilding === "forge" ? 210 : 196) * REFERENCE_SCALE[referenceBuilding] : sz.h;
     if(s.hp<s.maxHp)this.drawStructureHealth(s,x,y-buildingHeight-12);
   }
   drawStructureHealth(s:Structure,x:number,top:number){
@@ -4531,8 +4666,8 @@ export class Engine {
       else {
         c.save(); c.translate(x, y + 6); c.rotate(previewRotation);
         c.globalAlpha = 0.72;
-        const referenceName = type === "tower" ? "castle_tower" : type === "house" || type === "forge" ? type : null;
-        const referenceBuilding = referenceName && this.settings.craftPix && drawReferenceObject(c, referenceName, 0, 0, REFERENCE_SCALE[referenceName]);
+        const referenceName = type === "tower" ? "castle_tower" : type === "house" ? placedHouseArt(p.x, p.y) : type === "forge" ? "forge" : type === "barricade" ? BARRICADE_ART[this.defenseTier - 1] : null;
+        const referenceBuilding = type === "spike_trap" && this.settings.craftPix ? drawReferenceSpikes(c, this.defenseTier, 2, 0, 0) : referenceName && this.settings.craftPix && drawReferenceObject(c, referenceName, 0, 0, REFERENCE_SCALE[referenceName]);
         c.globalAlpha = 1;
         if (!referenceBuilding) { drawSprite(c, name, 0, 0, { alpha: .72 }); drawSprite(c, name, 0, 0, { alpha: .22, tint: ok ? "#7dff9b" : "#ff6060" }); }
         c.restore();
@@ -4551,11 +4686,12 @@ export class Engine {
     c.font = "700 12px Nunito, 'Trebuchet MS', system-ui, sans-serif";
     c.textAlign = "center";
     const displayName = type === "wall" && positions.length === 1 ? "Cerca simples" : STRUCT_DEF[type].name;
-    const label = ok ? `${STRUCT_DEF[type].icon} ${displayName}${ring ? ` · anel ${this.fenceRing}` : this.placeRotation ? " · lado" : " · frente"}` : `⛔ ${this.placeReason}`;
+    const orientation = ring ? ` · anel ${this.fenceRing}` : type === "spike_trap" || type === "barricade" ? ` · nível ${this.defenseTier}` : this.placeRotation ? " · lado" : " · frente";
+    const label = ok ? `${STRUCT_DEF[type].icon} ${displayName}${orientation}` : `⛔ ${this.placeReason}`;
     c.fillStyle = "rgba(10,12,20,0.84)";
     const tw = c.measureText(label).width + 16;
-    const previewRef = type === "tower" ? "castle_tower" : type === "house" || type === "forge" ? type : null;
-    const referenceHeight = previewRef && this.settings.craftPix && hasReferenceObject(previewRef) ? (previewRef === "house" ? 250 : previewRef === "forge" ? 210 : 196) * REFERENCE_SCALE[previewRef] : 0;
+    const previewRef = type === "tower" ? "castle_tower" : type === "house" ? placedHouseArt(this.placeX, this.placeY) : type === "forge" ? "forge" : null;
+    const referenceHeight = previewRef && this.settings.craftPix && hasReferenceObject(previewRef) ? (type === "house" ? 250 : previewRef === "forge" ? 210 : 196) * REFERENCE_SCALE[previewRef] : 0;
     const labelY = referenceHeight ? y - referenceHeight - 25 : y - 70 - spriteSize(name).h * 0.4;
     this.rr(x - tw / 2, labelY, tw, 22, 6); c.fill();
     c.fillStyle = ok ? "#c8ffd8" : "#ffc8c8";

@@ -148,7 +148,7 @@ export function matteObject(rgb, width, height, background = [189, 200, 192]) {
   return out;
 }
 
-export async function makeReferenceObject(input, { left, top, width, height, targetWidth, targetHeight, mainOnly, background, shadowBelow, clearInside }) {
+export async function makeReferenceObject(input, { left, top, width, height, targetWidth, targetHeight, mainOnly, background, shadowBelow, clearInside, contain = false }) {
   const { data } = await sharp(input).extract({ left, top, width, height }).removeAlpha().raw().toBuffer({ resolveWithObject: true });
   const rgba = matteObject(data, width, height, background);
   // The grate has enclosed openings filled with the preview background. Unlike
@@ -164,5 +164,25 @@ export async function makeReferenceObject(input, { left, top, width, height, tar
     if (r >= 100 && g < 190 && Math.max(r, g, b) - Math.min(r, g, b) < 22 && g >= r && b >= r) rgba[p * 4 + 3] = 0;
   }
   if (mainOnly) keepMainSilhouette(rgba, width, height);
-  return sharp(rgba, { raw: { width, height, channels: 4 } }).resize(targetWidth, targetHeight, { kernel: "nearest" }).png({ compressionLevel: 9 }).toBuffer();
+  return sharp(rgba, { raw: { width, height, channels: 4 } }).resize(targetWidth, targetHeight, contain
+    ? { fit: "contain", position: "bottom", background: "#00000000", kernel: "nearest" }
+    : { kernel: "nearest" }).png({ compressionLevel: 9 }).toBuffer();
+}
+
+/** Pack independently cropped animation frames without inventing extra frames.
+ * The source is a presentation screenshot, so each cell has its own bounds and
+ * all enclosed backdrop-colored gaps are made transparent. */
+export async function makeEffectAtlas(input, rows, cellWidth, cellHeight, background = [253, 224, 184]) {
+  const columns = Math.max(...rows.map((row) => row.length));
+  const pieces = [];
+  for (const [rowIndex, row] of rows.entries()) for (const [column, bounds] of row.entries()) {
+    const [left, top, width, height] = bounds;
+    const frame = await makeReferenceObject(input, {
+      left, top, width, height, targetWidth: cellWidth, targetHeight: cellHeight,
+      mainOnly: false, background, clearInside: true, contain: true,
+    });
+    pieces.push({ input: frame, left: column * cellWidth, top: rowIndex * cellHeight });
+  }
+  return sharp({ create: { width: columns * cellWidth, height: rows.length * cellHeight, channels: 4, background: "#00000000" } })
+    .composite(pieces).png({ compressionLevel: 9 }).toBuffer();
 }

@@ -2,7 +2,11 @@
 import type { View } from "./sprites";
 
 export type ReferenceScene = "forge" | "chapel" | "market" | "camp" | "sewer";
-export type ReferenceObject = ReferenceScene | "house" | "chest" | "castle_wall" | "castle_tower" | "castle_gate" | "castle_grate";
+export type ReferenceObject = ReferenceScene | "house" | "chest" | "castle_wall" | "castle_tower" | "castle_gate" | "castle_grate"
+  | "house_half_timber" | "house_wood_a" | "house_wood_b" | "house_stone"
+  | "bridge_wood_h" | "bridge_wood_v" | "bridge_stone_h" | "bridge_stone_v"
+  | "barricade_1" | "barricade_2" | "barricade_3" | "barricade_4";
+export type ReferenceBridge = "bridge_wood_h" | "bridge_wood_v" | "bridge_stone_h" | "bridge_stone_v";
 type ArcherAction = "idle" | "walk" | "run" | "attack";
 export type ResidentLook = "mage-red" | "mage-blue" | "archer" | "archer-hood";
 const iconNames = ["sword", "axe", "pick", "wood", "fiber", "food", "iron", "crystal"] as const;
@@ -12,6 +16,9 @@ const dimensions: Record<ReferenceObject, [number, number]> = {
   forge: [260, 210], house: [220, 250], chest: [100, 82],
   chapel: [240, 294], market: [200, 176], camp: [200, 200], sewer: [200, 87],
   castle_wall: [44, 84], castle_tower: [112, 196], castle_gate: [82, 70], castle_grate: [31, 25],
+  house_half_timber: [220, 250], house_wood_a: [220, 250], house_wood_b: [220, 250], house_stone: [220, 250],
+  bridge_wood_h: [160, 108], bridge_wood_v: [64, 136], bridge_stone_h: [160, 116], bridge_stone_v: [80, 140],
+  barricade_1: [96, 128], barricade_2: [96, 128], barricade_3: [96, 128], barricade_4: [96, 128],
 };
 const objects = new Map<ReferenceObject, HTMLImageElement>();
 const scenes = new Set<ReferenceScene>();
@@ -25,7 +32,11 @@ let icons: HTMLImageElement | null = null;
 let plants: HTMLImageElement | null = null;
 let bow: HTMLImageElement | null = null;
 let menu: HTMLImageElement | null = null;
+let spikes: HTMLImageElement | null = null;
+let lightning: HTMLImageElement | null = null;
+let ripples: HTMLImageElement | null = null;
 const iconThumbnails = new Map<ReferenceIcon, string>();
+const spikeThumbnails = new Map<number, string>();
 let loading: Promise<void> | null = null;
 
 function image(name: string, width: number, height: number): Promise<HTMLImageElement> {
@@ -47,7 +58,7 @@ export function loadReferenceArt(): Promise<void> {
       if (!response.ok) return;
       const manifest: unknown = await response.json();
       if (!manifest || typeof manifest !== "object" || !("version" in manifest) || manifest.version !== 1) return;
-      const flags = manifest as { archer?: unknown; archerHood?: unknown; mageBlue?: unknown; mageRed?: unknown; minerals?: unknown; rocks?: unknown; icons?: unknown; plants?: unknown; bow?: unknown; menu?: unknown; objects?: Partial<Record<ReferenceObject, unknown>>; scenes?: Partial<Record<ReferenceScene, unknown>> };
+      const flags = manifest as { archer?: unknown; archerHood?: unknown; mageBlue?: unknown; mageRed?: unknown; minerals?: unknown; rocks?: unknown; icons?: unknown; plants?: unknown; bow?: unknown; menu?: unknown; spikes?: unknown; lightning?: unknown; ripples?: unknown; objects?: Partial<Record<ReferenceObject, unknown>>; scenes?: Partial<Record<ReferenceScene, unknown>> };
       const tasks: Promise<void>[] = [];
       if (flags.archer === true) tasks.push(image("archer", 768, 1152).then((loaded) => { archer = loaded; }).catch(() => {}));
       if (flags.archerHood === true) tasks.push(image("archer-hood", 768, 1152).then((loaded) => { archerHood = loaded; }).catch(() => {}));
@@ -59,6 +70,9 @@ export function loadReferenceArt(): Promise<void> {
       if (flags.plants === true) tasks.push(image("plants", 384, 64).then((loaded) => { plants = loaded; }).catch(() => {}));
       if (flags.bow === true) tasks.push(image("bow", 64, 64).then((loaded) => { bow = loaded; }).catch(() => {}));
       if (flags.menu === true) tasks.push(image("menu", 960, 640).then((loaded) => { menu = loaded; }).catch(() => {}));
+      if (flags.spikes === true) tasks.push(image("spikes", 576, 384).then((loaded) => { spikes = loaded; }).catch(() => {}));
+      if (flags.lightning === true) tasks.push(image("lightning", 480, 200).then((loaded) => { lightning = loaded; }).catch(() => {}));
+      if (flags.ripples === true) tasks.push(image("ripples", 384, 64).then((loaded) => { ripples = loaded; }).catch(() => {}));
       for (const name of Object.keys(dimensions) as ReferenceObject[]) {
         const [width, height] = dimensions[name];
         if (flags.objects?.[name] === true) tasks.push(image(name, width, height).then((loaded) => { objects.set(name, loaded); }).catch(() => {}));
@@ -77,6 +91,47 @@ export function hasReferenceScene(name: ReferenceScene) { return scenes.has(name
 export function referenceSceneUrl(name: ReferenceScene) { return hasReferenceScene(name) ? `/referencias/scene-${name}.png` : ""; }
 export function referenceMenuUrl() { return menu ? "/referencias/menu.png" : ""; }
 export function referenceObjectUrl(name: ReferenceObject) { return hasReferenceObject(name) ? `/referencias/${name}.png` : ""; }
+
+/** Bridge art is clipped to real walkable bridge tiles by Terrain. */
+export function drawReferenceBridge(ctx: CanvasRenderingContext2D, name: ReferenceBridge, x: number, y: number, width: number, height: number): boolean {
+  const img = objects.get(name);
+  if (!img) return false;
+  ctx.drawImage(img, x, y, width, height);
+  return true;
+}
+
+/** A trap's six supplied frames, one row per tier. */
+export function drawReferenceSpikes(ctx: CanvasRenderingContext2D, tier: number, frame: number, x: number, y: number, size = 76): boolean {
+  if (!spikes) return false;
+  const row = Math.max(0, Math.min(3, Math.floor(tier) - 1));
+  const col = Math.max(0, Math.min(5, Math.floor(frame)));
+  ctx.drawImage(spikes, col * 96, row * 96, 96, 96, Math.round(x - size / 2), Math.round(y - size * 0.82), size, size);
+  return true;
+}
+export function referenceSpikeUrl(tier: number): string {
+  if (!spikes || typeof document === "undefined") return "";
+  const row = Math.max(0, Math.min(3, Math.floor(tier) - 1));
+  const cached = spikeThumbnails.get(row);
+  if (cached) return cached;
+  const canvas = document.createElement("canvas"); canvas.width = canvas.height = 96;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return "";
+  // Use the fully raised third frame in the workshop, not the near-hidden idle.
+  ctx.drawImage(spikes, 2 * 96, row * 96, 96, 96, 0, 0, 96, 96);
+  const url = canvas.toDataURL(); spikeThumbnails.set(row, url); return url;
+}
+export function drawReferenceLightning(ctx: CanvasRenderingContext2D, frame: number, x: number, y: number): boolean {
+  if (!lightning) return false;
+  const col = Math.max(0, Math.min(5, Math.floor(frame)));
+  ctx.drawImage(lightning, col * 80, 0, 80, 200, Math.round(x - 32), Math.round(y - 148), 64, 160);
+  return true;
+}
+export function drawReferenceRipple(ctx: CanvasRenderingContext2D, frame: number, x: number, y: number): boolean {
+  if (!ripples) return false;
+  const col = ((Math.floor(frame) % 6) + 6) % 6;
+  ctx.drawImage(ripples, col * 64, 0, 64, 64, Math.round(x - 16), Math.round(y - 16), 32, 32);
+  return true;
+}
 
 function iconFor(name: string): ReferenceIcon | null {
   const id = name.replace(/^(tool_|it_)/, "") as ReferenceIcon;

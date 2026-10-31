@@ -45,6 +45,7 @@ try {
       { name: "riacho e correnteza", quality: "auto", x: 38 * 32, y: 84 * 32, monsters: 0 },
       { name: "campos de cristal", quality: "auto", x: 76 * 32, y: 40 * 32 + 90, monsters: 0 },
       { name: "combate com 24 criaturas", quality: "auto", x: 104 * 32, y: 88 * 32, monsters: 24 },
+      { name: "32 defesas e 24 criaturas", quality: "auto", x: 104 * 32, y: 88 * 32, monsters: 24, defenses: 32 },
       { name: "base com 8 fogueiras e 24 criaturas", quality: "auto", x: 104 * 32, y: 88 * 32, monsters: 24, fires: 8 },
       { name: "cerco com 63 trechos e 24 criaturas", quality: "auto", x: 104 * 32, y: 88 * 32, monsters: 24, walls: 63 },
       { name: "reino com quatro perímetros e 24 criaturas", quality: "leve", x: 104 * 32, y: 88 * 32 - 500, monsters: 24, kingdom: true },
@@ -63,6 +64,10 @@ try {
       for (let i = 0; i < (scene.fires ?? 0); i++) {
         const a = i / scene.fires * Math.PI * 2;
         game.structures.push({ type: "campfire", x: game.px + Math.cos(a) * 110, y: game.py + Math.sin(a) * 110, hp: 100, maxHp: 100, prodT: 0, open: false, rotation: 0, fenceStyle: "palisade" });
+      }
+      for (let i = 0; i < (scene.defenses ?? 0); i++) {
+        const a = i / scene.defenses * Math.PI * 2;
+        game.structures.push({ type: i % 2 ? "barricade" : "spike_trap", tier: i % 4 + 1, x: game.px + Math.cos(a) * 240, y: game.py + Math.sin(a) * 240, hp: 1000, maxHp: 1000, prodT: 0, open: false, rotation: 0, fenceStyle: "palisade" });
       }
       for (let i = 0; i < (scene.walls ?? 0); i++) {
         const p = game.fencePosition(i), a = i / 63 * Math.PI * 2;

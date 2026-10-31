@@ -73,6 +73,18 @@ Em produção, importe antes de `npm run build` e reinicie `npm run start`. A pa
 
 As imagens fornecidas e os arquivos gerados permanecem locais. A autorização do usuário para o projeto não substitui as condições dos titulares das artes: confirme a licença de cada pacote antes de redistribuir ou hospedar imagens extraíveis.
 
+## Rios, defesas e casas
+
+As imagens `71`, `72`, `75`, `76`, `77` e `83` são opcionais no mesmo importador. Seus recortes de prévias mostram pontes de madeira/pedra, ondas, espinhos, barricadas, relâmpagos e quatro exemplos de casas. As pontes visuais são ajustadas aos trechos transitáveis já existentes e recortadas aos seus tiles: a água continua bloqueada e a geração do mundo não muda. As casas variam de forma estável na vila e nas construções, sem alterar os recursos gerados. Os exemplos não são um construtor livre de peças, e a arte pode ficar menos nítida do que um sprite original.
+
+Na **Oficina da Clareira**, as receitas **Armadilha de espinhos** e **Barricada** permitem selecionar um dos quatro níveis antes de posicionar a peça dentro do território. O nível 1 está disponível desde o início; os níveis 2, 3 e 4 exigem reino 3, 6 e 10, respectivamente, e os dois últimos também precisam de forja. Os custos variam com a dificuldade e com a quantidade já construída, como nas demais receitas. O nível pertence à peça colocada; escolher outro não melhora as já existentes.
+
+- Espinhos são atravessáveis e ferem todos os inimigos próximos por 8, 12, 18 ou 25 de dano, no máximo uma vez por ativação a cada 1,4 segundo. Não ferem o jogador ou seus aliados.
+- Barricadas bloqueiam passagem e projéteis, podem ser atacadas pelos invasores e reparadas com madeira. Sua vida-base por nível é 200, 320, 480 e 700 (ajustada conforme a dificuldade). As duas defesas usam posição fixa, sem rotação.
+- O relâmpago aparece brevemente quando o projétil da maga aliada acerta; é apenas visual, sem dano extra. Seus projéteis continuam respeitando obstáculos e não causam fogo amigo.
+
+Sem as imagens ou com a opção **Artes CraftPix e referências** desativada, as defesas permanecem jogáveis com sprites simples e as pontes mantêm o terreno anterior. Saves antigos continuam válidos, e os novos guardam o nível selecionado e o de cada defesa.
+
 ## Resgates, treinamento e profissões
 
 O mapa marca com **!** quatro encontros independentes: um pequeno grupo de arqueiros, uma maga, um espadachim e um minerador. Depois que Rian terminar a escolta, aproxime-se, derrote as criaturas do encontro e converse para convidar **um** profissional por encontro. A tela **Pessoas** fica nas abas do caderno (ou pela tecla P); ali é possível designar os combatentes para acompanhar, defender a base ou treinar, e escolher entre mineração e descanso para o minerador. Os três defensores e o minerador são indivíduos fixos; ainda não há contratação ilimitada nem uma economia de salários.

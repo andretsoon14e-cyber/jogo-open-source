@@ -454,6 +454,27 @@ S.campfire1 = {
     "...ssSSSSSSSSss......", ".....ssssssss........",
   ],
 };
+// Small procedural fallbacks follow the supplied spike and timber silhouettes
+// when optional preview crops are unavailable.
+S.spike_trap = {
+  legend: { s: "#aeb8c9", h: "#e7f2f7", d: "#4e5d79" },
+  rows: [
+    ".........h..........", "....h....ss.........", "....s...hss....h....", "...hss..ssd....s....",
+    "...ssd..ssd...hss...", ".h.ssd..ssd...ssd.h.", ".s.ssd..ssd.h.ssd.s.", ".sdssd..ssd.ss.ssds.",
+    ".dddddd.ddd.dd.dddd.", "...dd......dd...dd..",
+  ],
+};
+S.barricade = {
+  legend: { w: "#b8684b", d: "#704135", r: "#d18a63", s: "#888b87" },
+  rows: [
+    "..d............d..", "..dwwwwwwwwwwwwd..", "..drrrrrrrrrrrrd..", "..dwwwwwwwwwwwwd..",
+    "..dddddddddddddd..", "..dwwwwwwwwwwwwd..", ".ddrrrrrrrrrrrrd..", "dddddwwwwwwwwwwd..",
+    ".ddddddddddddddd..", ".d.ddwwwwwwwwwwd..", ".d..ddrrrrrrrrrd..", ".d...ddwwwwwwwwd..",
+    ".d....dddddddddd..", ".d.....ddwwwwwwd..", ".d......ddrrrrrd..", ".d.......ddwwwwd..",
+    ".d........dddddd..", ".d.........ddwwd..", ".d..........ddrd..", ".d...........ddd..",
+    ".d............dd..", ".s............ds..",
+  ],
+};
 S.wall = {
   legend: { w: "#a8783f", W: "#7a532a", d: "#54371a", r: "#c9a26a", k: "#3a2612" },
   rows: [".w...w...w.", "www.www.www", "wWw.wWw.wWw", "wWw.wWw.wWw", "rrrrrrrrrrr", "wWw.wWw.wWw", "wWw.wWw.wWw", "wWw.wWw.wWw", "wWw.wWw.wWw", "wWw.wWw.wWw", "rrrrrrrrrrr", "wWw.wWw.wWw", "wWw.wWw.wWw", "wWw.wWw.wWw", "wWw.wWw.wWw", "dWd.dWd.dWd", "kkk.kkk.kkk"],

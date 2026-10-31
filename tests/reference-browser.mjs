@@ -10,13 +10,14 @@ await build({ entryPoints: ["tests/browser-entry.ts"], bundle: true, platform: "
 async function image(width, height, color) {
   return sharp({ create: { width, height, channels: 4, background: color } }).png().toBuffer();
 }
-const sizes = { archer: [768, 1152], "archer-hood": [768, 1152], "mage-blue": [1152, 768], "mage-red": [1152, 768], minerals: [960, 96], rocks: [768, 96], icons: [512, 64], plants: [384, 64], bow: [64, 64], menu: [960, 640], forge: [260, 210], house: [220, 250], chest: [100, 82], chapel: [240, 294], market: [200, 176], camp: [200, 200], sewer: [200, 87], castle_wall: [44, 84], castle_tower: [112, 196], castle_gate: [82, 70], castle_grate: [31, 25] };
+const sizes = { archer: [768, 1152], "archer-hood": [768, 1152], "mage-blue": [1152, 768], "mage-red": [1152, 768], minerals: [960, 96], rocks: [768, 96], icons: [512, 64], plants: [384, 64], bow: [64, 64], menu: [960, 640], forge: [260, 210], house: [220, 250], chest: [100, 82], chapel: [240, 294], market: [200, 176], camp: [200, 200], sewer: [200, 87], castle_wall: [44, 84], castle_tower: [112, 196], castle_gate: [82, 70], castle_grate: [31, 25], house_half_timber: [220, 250], house_wood_a: [220, 250], house_wood_b: [220, 250], house_stone: [220, 250], bridge_wood_h: [160, 108], bridge_wood_v: [64, 136], bridge_stone_h: [160, 116], bridge_stone_v: [80, 140], barricade_1: [96, 128], barricade_2: [96, 128], barricade_3: [96, 128], barricade_4: [96, 128], spikes: [576, 384], lightning: [480, 200], ripples: [384, 64] };
+const objectNames = ["forge", "house", "chest", "chapel", "market", "camp", "sewer", "castle_wall", "castle_tower", "castle_gate", "castle_grate", "house_half_timber", "house_wood_a", "house_wood_b", "house_stone", "bridge_wood_h", "bridge_wood_v", "bridge_stone_h", "bridge_stone_v", "barricade_1", "barricade_2", "barricade_3", "barricade_4"];
 const fixtures = {};
 for (const [key, [width, height]] of Object.entries(sizes)) fixtures[`${key}.png`] = await image(width, height, key === "bow" ? "#993344" : "#68a438");
 
 const browser = await chromium.launch({ headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage"], ...(process.env.CHROMIUM_EXECUTABLE_PATH ? { executablePath: process.env.CHROMIUM_EXECUTABLE_PATH } : {}) });
 try {
-  for (const scenario of ["missing", "complete", "broken-archer", "broken-object", "broken-resident"]) {
+  for (const scenario of ["missing", "complete", "broken-archer", "broken-object", "broken-resident", "broken-effects"]) {
     const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
@@ -25,10 +26,10 @@ try {
       if (pathname === "/") return route.fulfill({ status: 200, contentType: "text/html", body: '<canvas style="width:1280px;height:720px"></canvas>' });
       if (pathname === "/referencias/manifest.json") {
         if (scenario === "missing") return route.fulfill({ status: 404, body: "" });
-        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ version: 1, archer: true, archerHood: true, mageBlue: true, mageRed: true, minerals: true, rocks: true, icons: true, plants: true, bow: true, menu: true, objects: Object.fromEntries(["forge", "house", "chest", "chapel", "market", "camp", "sewer", "castle_wall", "castle_tower", "castle_gate", "castle_grate"].map((x) => [x, true])), scenes: { forge: true, chapel: true, market: true, camp: true, sewer: true } }) });
+        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ version: 1, archer: true, archerHood: true, mageBlue: true, mageRed: true, minerals: true, rocks: true, icons: true, plants: true, bow: true, menu: true, spikes: true, lightning: true, ripples: true, objects: Object.fromEntries(objectNames.map((x) => [x, true])), scenes: { forge: true, chapel: true, market: true, camp: true, sewer: true } }) });
       }
       const name = pathname.split("/").at(-1);
-      if ((scenario === "broken-archer" && name === "archer.png") || (scenario === "broken-object" && name === "chapel.png") || (scenario === "broken-resident" && ["mage-blue.png", "minerals.png"].includes(name))) return route.fulfill({ status: 200, contentType: "image/png", body: fixtures["sewer.png"] });
+      if ((scenario === "broken-archer" && name === "archer.png") || (scenario === "broken-object" && name === "chapel.png") || (scenario === "broken-resident" && ["mage-blue.png", "minerals.png"].includes(name)) || (scenario === "broken-effects" && ["spikes.png", "barricade_2.png"].includes(name))) return route.fulfill({ status: 200, contentType: "image/png", body: fixtures["sewer.png"] });
       if (pathname.startsWith("/referencias/") && fixtures[name]) return route.fulfill({ status: 200, contentType: "image/png", body: fixtures[name] });
       return route.fulfill({ status: 404, body: "" });
     });
@@ -47,6 +48,15 @@ try {
       const objects = { chapel: drewChapel, sewer: api.drawReferenceObject(ctx, "sewer", 100, 200), forge: api.drawReferenceObject(ctx, "forge", 100, 200), house: api.drawReferenceObject(ctx, "house", 100, 200), chest: api.drawReferenceObject(ctx, "chest", 100, 200) };
       const icon = { wood: api.drawReferenceIcon(ctx, "it_wood", 1, 2, 32), bow: api.drawReferenceIcon(ctx, "tool_bow", 1, 2, 32), unknown: api.drawReferenceIcon(ctx, "it_stone", 1, 2, 32), thumb: !!api.referenceIconUrl("tool_axe"), cached: api.referenceIconUrl("tool_axe") === api.referenceIconUrl("axe") };
       const newAssets = { plant: api.drawReferencePlant(ctx, 5, 100, 100), menu: !!api.referenceMenuUrl(), bowThumb: !!api.referenceIconUrl("tool_bow"), castleWall: api.hasReferenceObject("castle_wall"), castleGate: api.hasReferenceObject("castle_gate"), castleGrate: api.hasReferenceObject("castle_grate"), castleTower: api.hasReferenceObject("castle_tower") };
+      const expansion = {
+        house: api.drawReferenceObject(ctx, "house_wood_a", 100, 200),
+        barrier: api.drawReferenceObject(ctx, "barricade_2", 100, 200),
+        bridge: api.drawReferenceBridge(ctx, "bridge_wood_v", 10, 10, 64, 96),
+        spikes: api.drawReferenceSpikes(ctx, 3, 2, 100, 100),
+        spikeThumb: !!api.referenceSpikeUrl(3),
+        lightning: api.drawReferenceLightning(ctx, 4, 100, 200),
+        ripple: api.drawReferenceRipple(ctx, 5, 100, 100),
+      };
       const regional = {
         blue: api.drawReferenceResident(ctx, "mage-blue", "side", true, true, 0),
         red: api.drawReferenceResident(ctx, "mage-red", "up", false, false, 0.2),
@@ -63,6 +73,20 @@ try {
         right: api.referenceArcherFrame("side", false, "walk", 0, 0),
         attackUp: api.referenceArcherFrame("up", false, "attack", 0, 1),
       };
+      // Bridges are clipped to actual crossing tiles, cached, and invalidated
+      // when a new foundation changes the terrain.
+      const tileMap = new Uint8Array(8 * 8).fill(2);
+      for (let y = 2; y <= 4; y++) { tileMap[y * 8 + 2] = 0; tileMap[y * 8 + 3] = 7; tileMap[y * 8 + 4] = 0; }
+      const ground = new api.Terrain(tileMap, 8, 8, 32);
+      const layer = document.createElement("canvas"); layer.width = layer.height = 256;
+      const painter = layer.getContext("2d");
+      const alphaAt = (x, y) => painter.getImageData(x * 32 + 16, y * 32 + 16, 1, 1).data[3];
+      ground.drawBridges(painter, 0, 0, 256, 256, 0, 0);
+      const bridgePaint = { crossing: alphaAt(3, 3), water: alphaAt(2, 3) };
+      tileMap[3 * 8 + 3] = 0; ground.invalidateAll(); painter.clearRect(0, 0, 256, 256);
+      ground.drawBridges(painter, 0, 0, 256, 256, 0, 0);
+      bridgePaint.afterMutation = alphaAt(3, 3); bridgePaint.remaining = alphaAt(3, 2);
+
       const events = [];
       const make = (continueSave = false) => new api.Engine({ canvas, mode: "single", difficulty: "dificil", playerName: "Teste", seed: 77, continueSave, onUi: (event) => events.push(event) });
       const game = make(); game.skipCutscene(); game.escort.active = false; game.updateSpawns = () => {};
@@ -107,6 +131,18 @@ try {
       const combat = { hp: fight.hp, kills: fight.kills, quest: fight.questP[1], count: fight.projectiles.length };
 
       const wall = (type, open) => ({ type, open, x: 1200, y: 1100, hp: 100, maxHp: 100, prodT: 0, rotation: 0, fenceStyle: "palisade" });
+      calls.length = 0;
+      fight.drawStructure({ ...wall("spike_trap", false), tier: 3, prodT: 1.2 }, 0, 0, 0);
+      fight.drawStructure({ ...wall("barricade", false), tier: 2 }, 0, 0, 0);
+      const defenseSources = calls.map((call) => call.src.split("/").at(-1));
+      calls.length = 0;
+      for (let i = 0; i < 5; i++) fight.drawStructure({ ...wall("house", false), x: 1200 + i * 16 }, 0, 0, 0);
+      const houseSources = [...new Set(calls.map((call) => call.src.split("/").at(-1)))];
+      fight.applySettings({ ...fight.settings, craftPix: false }); calls.length = 0;
+      fight.drawStructure({ ...wall("spike_trap", false), tier: 3 }, 0, 0, 0);
+      fight.drawStructure({ ...wall("barricade", false), tier: 2 }, 0, 0, 0);
+      const disabledDefenseSources = calls.map((call) => call.src.split("/").at(-1));
+      fight.applySettings({ ...fight.settings, craftPix: true });
       const trial = (structure) => {
         fight.monsters = []; fight.projectiles = []; fight.structures = structure ? [structure] : [];
         fight.spawnMonster(1300, 1100, "imp");
@@ -219,7 +255,7 @@ try {
       const renderedArcher = calls.some((call) => call.src.endsWith("/archer.png"));
       fight.destroy();
       ctx.drawImage = original;
-      return { status, drewArcher, objects, icon, newAssets, regional, residentSources, paperdollBow, calls: directCalls, frame, recruited, questDoesNotHire, oldCount, oldLevel, upgradedSave, premature, arrow, combat, closed, open, noTunnel, hostileDamage, noTarget, monsterAtBuilding, buildingShots, placedFootprints, shadowCalls, closedChestArt, openChestArt, castleWall, closedCastleGate, openCastleGate, towerFootprint, castleTower, footprint, placement, front, escaped, solidCamp, firstRingFree, campCollisions, disabledFootprint, escort, scene, disabled, renderedArcher };
+      return { status, drewArcher, objects, icon, newAssets, expansion, bridgePaint, defenseSources, houseSources, disabledDefenseSources, regional, residentSources, paperdollBow, calls: directCalls, frame, recruited, questDoesNotHire, oldCount, oldLevel, upgradedSave, premature, arrow, combat, closed, open, noTunnel, hostileDamage, noTarget, monsterAtBuilding, buildingShots, placedFootprints, shadowCalls, closedChestArt, openChestArt, castleWall, closedCastleGate, openCastleGate, towerFootprint, castleTower, footprint, placement, front, escaped, solidCamp, firstRingFree, campCollisions, disabledFootprint, escort, scene, disabled, renderedArcher };
     });
     const assets = scenario !== "missing", archer = assets && scenario !== "broken-archer", chapel = assets && scenario !== "broken-object";
     assert.equal(result.status.archer, archer, scenario);
@@ -228,6 +264,14 @@ try {
     for (const key of ["sewer", "forge", "house", "chest"]) assert.equal(result.objects[key], assets, `${scenario}: ${key}`);
     assert.deepEqual(result.icon, { wood: assets, bow: assets, unknown: false, thumb: assets, cached: true }, `${scenario}: ícones e fallback`);
     assert.deepEqual(result.newAssets, { plant: assets, menu: assets, bowThumb: assets, castleWall: assets, castleGate: assets, castleGrate: assets, castleTower: assets }, `${scenario}: plantas, menu, arco e castelo`);
+    const intactDefenses = assets && scenario !== "broken-effects";
+    assert.deepEqual(result.expansion, { house: assets, barrier: intactDefenses, bridge: assets, spikes: intactDefenses, spikeThumb: intactDefenses, lightning: assets, ripple: assets }, `${scenario}: rios, casas e defesas carregam independentemente`);
+    assert.deepEqual(result.bridgePaint, { crossing: assets ? 255 : 0, water: 0, afterMutation: 0, remaining: assets ? 255 : 0 }, `${scenario}: pontes recortam apenas tiles reais e invalidam o cache`);
+    assert.deepEqual(result.defenseSources, intactDefenses ? ["spikes.png", "barricade_2.png"] : [], `${scenario}: visual das defesas e fallback`);
+    assert.deepEqual(result.disabledDefenseSources, [], `${scenario}: referência desligada`);
+    assert.equal(result.houseSources.length, assets ? 5 : 0, `${scenario}: casas variadas sem consumir RNG`);
+    if (intactDefenses) assert.deepEqual(result.calls.find((call) => call.src.endsWith("/spikes.png")).args.slice(0, 4), [192, 192, 96, 96], "quadro e nível dos espinhos");
+    if (assets) assert.deepEqual(result.calls.find((call) => call.src.endsWith("/lightning.png")).args.slice(0, 4), [320, 0, 80, 200], "quadro do relâmpago");
     const intactRegional = assets && scenario !== "broken-resident";
     assert.deepEqual(result.regional, { blue: intactRegional, red: assets, hood: assets, archer, mineral: intactRegional, rock: assets }, `${scenario}: moradores e depósitos com fallback independente`);
     assert.equal(result.residentSources.some((name) => ["mage-red.png", "mage-blue.png", "archer-hood.png", "archer.png"].includes(name)), false, `${scenario}: moradores comuns não usam roupas de especialistas`);

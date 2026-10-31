@@ -1174,3 +1174,126 @@ test("treino, forja e mineração precisam das tarefas, tempo e recursos correto
   assert.equal(loaded.specialists.archer.weaponLevel, 2); assert.equal(loaded.specialists.miner.duty, "rest");
   assert.equal(loaded.crystalDiscovered, true); loaded.destroy(); storage.clear();
 });
+
+test("níveis de espinhos e barricadas dependem do reino e da forja e sobrevivem ao save", () => {
+  storage.clear();
+  const game = makeEngine(77); simplifySimulation(game); game.escort.active = false;
+  game.px = BASE.x; game.py = BASE.y; game.pdir = 0; game.chests = []; game.monsters = []; game.rescues = [];
+  game.tileAt = () => 2; game.nearbyNodes = () => []; game.referenceStructureAt = () => false;
+  game.inv = { wood: 10000, stone: 10000, fiber: 10000, food: 10000, iron: 10000, crystal: 10000 };
+  const structure = (type, x) => ({ type, x, y: BASE.y - 260, prodT: 0, hp: 200, maxHp: 200, open: false, rotation: 0, fenceStyle: "palisade" });
+  try {
+    assert.equal(game.defenseTier, 1);
+    game.setDefenseTier(2); assert.equal(game.defenseTier, 1, "reino insuficiente");
+    game.structures = [structure("workbench", BASE.x - 200), structure("farm", BASE.x - 120)];
+    game.setDefenseTier(2); assert.equal(game.defenseTier, 2);
+    game.setDefenseTier(3); assert.equal(game.defenseTier, 2, "nível 3 ainda bloqueado");
+    game.structures.push(structure("forge", BASE.x - 40));
+    game.setDefenseTier(3); assert.equal(game.defenseTier, 3);
+    game.structures.push(structure("house", BASE.x + 40), structure("campfire", BASE.x + 120), structure("farm", BASE.x + 200));
+    game.setDefenseTier(4); assert.equal(game.defenseTier, 4);
+    assert.equal(game.baseLevel(), 10);
+    const price = game.costFor("spike_trap"), wood = game.inv.wood;
+    assert.ok(game.build("spike_trap"));
+    game.rotateStructure(); assert.equal(game.placeRotation, 0, "defesas não viram deitadas");
+    const forge = game.structures.find((s) => s.type === "forge");
+    game.structures = game.structures.filter((s) => s !== forge);
+    assert.equal(game.confirmPlace(), false, "revalidar requisitos ao confirmar");
+    assert.equal(game.inv.wood, wood, "não cobra ao rejeitar");
+    game.structures.push(forge);
+    assert.equal(game.confirmPlace(), true);
+    const trap = game.structures.find((s) => s.type === "spike_trap");
+    assert.equal(trap.tier, 4); assert.equal(trap.maxHp, game.structMaxHp("spike_trap", game.fenceStyle, 4));
+    assert.equal(game.inv.wood, wood - price.wood);
+    assert.equal(game.baseLevel(), 10, "defesas não aumentam o nível de reino artificialmente");
+    game.setDefenseTier(2); game.pdir = Math.PI / 2;
+    assert.equal(game.build("barricade"), true); assert.equal(game.confirmPlace(), true);
+    const barricade = game.structures.find((s) => s.type === "barricade");
+    assert.equal(barricade.tier, 2); barricade.hp -= 20;
+    game.saveGame(true);
+    const key = game.saveKey(), data = JSON.parse(storage.get(key));
+    assert.equal(data.defenseTier, 2);
+    assert.deepEqual(data.structures.filter((s) => ["spike_trap", "barricade"].includes(s.type)).map((s) => s.tier), [4, 2]);
+    const loaded = makeEngine(1, true);
+    try {
+      assert.equal(loaded.opts.seed, 77);
+      assert.equal(loaded.defenseTier, 2);
+      assert.equal(loaded.structures.find((s) => s.type === "spike_trap").tier, 4);
+      const savedBarricade = loaded.structures.find((s) => s.type === "barricade");
+      assert.equal(savedBarricade.tier, 2); assert.equal(savedBarricade.hp, barricade.hp);
+      assert.equal(savedBarricade.maxHp, game.structMaxHp("barricade", game.fenceStyle, 2));
+    } finally { loaded.destroy(); }
+    // A save from before the new types has neither tier field.
+    delete data.defenseTier;
+    data.structures = data.structures.filter((s) => s.type !== "spike_trap" && s.type !== "barricade");
+    for (const s of data.structures) delete s.tier;
+    storage.set(key, JSON.stringify(data));
+    const old = makeEngine(1, true);
+    try { assert.equal(old.defenseTier, 1); assert.equal(old.structures.length, 6); assert.equal(old.baseLevel(), 10); }
+    finally { old.destroy(); }
+  } finally { game.destroy(); storage.clear(); }
+});
+
+test("espinhos são atravessáveis, atingem apenas hostis e respeitam o tempo de recarga", () => {
+  storage.clear(); const game = makeEngine(32); simplifySimulation(game); game.escort.active = false;
+  game.tileAt = () => 2; game.nearbyNodes = () => []; game.referenceStructureAt = () => false;
+  game.chests = []; game.rescues = []; game.allies = [];
+  const trap = { type: "spike_trap", x: BASE.x, y: BASE.y, prodT: 0, hp: 200, maxHp: 200, open: false, rotation: 0, fenceStyle: "palisade", tier: 3 };
+  game.structures = [trap]; game.px = BASE.x - 60; game.py = BASE.y; game.monsters = [];
+  game.keys.add("d");
+  for (let i = 0; i < 80; i++) game.update(0.02, { mx: 0, my: 0 });
+  assert.ok(game.px > BASE.x + 30, "jogador deve poder cruzar os espinhos");
+  assert.equal(game.blockedByWall(trap.x, trap.y), false);
+  game.keys.clear(); game.px = trap.x; game.py = trap.y; game.hp = 100;
+  game.allies = [{ id: "rian", name: "Rian", color: "#fff", x: trap.x, y: trap.y, vx: 0, vy: 0, atkCd: 0, downT: 0, dir: 0 }];
+  game.spawnMonster(trap.x + 10, trap.y, "imp"); game.spawnMonster(trap.x - 10, trap.y, "imp"); game.spawnMonster(trap.x + 90, trap.y, "imp");
+  const [first, second, outside] = game.monsters;
+  first.hp = 100; second.hp = 5; outside.hp = 100;
+  game.updateStructures(0.01);
+  assert.equal(first.hp, 82); assert.ok(second.hp <= 0); assert.equal(outside.hp, 100);
+  assert.equal(game.kills, 1); assert.equal(game.hp, 100); assert.equal(game.allies[0].downT, 0);
+  game.updateStructures(0.7); game.updateStructures(0.69);
+  assert.equal(first.hp, 82, "não aplica dano novamente antes de 1,4 s");
+  game.updateStructures(0.02);
+  assert.equal(first.hp, 64); assert.equal(game.kills, 1, "um abate só é contado uma vez");
+  assert.doesNotThrow(() => game.drawStructure(trap, 0, 0, 0));
+  game.destroy(); storage.clear();
+});
+
+test("barricada bloqueia pessoas e projéteis, recebe ataque e pode ser reparada", () => {
+  storage.clear(); const game = makeEngine(19); game.skipCutscene(); game.escort.active = false;
+  game.updateSpawns = noop; game.animals = []; game.chests = []; game.rescues = []; game.allies = []; game.villagers = [];
+  game.tileAt = () => 2; game.nearbyNodes = () => []; game.referenceStructureAt = () => false;
+  const barrier = { type: "barricade", x: BASE.x, y: BASE.y, prodT: 0, hp: 1000, maxHp: 1000, open: false, rotation: 0, fenceStyle: "palisade", tier: 2 };
+  game.structures = [barrier]; game.monsters = []; game.px = BASE.x - 60; game.py = BASE.y; game.inv.wood = 100;
+  assert.equal(game.blockedByWall(barrier.x, barrier.y), true);
+  assert.equal(game.monsterSpawnClear(barrier.x, barrier.y, "imp"), false);
+  game.keys.add("d"); for (let i = 0; i < 80; i++) game.update(0.02, { mx: 0, my: 0 }); game.keys.clear();
+  assert.ok(game.px < barrier.x - 20, "jogador não atravessa");
+  game.projectiles = [{ kind: "ally", x: barrier.x - 40, y: barrier.y, vx: 400, vy: 0, t: 2, dmg: 7 }];
+  game.updateMonsters(0.1); assert.equal(game.projectiles.length, 0, "flechas param na barricada");
+  game.spawnMonster(barrier.x + 55, barrier.y, "imp");
+  const monster = game.monsters[0]; monster.state = "chase"; monster.speed = 65; monster.t = 99;
+  for (let i = 0; i < 150; i++) game.updateMonsters(0.02);
+  assert.ok(barrier.hp < barrier.maxHp, "invasores devem atacar a barricada");
+  const damaged = barrier.hp, wood = game.inv.wood;
+  game.monsters = []; game.px = barrier.x - 35; game.py = barrier.y;
+  game.tryInteract(); assert.ok(barrier.hp > damaged); assert.ok(game.inv.wood < wood);
+  assert.doesNotThrow(() => game.drawStructure(barrier, 0, 0, 0));
+  game.destroy(); storage.clear();
+});
+
+test("raio da maga é apenas um efeito visual do projétil, sem dano adicional", () => {
+  storage.clear(); const game = makeEngine(33); game.skipCutscene(); game.escort.active = false;
+  game.tileAt = () => 2; game.referenceStructureAt = () => false; game.chests = []; game.structures = []; game.monsters = [];
+  game.px = 1000; game.py = 1100; game.spawnMonster(1300, 1100, "imp");
+  const target = game.monsters[0]; target.hp = 100; target.speed = 0; target.state = "hurt"; target.t = 99;
+  game.projectiles = [{ kind: "magic", x: 1220, y: 1100, vx: 420, vy: 0, t: 2, dmg: 7 }];
+  game.updateMonsters(0.2);
+  assert.equal(target.hp, 93); assert.equal(game.magicEffects.length, 1);
+  game.updateParticles(0.6); assert.equal(game.magicEffects.length, 0); assert.equal(target.hp, 93);
+  target.x = 1300; target.y = 1100; target.vx = 0; target.vy = 0;
+  game.projectiles = [{ kind: "ally", x: 1220, y: 1100, vx: 420, vy: 0, t: 2, dmg: 7 }];
+  game.updateMonsters(0.2); assert.equal(target.hp, 86); assert.equal(game.magicEffects.length, 0);
+  game.destroy(); storage.clear();
+});

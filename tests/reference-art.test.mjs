@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import sharp from "sharp";
-import { mattePreview, matteObject, keepMainSilhouette, makeReferenceObject, makeMage } from "../scripts/reference-art-core.mjs";
+import { mattePreview, matteObject, keepMainSilhouette, makeReferenceObject, makeEffectAtlas, makeMage } from "../scripts/reference-art-core.mjs";
 
 const background = [189, 200, 192];
 const rgb = (width, height, color = background) => Buffer.from(Array.from({ length: width * height }, () => color).flat());
@@ -126,4 +126,50 @@ test("magas são empacotadas com quadros de descanso/caminhada nas quatro direç
     assert.equal(alpha(data, info.width, 5 * 96 + 48, (row + 4) * 96 + 30), 255, `caminhada ${row}`);
   }
   assert.equal(alpha(data, info.width, 4 * 96 + 48, 3 * 96 + 30), 0, "não inventar quadros extras de costas");
+});
+
+test("quadros de efeitos mantêm a ordem, cores e transparência sem inventar imagens", async () => {
+  const beige = [253, 224, 184], width = 16, height = 16;
+  const pixels = rgb(width, height, beige);
+  const colors = [[45, 65, 85], [120, 45, 35], [40, 100, 55], [90, 60, 120]];
+  for (let row = 0; row < 2; row++) for (let col = 0; col < 2; col++) {
+    for (let y = 2; y <= 5; y++) for (let x = 2; x <= 5; x++) put(pixels, width, col * 8 + x, row * 8 + y, colors[row * 2 + col]);
+  }
+  const source = await sharp(pixels, { raw: { width, height, channels: 3 } }).png().toBuffer();
+  const atlas = await makeEffectAtlas(source, [[[0, 0, 8, 8], [8, 0, 8, 8]], [[0, 8, 8, 8], [8, 8, 8, 8]]], 8, 8, beige);
+  const { data, info } = await sharp(atlas).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  assert.deepEqual([info.width, info.height], [16, 16]);
+  for (let row = 0; row < 2; row++) for (let col = 0; col < 2; col++) {
+    const start = ((row * 8 + 3) * width + col * 8 + 3) * 4;
+    assert.deepEqual([...data.subarray(start, start + 4)], [...colors[row * 2 + col], 255]);
+    assert.equal(alpha(data, width, col * 8, row * 8), 0, "fundo da prévia deve desaparecer");
+  }
+});
+
+test("casas e barricadas proporcionais ficam centradas e apoiadas na base do recorte", async () => {
+  const beige = [253, 224, 184], pixels = rgb(4, 8, beige);
+  for (let y = 0; y < 8; y++) for (let x = 0; x < 4; x++) put(pixels, 4, x, y, [50, 75, 95]);
+  const source = await sharp(pixels, { raw: { width: 4, height: 8, channels: 3 } }).png().toBuffer();
+  const object = await makeReferenceObject(source, { left: 0, top: 0, width: 4, height: 8, targetWidth: 8, targetHeight: 8, background: beige, contain: true });
+  const { data } = await sharp(object).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  assert.equal(alpha(data, 8, 0, 7), 0);
+  assert.equal(alpha(data, 8, 3, 7), 255);
+  assert.equal(alpha(data, 8, 7, 7), 0);
+});
+
+test("importador rejeita imagens novas incorretas antes de substituir a instalação", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "ilha-novas-referencias-"));
+  try {
+    const input = path.join(dir, "input"), output = path.join(dir, "output");
+    mkdirSync(input); mkdirSync(output); writeFileSync(path.join(output, "manifest.json"), "sentinela");
+    for (const id of [71, 72, 75, 76, 77, 83]) {
+      const file = path.join(input, `image-${id}.png`);
+      writeFileSync(file, "prévia errada");
+      const result = spawnSync(process.execPath, ["scripts/import-references.mjs", input, "--output", output], { encoding: "utf8" });
+      assert.notEqual(result.status, 0, `imagem ${id} deve ser verificada`);
+      assert.match(result.stderr, /não corresponde/);
+      assert.equal(readFileSync(path.join(output, "manifest.json"), "utf8"), "sentinela");
+      rmSync(file);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

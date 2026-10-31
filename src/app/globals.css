@@ -242,6 +242,9 @@ button.journal-slot:hover{background:#e0c185;border-color:#99733e}
 .journal-button.muted{background:#ac936d;border-color:#856443;box-shadow:inset 0 2px #c4ad88,0 3px #745333;color:#f5e8ca;text-shadow:1px 1px #886743}
 .recipe-detail{padding:18px 21px}
 .recipe-art{display:flex;justify-content:center;align-items:center;min-height:148px;position:relative;margin-top:8px;background:radial-gradient(ellipse at 50% 80%,#a47b4630,transparent 60%)}
+.recipe-art.defense-recipe-art{min-height:116px}
+.defense-tier-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px}
+.defense-tier-grid .journal-button.small{min-width:0;padding:7px 2px;white-space:nowrap}
 .journal-costs{display:grid;grid-template-columns:1fr;gap:3px}
 .journal-row{width:100%;display:flex;align-items:center;gap:9px;text-align:left;padding:8px 7px;border:1px solid transparent;border-bottom-color:#b08c4f44;color:#725132;cursor:pointer;font-size:11px;line-height:1.3;min-height:46px}
 .journal-row small{display:block;font-size:9px;opacity:.65;margin-top:2px}
@@ -261,4 +264,4 @@ button.journal-slot:hover{background:#e0c185;border-color:#99733e}
 
 .outcome-card{max-width:480px}.outcome-card .journal-heading{justify-content:center;padding:12px}
 /* Keep journal tabs inside the smallest phone width. */
-@media(max-width:470px){.journal-tabs button{min-width:0;font-size:12px;padding:8px 2px}.journal-tabs button span{min-width:0;overflow-wrap:anywhere}}
+@media(max-width:470px){.journal-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));padding-bottom:6px}.journal-tabs button{min-width:0;min-height:32px;font-size:12px;padding:6px 3px;border-bottom:2px solid #80603d}.journal-tabs button.active{border-color:#29543e}.journal-tabs button span{white-space:nowrap}.defense-tier-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.defense-tier-grid .journal-button.small{min-height:38px;font-size:13px}}
