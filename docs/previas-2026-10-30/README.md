@@ -11,4 +11,4 @@ Capturas do jogo atual feitas no Chromium automatizado. Os ícones de emoji pode
 
 Num teste isolado neste ambiente, a cena de floresta em qualidade Leve teve intervalo médio de 6,25 ms por quadro no Chromium headless (aproximadamente 160 FPS). Isso não garante a mesma taxa em outro aparelho, monitor ou navegador.
 
-As novas referências de arte **ainda não foram integradas**; aguardam os arquivos originais. Os arqueiros das referências foram definidos como futuros aliados.
+Estas prévias mostram a versão anterior à integração opcional de parte das artes CraftPix. Os arqueiros das referências ainda serão integrados como aliados; as demais imagens já enviadas servirão como referência para os itens e cenários pendentes.
