@@ -573,7 +573,7 @@ export default function GameClient() {
       )}
 
       {panel !== "none" && snap && (
-        <FieldJournal panel={panel} snap={snap}
+        <FieldJournal panel={panel} snap={snap} craftPix={settings.craftPix}
           onClose={() => engineRef.current?.closePanel()}
           onPanel={(next) => engineRef.current?.openPanel(next)}
           onBuild={(id) => engineRef.current?.build(id as never)}
@@ -799,6 +799,7 @@ function SettingsModal({ settings, onChange, onClose, audioOn }: { settings: Gam
             ))}
           </div>
           <Toggle label="Movimento das árvores" desc="Balanço suave das copas; desative para reduzir movimento" on={settings.treeMotion} onChange={(v) => onChange({ treeMotion: v })} />
+          <Toggle label="Artes CraftPix" desc="Usa os pacotes importados quando disponíveis; desative para voltar ao visual anterior" on={settings.craftPix} onChange={(v) => onChange({ craftPix: v })} />
         </section>
 
         <section className="border-t border-slate-800 py-2">

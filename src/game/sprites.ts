@@ -6,6 +6,7 @@
 
 import { CHARACTER_WIDTH, CHARACTER_HEIGHT, CHARACTER_HEAD_HEIGHT, makeCharacterSprite } from "./character-art";
 import { EXPANSION_SPRITES } from "./expansion-art";
+import { craftOrcThumbnail, drawCraftHero, hasCraftHero, hasCraftOrcs } from "./craftpix";
 
 export const SCALE = 3;
 
@@ -606,7 +607,11 @@ export function getBaked(key: string, sp: PixelSprite, flip = false, scale = SCA
   return cv;
 }
 
-export interface DrawOpts { flip?: boolean; alpha?: number; tint?: string | null; scale?: number; dy?: number; dx?: number; action?: "walk" | "run" | "attack"; carryTool?: "axe" | "pick" | "sword"; toolLevel?: number; }
+export interface DrawOpts {
+  flip?: boolean; alpha?: number; tint?: string | null; scale?: number; dy?: number; dx?: number;
+  action?: "walk" | "run" | "attack"; carryTool?: "axe" | "pick" | "sword"; toolLevel?: number;
+  craftPix?: boolean; heroLevel?: number; attackProgress?: number;
+}
 
 /** Draw a named world sprite anchored (default bottom-center) at world-screen x,y. */
 export function drawSprite(ctx: CanvasRenderingContext2D, name: string, x: number, y: number, o: DrawOpts = {}) {
@@ -698,14 +703,14 @@ export function viewFromAngle(dir: number): { view: View; flip: boolean } {
 export function drawCharacter(ctx: CanvasRenderingContext2D, lookId: string, x: number, y: number, dir: number, walking: boolean, cycle: number, o: DrawOpts = {}) {
   const { view, flip } = viewFromAngle(dir);
   const action = o.action ?? (walking ? "walk" : "idle");
+  const scale = o.scale ?? SCALE;
+  const imported = lookId === "player" && o.craftPix === true && hasCraftHero();
+  const originalSword = imported && o.carryTool === "sword" && (o.toolLevel ?? 1) <= 3;
   const phase = Math.floor(cycle * 1.3) & 3;
   const step = action === "attack" ? 5 : action === "run" ? (phase < 2 ? 3 : 4) : walking ? [1, 0, 2, 0][phase] : 0;
-  const sp = charSprite(lookId, view, step);
-  const scale = o.scale ?? SCALE;
-  const cv = getBaked(`char:${lookId}:${view}:${step}`, sp, flip, scale, o.tint ?? null);
-  const bob = action === "run" ? -Math.abs(Math.sin(cycle * 2.6)) * scale * 1.5 : walking ? -Math.abs(Math.sin(cycle * 1.3)) * scale * 0.65 : action === "attack" ? -scale * 0.35 : 0;
-  // Only a cached canvas is drawn per frame; subtle rotation is GPU-friendly.
-  const tilt = action === "run" ? Math.sin(cycle * 1.3) * 0.065 : walking ? Math.sin(cycle * 1.3) * 0.028 : action === "attack" ? -0.045 : 0;
+  const bob = imported ? 0 : action === "run" ? -Math.abs(Math.sin(cycle * 2.6)) * scale * 1.5 : walking ? -Math.abs(Math.sin(cycle * 1.3)) * scale * 0.65 : action === "attack" ? -scale * 0.35 : 0;
+  // Imported art already contains motion; the procedural sprite uses a subtle tilt.
+  const tilt = imported ? 0 : action === "run" ? Math.sin(cycle * 1.3) * 0.065 : walking ? Math.sin(cycle * 1.3) * 0.028 : action === "attack" ? -0.045 : 0;
   ctx.save();
   ctx.translate(Math.round(x), Math.round(y));
   if (tilt) ctx.rotate(tilt);
@@ -733,9 +738,15 @@ export function drawCharacter(ctx: CanvasRenderingContext2D, lookId: string, x: 
     }
     ctx.restore();
   };
-  if (view !== "up") drawCarry();
-  ctx.drawImage(cv, Math.round(-(CHARACTER_WIDTH / 2 + 1) * scale), Math.round(-(CHARACTER_HEIGHT + 1) * scale + bob));
-  if (view === "up") drawCarry();
+  if (view !== "up" && !originalSword) drawCarry();
+  if (imported) {
+    drawCraftHero(ctx, view, flip, o.heroLevel ?? 1, action, cycle, o.attackProgress ?? 0, scale, originalSword);
+  } else {
+    const sp = charSprite(lookId, view, step);
+    const cv = getBaked(`char:${lookId}:${view}:${step}`, sp, flip, scale, o.tint ?? null);
+    ctx.drawImage(cv, Math.round(-(CHARACTER_WIDTH / 2 + 1) * scale), Math.round(-(CHARACTER_HEIGHT + 1) * scale + bob));
+  }
+  if (view === "up" && !originalSword) drawCarry();
   ctx.restore();
 }
 
@@ -781,17 +792,26 @@ export function drawToolSprite(ctx: CanvasRenderingContext2D, tool: "axe" | "pic
 
 /** Cached thumbnails shared by inventory, workshop and bestiary panels. */
 const thumbnailCache = new Map<string, string>();
-export function getSpriteUrl(name: string): string {
-  const hit = thumbnailCache.get(name);
+export function getSpriteUrl(name: string, useCraftPix = true): string {
+  const imported = name === "orc" && useCraftPix && hasCraftOrcs();
+  const key = imported ? "craftpix:orc" : name;
+  const hit = thumbnailCache.get(key);
   if (hit) return hit;
-  const sprite = S[name];
+  if (imported) {
+    const url = craftOrcThumbnail();
+    if (url) thumbnailCache.set(key, url);
+    return url;
+  }
+  const fallback = name === "orc" ? "treant" : name;
+  const sprite = S[fallback];
   if (!sprite) return "";
-  const url = getBaked(name, sprite, false, 3).toDataURL();
-  thumbnailCache.set(name, url);
+  const url = getBaked(fallback, sprite, false, 3).toDataURL();
+  thumbnailCache.set(key, url);
   return url;
 }
-export function getCharacterUrl(id = "player", view: View = "down", tool: "axe" | "pick" | "sword" = "axe"): string {
-  const key = `portrait-body:${id}:${view}:${tool}`;
+export function getCharacterUrl(id = "player", view: View = "down", tool: "axe" | "pick" | "sword" = "axe", useCraftPix = true, level = 1): string {
+  const imported = id === "player" && useCraftPix && hasCraftHero();
+  const key = `portrait-body:${id}:${view}:${tool}:${imported ? `craft:${level}` : "original"}`;
   const hit = thumbnailCache.get(key);
   if (hit) return hit;
   const cv = document.createElement("canvas");
@@ -799,7 +819,7 @@ export function getCharacterUrl(id = "player", view: View = "down", tool: "axe" 
   const ctx = cv.getContext("2d");
   if (ctx) {
     ctx.imageSmoothingEnabled = false;
-    drawCharacter(ctx, id, 48, 98, view === "up" ? -Math.PI / 2 : view === "down" ? Math.PI / 2 : 0, false, 0, { carryTool: tool });
+    drawCharacter(ctx, id, 48, 98, view === "up" ? -Math.PI / 2 : view === "down" ? Math.PI / 2 : 0, false, 0, { carryTool: tool, toolLevel: tool === "sword" ? level : 1, craftPix: imported, heroLevel: level });
   }
   const url = cv.toDataURL();
   thumbnailCache.set(key, url);

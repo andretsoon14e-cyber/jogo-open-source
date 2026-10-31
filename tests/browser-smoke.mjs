@@ -20,6 +20,9 @@ function observePage(page) {
   });
 }
 const context = await browser.newContext({ viewport: { width: 1366, height: 820 } });
+if (process.env.WITHOUT_CRAFTPIX === "1") {
+  await context.route("**/craftpix/**", (route) => route.fulfill({ status: 404, body: "" }));
+}
 const page = await context.newPage();
 observePage(page);
 await page.addInitScript(() => {
@@ -68,13 +71,17 @@ try {
   await windToggle.click();
   assert.equal(await windToggle.getAttribute("aria-pressed"), "false");
   await windToggle.click();
+  const artToggle = config.getByRole("button", { name: /Artes CraftPix/ });
+  await artToggle.click();
+  assert.equal(await artToggle.getAttribute("aria-pressed"), "false");
+  await artToggle.click();
   const soundsToggle = config.getByRole("button", { name: /Sons das criaturas/ });
   await soundsToggle.click();
   assert.equal(await soundsToggle.getAttribute("aria-pressed"), "false");
   await soundsToggle.click();
   await page.waitForFunction(() => {
     const settings = JSON.parse(localStorage.getItem("umbra-settings-v1") ?? "{}");
-    return settings.fpsCap === 0 && settings.treeMotion === true && settings.creatureSounds === true;
+    return settings.fpsCap === 0 && settings.treeMotion === true && settings.creatureSounds === true && settings.craftPix === true;
   });
   await page.screenshot({ path: screenshotPath("configuracoes-audio") });
   await config.getByRole("button", { name: "Pronto" }).click();
@@ -117,6 +124,14 @@ try {
   assert.equal(await dialog.getByRole("button", { name: "Fabricar & equipar" }).count(), 1, "casaco não foi equipado");
   await dialog.getByRole("button", { name: "Registros", exact: true }).click();
   dialog = page.getByRole("dialog", { name: "O Diário da Ilha" });
+  if (process.env.EXPECT_CRAFTPIX === "1") {
+    await dialog.getByRole("button", { name: /Orc Guerreiro/ }).click();
+    await dialog.getByRole("heading", { name: "Orc Guerreiro" }).waitFor();
+    await page.screenshot({ path: screenshotPath("orc-bestiario") });
+  }
+  if (process.env.WITHOUT_CRAFTPIX === "1") {
+    assert.equal(await dialog.getByRole("button", { name: /Orc Guerreiro/ }).count(), 0, "orc opcional apareceu sem o pacote instalado");
+  }
   await dialog.getByRole("button", { name: "Arauto das Brasas" }).click();
   await dialog.getByRole("heading", { name: "Arauto das Brasas" }).waitFor();
   await page.screenshot({ path: screenshotPath("bestiary") });
@@ -156,6 +171,7 @@ try {
   await page.screenshot({ path: screenshotPath("lizard-temple") });
 
   const mobile = await browser.newContext({ viewport: { width: 320, height: 844 }, isMobile: true, hasTouch: true });
+  if (process.env.WITHOUT_CRAFTPIX === "1") await mobile.route("**/craftpix/**", (route) => route.fulfill({ status: 404, body: "" }));
   const phone = await mobile.newPage();
   observePage(phone);
   await phone.addInitScript((save) => {

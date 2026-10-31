@@ -561,3 +561,49 @@ test("novos monstros entram no bestiário e usam sprites válidos", () => {
   }
   game.destroy();
 });
+
+test("fogueiras geram partículas pelo tempo da simulação, respeitam o limite e não emitem ao desenhar", () => {
+  const game = makeEngine(32);
+  const random = Math.random;
+  try {
+    game.skipCutscene();
+    const fire = { type: "campfire", x: game.px, y: game.py, hp: 100, maxHp: 100, prodT: 0, open: false, rotation: 0, fenceStyle: "palisade" };
+    game.structures = [fire]; game.centerCamera();
+    Math.random = () => 0.1;
+    for (let i = 0; i < 100; i++) game.drawStructure(fire, -game.camX, -game.camY, i / 120);
+    assert.equal(game.particles.length, 0, "renderizar não deve criar partículas");
+    game.updateStructures(1 / 240);
+    assert.equal(game.particles.length, 0, "a probabilidade por quadro deve diminuir em FPS alto");
+    game.updateStructures(1 / 60);
+    assert.equal(game.particles.length, 1);
+    game.particleCap = 1;
+    game.updateStructures(1 / 30);
+    assert.equal(game.particles.length, 1, "o limite de partículas deve ser respeitado");
+    game.particles.length = 0;
+    game.state = "paused"; game.frame(1 / 60);
+    assert.equal(game.particles.length, 0, "fogueiras não devem emitir durante a pausa");
+    fire.x = game.camX + game.viewW + 500;
+    game.updateStructures(1 / 30);
+    assert.equal(game.particles.length, 0, "fogueiras fora da tela não devem emitir");
+  } finally { Math.random = random; game.destroy(); }
+});
+
+test("partículas da introdução têm a mesma taxa em 30, 60, 120 e 240 FPS", () => {
+  const emitted = [];
+  for (const fps of [30, 60, 120, 240]) {
+    const game = makeEngine(33);
+    try {
+      game.cutPhase = 1; game.cutT = 5;
+      let births = 0;
+      const particles = game.particles;
+      const push = particles.push.bind(particles);
+      particles.push = (...values) => { births += values.length; return push(...values); };
+      for (let i = 0; i < fps / 2; i++) game.renderCutscene(1 / fps);
+      emitted.push(births);
+      assert.ok(game.particles.length <= game.particleCap);
+      game.skipCutscene();
+      assert.equal(game.particles.length, 0, "partículas da introdução não devem aparecer no mundo");
+    } finally { game.destroy(); }
+  }
+  assert.deepEqual(emitted, [90, 90, 90, 90]);
+});

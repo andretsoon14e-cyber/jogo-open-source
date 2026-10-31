@@ -16,6 +16,7 @@ export interface GameSettings {
   quality: Quality;
   treeMotion: boolean;
   creatureSounds: boolean;
+  craftPix: boolean;
 }
 
 export const DEFAULT_SETTINGS: GameSettings = {
@@ -32,6 +33,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   quality: "auto",
   treeMotion: true,
   creatureSounds: true,
+  craftPix: true,
 };
 
 export const SETTINGS_KEY = "umbra-settings-v1";

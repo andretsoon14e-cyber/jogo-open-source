@@ -3,7 +3,8 @@
    ========================================================= */
 
 import { drawSign, drawFlag } from "@/game/art";
-import { drawSprite, drawSwaySprite, drawCharacter, drawToolSprite, spriteSize, getBaked, SPRITES, SCALE } from "@/game/sprites";
+import { drawSprite, drawSwaySprite, drawCharacter, drawToolSprite, spriteSize, getBaked, SPRITES, SCALE, viewFromAngle } from "@/game/sprites";
+import { drawCraftOrc, drawCraftPlant, hasCraftHero, hasCraftOrcs, loadCraftPix } from "@/game/craftpix";
 import { Terrain, drawWaterAnim } from "@/game/terrain";
 import { MusicManager } from "@/game/music";
 import { Sfx } from "@/game/sfx";
@@ -157,7 +158,7 @@ export const DIFF_LABEL: Record<Difficulty, string> = {
 type NodeType = "tree" | "pine" | "rock" | "ore" | "crystal" | "bush" | "berry";
 interface RNode { type: NodeType; x: number; y: number; hp: number; maxHp: number; respawn: number; wob: number; skin?: string; }
 interface Drop { res: ResKey; x: number; y: number; vx: number; vy: number; n: number; t: number; }
-type MonType = "imp" | "crawler" | "stalker" | "brute" | "hulk" | "spitter" | "bat" | "slime" | "demon" | "lizard";
+type MonType = "imp" | "crawler" | "stalker" | "brute" | "hulk" | "spitter" | "bat" | "slime" | "demon" | "lizard" | "orc";
 interface Monster {
   type: MonType; x: number; y: number; vx: number; vy: number;
   hp: number; maxHp: number; dmg: number; speed: number; r: number;
@@ -348,6 +349,7 @@ export class Engine {
 
   // timers
   lastT = 0; acc = 0; snapT = 0; saveT = 0; mpT = 0; rafId = 0;
+  cutParticleAcc = 0;
   prodToastT = 0;
 
   // minimap
@@ -359,6 +361,10 @@ export class Engine {
   hudCv: HTMLCanvasElement | null = null;
   hudAt = -1000;
   hudHp = -1;
+  // Fence rails are static between building changes. Cache each short link
+  // instead of issuing hundreds of identical strokes at every frame.
+  fenceLinks = new Map<string, { canvas: HTMLCanvasElement; left: number; top: number }>();
+  fencePosts = new Map<string, { canvas: HTMLCanvasElement; left: number; top: number }>();
 
   interactHint = "";
   nearForge = false; nearBench = false;
@@ -371,6 +377,8 @@ export class Engine {
     this.ctx = ctx;
     this.diff = DIFF[opts.difficulty];
     this.settings = { ...DEFAULT_SETTINGS, ...(opts.settings ?? {}) };
+    // Optional assets load asynchronously; procedural art works immediately.
+    if (this.settings.craftPix) void loadCraftPix();
     this.sfx.vol = Math.max(0, Math.min(1, this.settings.sfxVol)) * 0.5;
     this.music = opts.music ?? null;
     if (this.music) {
@@ -940,6 +948,7 @@ export class Engine {
   applySettings(next: GameSettings) {
     const resized = this.settings.quality !== next.quality;
     this.settings = { ...next };
+    if (next.craftPix) void loadCraftPix();
     this.applyQuality();
     if (resized) this.resize();
     this.music?.setEnabled(next.music);
@@ -1035,6 +1044,9 @@ export class Engine {
   skipCutscene() { if (this.state === "cutscene") this.endCutscene(); }
   endCutscene() {
     this.state = "playing";
+    // The intro uses screen-space particles; don't carry them into the world.
+    this.particles.length = 0;
+    this.cutParticleAcc = 0;
     this.time = MORNING_LEN - 200;
     this.ensurePlayablePosition();
     this.centerCamera();
@@ -1797,6 +1809,7 @@ export class Engine {
       case "slime": return { hp: 36 * h, dmg: 12 * dm, speed: 104, r: 13 };
       case "demon": return { hp: 105 * h, dmg: 24 * dm, speed: 183, r: 17 };
       case "lizard": return { hp: 72 * h, dmg: 18 * dm, speed: 178, r: 15 };
+      case "orc": return { hp: 90 * h, dmg: 20 * dm, speed: 126, r: 16 };
     }
   }
   spawnMonster(x: number, y: number, type: MonType) {
@@ -1820,6 +1833,7 @@ export class Engine {
       case "slime": return "iceslime";
       case "demon": return "emberdemon";
       case "lizard": return "lizardman";
+      case "orc": return "orc";
     }
   }
   monsterTypeForZone(x: number, y: number): MonType {
@@ -1832,6 +1846,8 @@ export class Engine {
     if (t === T_RUIN || t === T_NECRO) return roll < 0.42 ? "bat" : roll < 0.72 ? "spitter" : "demon";
     if (t === T_DARK && roll > 0.86) return "demon";
     if (night && roll > 0.9) return "bat";
+    // The new creature only enters spawn tables when its optional art is ready.
+    if (this.settings.craftPix && hasCraftOrcs() && roll >= 0.75 && roll < 0.86) return "orc";
     const horror = t === T_CAVE || t === T_ROCK || t === T_DARK;
     const bigChance = Math.min(0.24, 0.04 + this.day * 0.012) * (horror ? 1.6 : 1);
     if (roll < bigChance * 0.45) return "hulk";
@@ -2224,6 +2240,13 @@ export class Engine {
         if (dist2(s.x, s.y, this.px, this.py) < 110 * 110 && this.hp < this.maxHp) {
           this.hp = Math.min(this.maxHp, this.hp + 2.2 * dt);
         }
+        // Emit in simulation time, not during drawing: high-refresh displays
+        // must not create proportionally more particles (or emit while paused).
+        const visible = s.x >= this.camX - 100 && s.x <= this.camX + this.viewW + 100 &&
+          s.y >= this.camY - 100 && s.y <= this.camY + this.viewH + 100;
+        if (visible && this.particles.length < this.particleCap && Math.random() < dt * 7.8) {
+          this.particles.push({ x: s.x + (Math.random() - 0.5) * 10, y: s.y - 22, vx: (Math.random() - 0.5) * 20, vy: -55, t: 0, max: 0.8, c: Math.random() < 0.5 ? "#ffb347" : "#ff7a2a", s: 3, grav: -50 });
+        }
       }
       if (isDay && (s.type === "wall" || s.type === "gate") && s.fenceStyle === "hedge" && s.hp < s.maxHp) {
         s.hp = Math.min(s.maxHp, s.hp + dt * 0.45);
@@ -2370,7 +2393,7 @@ export class Engine {
       else if (this.cutPhase === 2 && this.cutT > 8.6) { this.cutPhase = 3; this.dialogueIdx = 0; }
       this.flashWhite = Math.max(0, this.flashWhite - dt * 1.2);
       this.shake = Math.max(0, this.shake - dt * 30);
-      this.renderCutscene();
+      this.renderCutscene(dt);
       return;
     }
 
@@ -2851,7 +2874,15 @@ export class Engine {
           this.hudAt = hudNow; this.hudHp = Math.ceil(this.hp);
         }
       }
-      c.drawImage(this.hudCv,0,0,this.viewW,this.viewH);
+      // The cached HUD only occupies the top and bottom of the screen. Avoid
+      // blending its large transparent center onto the world every frame.
+      const top = Math.min(104, this.viewH);
+      const bottom = Math.max(top, this.viewH - (this.viewW < 700 ? 142 : 190));
+      c.drawImage(this.hudCv, 0, 0, this.viewW, top, 0, 0, this.viewW, top);
+      if (bottom < this.viewH) {
+        const height = this.viewH - bottom;
+        c.drawImage(this.hudCv, 0, bottom, this.viewW, height, 0, bottom, this.viewW, height);
+      }
     } else this.renderHud();
     this.drawBasePointer();
     if (this.mapOpen) this.renderAtlas();
@@ -2937,12 +2968,19 @@ export class Engine {
       const options = { flip: (Math.floor(n.x) & 1) === 1, alpha: behind ? 0.45 : 1 };
       const breeze = this.settings.treeMotion ? Math.sin(tnow * 0.9 + n.x * 0.01 + n.y * 0.005) * 0.035 : 0;
       const bend = breeze + wob * 0.012;
-      // The trunk stays planted; the few bend frames are cached once per tree.
-      if (bend) drawSwaySprite(c, name, x, y + 4, bend, options);
-      else drawSprite(c, name, x, y + 4, options);
+      // Only replace plants with a matching supplied design; preserve snowy,
+      // dark, cherry and pine variants until their originals are available.
+      const original = name === "tree" ? "tree" : name === "tree_fruit" ? "fruit" : name === "tree_palm" ? "palm" : null;
+      const imported = this.settings.craftPix && original && drawCraftPlant(c, original, x, y + 4, bend, options.flip, options.alpha);
+      if (!imported) {
+        // The trunk stays planted; the few bend frames are cached once per tree.
+        if (bend) drawSwaySprite(c, name, x, y + 4, bend, options);
+        else drawSprite(c, name, x, y + 4, options);
+      }
     } else {
       this.drawShadow(x, y + 3, 14);
-      drawSprite(c, n.skin ?? n.type, x, y + 4, { dx: Math.round(wob) });
+      const imported = n.type === "bush" && !n.skin && this.settings.craftPix && drawCraftPlant(c, "bush", x + Math.round(wob), y + 4);
+      if (!imported) drawSprite(c, n.skin ?? n.type, x, y + 4, { dx: Math.round(wob) });
     }
     if (hpr < 1) {
       const top = n.type === "tree" || n.type === "pine" ? y - 86 : y - 42;
@@ -3034,7 +3072,30 @@ export class Engine {
     const c = this.ctx;
     const x = s.x + ox, y = s.y + oy;
     if(s.type==="wall") {
-      this.drawFencePost(s.fenceStyle,x,y+5,s.rotation);
+      if (this.dpr !== 1) this.drawFencePost(s.fenceStyle, x, y + 5, s.rotation);
+      else {
+        const key = `${s.fenceStyle}:${s.x}:${s.y}:${s.rotation}`;
+        let cached = this.fencePosts.get(key);
+        if (!cached) {
+          const left = Math.floor(s.x - 30), top = Math.floor(s.y - 40);
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.ceil(s.x + 30) - left; canvas.height = Math.ceil(s.y + 30) - top;
+          const painter = canvas.getContext("2d");
+          if (painter) {
+            this.ctx = painter;
+            try { this.drawFencePost(s.fenceStyle, s.x - left, s.y + 5 - top, s.rotation); }
+            finally { this.ctx = c; }
+            cached = { canvas, left, top };
+            if (this.fencePosts.size >= 128) {
+              const oldest = this.fencePosts.keys().next().value;
+              if (oldest !== undefined) this.fencePosts.delete(oldest);
+            }
+            this.fencePosts.set(key, cached);
+          }
+        }
+        if (cached) c.drawImage(cached.canvas, cached.left + ox, cached.top + oy);
+        else this.drawFencePost(s.fenceStyle, x, y + 5, s.rotation);
+      }
       if(s.hp<s.maxHp) this.drawStructureHealth(s,x,y-35);
       return;
     }
@@ -3047,9 +3108,11 @@ export class Engine {
     if (s.type === "campfire") name = Math.floor(tnow * 8) % 2 ? "campfire1" : "campfire0";
     const sz = spriteSize(name);
     this.drawShadow(x, y + 4, Math.max(14, sz.w * 0.42));
-    c.save();c.translate(x,y+6);c.rotate(s.rotation);drawSprite(c,name,0,0);c.restore();
+    c.save(); c.translate(x, y + 6); c.rotate(s.rotation);
+    drawSprite(c, name, 0, 0);
+    if (s.type === "farm" && this.settings.craftPix) drawCraftPlant(c, "crate", 52, 4);
+    c.restore();
     if (s.type === "campfire") {
-      if (Math.random() < 0.13) this.particles.push({ x: s.x + (Math.random() - 0.5) * 10, y: s.y - 22, vx: (Math.random() - 0.5) * 20, vy: -55, t: 0, max: 0.8, c: Math.random() < 0.5 ? "#ffb347" : "#ff7a2a", s: 3, grav: -50 });
       const g = 0.35 + Math.sin(tnow * 9) * 0.08;c.fillStyle = `rgba(255,150,60,${g * 0.35})`;c.beginPath(); c.arc(x, y - 10, 40, 0, Math.PI * 2); c.fill();
     }
     if (s.type === "forge") {const g = Math.sin(tnow * 7) * 0.5 + 0.5;c.fillStyle = `rgba(255,120,40,${0.15 + g * 0.15})`;c.beginPath(); c.arc(x, y - 16, 30, 0, Math.PI * 2); c.fill();}
@@ -3104,7 +3167,11 @@ export class Engine {
 
   drawHumanoid(x: number, y: number, lookId: string, dir: number, walking: boolean, cycle: number, alpha = 1, action?: "walk" | "run" | "attack", carryTool?: ToolKey, toolLevel = 1) {
     this.drawShadow(x, y + 2, 13);
-    drawCharacter(this.ctx, lookId, x, y + 2, dir, walking, cycle, { alpha, action, carryTool, toolLevel });
+    drawCharacter(this.ctx, lookId, x, y + 2, dir, walking, cycle, {
+      alpha, action, carryTool, toolLevel,
+      craftPix: this.settings.craftPix, heroLevel: this.tools.sword,
+      attackProgress: 1 - this.attackT / 0.22,
+    });
   }
 
   drawName(name: string, x: number, y: number, color: string) {
@@ -3124,14 +3191,15 @@ export class Engine {
     }
     const attacking = this.attackT > 0;
     const action = attacking ? "attack" : this.running_ && this.moving ? "run" : this.moving ? "walk" : undefined;
-    const carry = !attacking ? this.heldTool : undefined;
-    this.drawHumanoid(x, y, "player", this.pdir, this.moving, this.walkCycle, blink ? 0.45 : 1, action, carry, this.tools[this.heldTool]);
     const tool = attacking ? this.swingTool : this.heldTool;
     const level = this.tools[tool];
+    // The imported sword includes its own swing; other tools keep the old overlay.
+    this.drawHumanoid(x, y, "player", this.pdir, this.moving, this.walkCycle, blink ? 0.45 : 1, action, tool, level);
+    const originalSword = tool === "sword" && level <= 3 && this.settings.craftPix && hasCraftHero();
     const handX = x + Math.cos(this.pdir) * (attacking ? 19 : 13) + (Math.cos(this.pdir) >= 0 ? 4 : -4);
     const stride = this.moving ? Math.sin(this.walkCycle * 1.3) * (this.running_ ? 4 : 2) : 0;
     const handY = y - 24 + (attacking ? -3 : stride);
-    if (attacking) {
+    if (attacking && !originalSword) {
       const prog = 1 - this.attackT / 0.22;
       const eased = 1 - Math.pow(1 - clamp(prog, 0, 1), 2);
       const a = this.pdir - 1.12 + eased * 2.24;
@@ -3153,8 +3221,10 @@ export class Engine {
     const moving = m.state === "chase" || m.state === "attack";
     const cadence = m.type === "imp" ? 16 : m.type === "hulk" ? 5 : 9;
     const phase = tnow * cadence + m.home.x * 0.017;
-    const bob = floating ? Math.sin(phase * 0.38) * 5 - 7 : moving ? -Math.abs(Math.sin(phase)) * (m.type === "hulk" ? 2 : 4) : 0;
+    const imported = m.type === "orc" && this.settings.craftPix && hasCraftOrcs();
+    const bob = imported ? 0 : floating ? Math.sin(phase * 0.38) * 5 - 7 : moving ? -Math.abs(Math.sin(phase)) * (m.type === "hulk" ? 2 : 4) : 0;
     const flip = Math.cos(m.dir) < 0;
+    const sprite = m.skin === "orc" ? "treant" : m.skin;
     this.drawShadow(x, y + 4, m.r + 2);
     if (windup) {
       const pulse = 0.5 + 0.5 * Math.sin(tnow * 22);
@@ -3164,13 +3234,25 @@ export class Engine {
     }
     c.save();
     c.translate(x, y + 4);
-    if (windup) c.scale(1.18, 0.84);
-    else if (m.state === "attack") c.scale(0.92, 1.15);
-    else if (m.state === "hurt") c.rotate(Math.sin(phase) * 0.085);
-    else if (moving && !floating) c.rotate(Math.sin(phase) * (m.type === "hulk" ? 0.025 : 0.045));
-    drawSprite(c, m.skin, 0, 0, { flip, dy: bob, alpha: floating ? 0.9 : 1 });
-    if (flash) drawSprite(c, m.skin, 0, 0, { flip, dy: bob, tint: "#ffffff", alpha: 0.75 });
-    else if (windup) drawSprite(c, m.skin, 0, 0, { flip, dy: bob, tint: "#ff4040", alpha: 0.25 + Math.sin(tnow * 28) * 0.12 });
+    if (!imported) {
+      if (windup) c.scale(1.18, 0.84);
+      else if (m.state === "attack") c.scale(0.92, 1.15);
+      else if (m.state === "hurt") c.rotate(Math.sin(phase) * 0.085);
+      else if (moving && !floating) c.rotate(Math.sin(phase) * (m.type === "hulk" ? 0.025 : 0.045));
+      drawSprite(c, sprite, 0, 0, { flip, dy: bob, alpha: floating ? 0.9 : 1 });
+      if (flash) drawSprite(c, sprite, 0, 0, { flip, dy: bob, tint: "#ffffff", alpha: 0.75 });
+      else if (windup) drawSprite(c, sprite, 0, 0, { flip, dy: bob, tint: "#ff4040", alpha: 0.25 + Math.sin(tnow * 28) * 0.12 });
+    } else {
+      const direction = viewFromAngle(m.dir);
+      const action = m.state === "attack" ? "attack" : moving ? "walk" : "idle";
+      const variant = 1 + Math.abs(Math.floor(m.home.x * 0.017 + m.home.y * 0.031)) % 3;
+      const progress = 1 - m.t / 0.16;
+      drawCraftOrc(c, variant, direction.view, direction.flip, action, tnow + m.home.x * 0.01, progress);
+      if (flash || windup) {
+        c.globalAlpha *= flash ? 0.75 : 0.25 + Math.sin(tnow * 28) * 0.12;
+        drawCraftOrc(c, variant, direction.view, direction.flip, action, tnow + m.home.x * 0.01, progress, flash ? "#ffffff" : "#ff4040");
+      }
+    }
     c.restore();
     if (m.state === "attack" && m.type !== "spitter") {
       const reach = m.r + 20;
@@ -3179,8 +3261,8 @@ export class Engine {
       c.beginPath(); c.arc(x, y - 12, reach, m.dir - 0.55, m.dir + 0.55); c.stroke();
     }
     if (m.hp < m.maxHp) {
-      const sz = spriteSize(m.skin);
-      const top = y - sz.h - 8 + bob;
+      const sz = spriteSize(sprite);
+      const top = y - (imported ? 102 : sz.h) - 8 + bob;
       c.fillStyle = "rgba(0,0,0,0.55)"; c.fillRect(x - 16, top, 32, 4);
       c.fillStyle = "#e04a4a"; c.fillRect(x - 16, top, 32 * clamp(m.hp / m.maxHp, 0, 1), 4);
     }
@@ -3239,19 +3321,46 @@ export class Engine {
 
   drawFenceConnections(ox: number, oy: number) {
     if (this.structures.length < 2) return;
+    const reach = FENCE_RADIUS + 80;
+    const bx = BASE.x + ox, by = BASE.y + oy;
+    if (bx + reach < 0 || by + reach < 0 || bx - reach > this.viewW || by - reach > this.viewH) return;
     const c = this.ctx, occupied = new Array<Structure | undefined>(FENCE_SLOTS);
     for (const s of this.structures) {
       if (s.type !== "wall" && s.type !== "gate") continue;
       const a = Math.atan2(s.y - BASE.y, s.x - BASE.x);
-      const slot = ((Math.round(a * FENCE_SLOTS / (2*Math.PI)) % FENCE_SLOTS)+FENCE_SLOTS)%FENCE_SLOTS;
-      if(dist2(this.fencePosition(slot).x,this.fencePosition(slot).y,s.x,s.y)<12*12)occupied[slot]=s;
+      const slot = ((Math.round(a * FENCE_SLOTS / (2 * Math.PI)) % FENCE_SLOTS) + FENCE_SLOTS) % FENCE_SLOTS;
+      const position = this.fencePosition(slot);
+      if (dist2(position.x, position.y, s.x, s.y) < 12 * 12) occupied[slot] = s;
     }
-    for(let slot=0;slot<FENCE_SLOTS;slot++){
-      const first=occupied[slot],second=occupied[(slot+1)%FENCE_SLOTS];
-      if(!first||!second||(first.type==="gate"&&first.open)||(second.type==="gate"&&second.open))continue;
-      const x1=first.x+ox,y1=first.y+oy,x2=second.x+ox,y2=second.y+oy;
-      if(Math.max(x1,x2)<-40||Math.min(x1,x2)>this.viewW+40||Math.max(y1,y2)<-60||Math.min(y1,y2)>this.viewH+40)continue;
-      const style=first.fenceStyle;
+    for (let slot = 0; slot < FENCE_SLOTS; slot++) {
+      const first = occupied[slot], second = occupied[(slot + 1) % FENCE_SLOTS];
+      if (!first || !second || (first.type === "gate" && first.open) || (second.type === "gate" && second.open)) continue;
+      const x1 = first.x + ox, y1 = first.y + oy, x2 = second.x + ox, y2 = second.y + oy;
+      if (Math.max(x1, x2) < -40 || Math.min(x1, x2) > this.viewW + 40 || Math.max(y1, y2) < -60 || Math.min(y1, y2) > this.viewH + 40) continue;
+      // At native 1x resolution the baked rails match the original canvas
+      // geometry. Other render scales keep the vector path for crispness.
+      if (this.dpr !== 1) { this.drawFenceLink(c, first.fenceStyle, x1, y1, x2, y2); continue; }
+      const key = `${first.fenceStyle}:${first.x}:${first.y}:${second.x}:${second.y}`;
+      let cached = this.fenceLinks.get(key);
+      if (!cached) {
+        const left = Math.floor(Math.min(first.x, second.x) - 20), top = Math.floor(Math.min(first.y, second.y) - 36);
+        const right = Math.ceil(Math.max(first.x, second.x) + 20), bottom = Math.ceil(Math.max(first.y, second.y) + 12);
+        const canvas = document.createElement("canvas"); canvas.width = right - left; canvas.height = bottom - top;
+        const painter = canvas.getContext("2d");
+        if (!painter) { this.drawFenceLink(c, first.fenceStyle, x1, y1, x2, y2); continue; }
+        this.drawFenceLink(painter, first.fenceStyle, first.x - left, first.y - top, second.x - left, second.y - top);
+        cached = { canvas, left, top };
+        if (this.fenceLinks.size >= 128) {
+          const oldest = this.fenceLinks.keys().next().value;
+          if (oldest !== undefined) this.fenceLinks.delete(oldest);
+        }
+        this.fenceLinks.set(key, cached);
+      }
+      c.drawImage(cached.canvas, cached.left + ox, cached.top + oy);
+    }
+  }
+
+  drawFenceLink(c: CanvasRenderingContext2D, style: FenceStyle, x1: number, y1: number, x2: number, y2: number) {
       if(style==="stone"){
         c.strokeStyle="#3f4950";c.lineWidth=28;c.beginPath();c.moveTo(x1,y1-8);c.lineTo(x2,y2-8);c.stroke();
         c.strokeStyle="#7e8d96";c.lineWidth=23;c.beginPath();c.moveTo(x1,y1-10);c.lineTo(x2,y2-10);c.stroke();
@@ -3267,7 +3376,6 @@ export class Engine {
         for(const height of heights){c.strokeStyle="#37241a";c.lineWidth=8;c.beginPath();c.moveTo(x1,y1-height);c.lineTo(x2,y2-height);c.stroke();c.strokeStyle=style==="rustic"?"#a8734b":height===13?"#b77c48":"#8f5c37";c.lineWidth=5;c.beginPath();c.moveTo(x1,y1-height-1);c.lineTo(x2,y2-height-1);c.stroke();c.strokeStyle="rgba(245,199,120,.55)";c.lineWidth=1;c.beginPath();c.moveTo(x1,y1-height-3);c.lineTo(x2,y2-height-3);c.stroke();}
         if(style==="palisade")for(const t of [.25,.75]){const x=x1+(x2-x1)*t,y=y1+(y2-y1)*t;c.fillStyle="#d6ad68";c.fillRect(Math.round(x-2),Math.round(y-17),4,12);c.fillStyle="#f1d69b";c.fillRect(Math.round(x-1),Math.round(y-16),1,10);c.fillStyle="#31343a";c.fillRect(Math.round(x-1),Math.round(y-14),3,3);}
       }
-    }
   }
 
   drawPlacement(ox: number, oy: number) {
@@ -3740,7 +3848,7 @@ export class Engine {
   }
 
   /* ---------------- cutscene render ---------------- */
-  renderCutscene() {
+  renderCutscene(dt: number) {
     const c = this.ctx;
     c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     const w = this.viewW, h = this.viewH;
@@ -3789,14 +3897,19 @@ export class Engine {
       for (let i = 0; i < 5; i++) c.fillRect(-28 + i * 13, -6, 8, 6);
       c.restore();
       if (this.cutPhase === 1) {
-        // fire & smoke from engine
-        for (let i = 0; i < 3; i++) {
-          this.particles.push({ x: px - 40 - Math.random() * 30, y: py + (Math.random() - 0.5) * 16, vx: -80 - Math.random() * 60, vy: (Math.random() - 0.5) * 40, t: 0, max: 0.8, c: i === 0 ? "#ff9b2d" : i === 1 ? "#ffd34d" : "#555", s: 4 + Math.random() * 5, grav: -20 });
+        // Match the old 60 Hz rate regardless of the actual display refresh.
+        this.cutParticleAcc += dt * 60;
+        const bursts = Math.floor(this.cutParticleAcc);
+        this.cutParticleAcc -= bursts;
+        for (let burst = 0; burst < bursts; burst++) {
+          for (let i = 0; i < 3 && this.particles.length < this.particleCap; i++) {
+            this.particles.push({ x: px - 40 - Math.random() * 30, y: py + (Math.random() - 0.5) * 16, vx: -80 - Math.random() * 60, vy: (Math.random() - 0.5) * 40, t: 0, max: 0.8, c: i === 0 ? "#ff9b2d" : i === 1 ? "#ffd34d" : "#555", s: 4 + Math.random() * 5, grav: -20 });
+          }
         }
-        this.shake = Math.min(10, this.shake + 0.4);
+        this.shake = Math.min(10, this.shake + dt * 24);
       }
       // particles (screen space)
-      this.updateParticles(1 / 60);
+      this.updateParticles(dt);
       for (const p of this.particles) {
         c.globalAlpha = 1 - p.t / p.max; c.fillStyle = p.c;
         c.fillRect(p.x, p.y, p.s, p.s);
@@ -3912,6 +4025,7 @@ export class Engine {
     this.canvas.removeEventListener("contextmenu", this.onCtx);
     this.canvas.removeEventListener("wheel", this.onWheel);
     if (this.state === "playing" || this.state === "paused") this.saveGame();
+    this.fenceLinks.clear(); this.fencePosts.clear();
     this.sfx.destroy();
   }
 }

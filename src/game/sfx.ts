@@ -57,7 +57,7 @@ export class Sfx {
     if (!ctx || ctx.state !== "running" || this.vol <= 0 || strength < 0.04 || ctx.currentTime < this.nextCreatureAt) return;
     const t = ctx.currentTime;
     this.nextCreatureAt = t + 1.6;
-    const deep = type === "brute" || type === "hulk" || type === "demon";
+    const deep = type === "brute" || type === "hulk" || type === "demon" || type === "orc";
     const spectral = type === "bat" || type === "stalker" || type === "crawler" || type === "spitter";
     const duration = spectral ? 0.52 : 0.38;
     const pitch = deep ? 86 : spectral ? 270 : 150;

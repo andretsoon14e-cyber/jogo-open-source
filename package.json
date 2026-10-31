@@ -11,7 +11,9 @@
     "test:browser": "node tests/browser-smoke.mjs",
     "test:benchmark": "node tests/render-benchmark.mjs",
     "db:push": "drizzle-kit push",
-    "test:db": "tsx tests/database.integration.mjs"
+    "test:db": "tsx tests/database.integration.mjs",
+    "import:craftpix": "node scripts/import-craftpix.mjs",
+    "test:craftpix-browser": "node tests/craftpix-browser.mjs"
   },
   "dependencies": {
     "dotenv": "17.3.1",
@@ -32,7 +34,9 @@
     "esbuild": "0.28.2",
     "eslint": "9.39.4",
     "eslint-config-next": "16.4.3",
+    "fflate": "0.8.3",
     "postcss": "8.5.32",
+    "sharp": "0.35.5",
     "tailwindcss": "4.1.17",
     "tsx": "4.23.15",
     "typescript": "5.9.3"

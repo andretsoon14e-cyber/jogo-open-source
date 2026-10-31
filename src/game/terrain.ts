@@ -33,15 +33,39 @@ const PRIO: Record<number, number> = { [T_WATER]: 0, [T_SAND]: 1, [T_PATH]: 2, [
 
 export class Terrain {
   private chunks = new Map<number, { cv: HTMLCanvasElement; last: number }>();
+  private overview: HTMLCanvasElement | null = null;
   readonly CH = 16; // tiles per chunk side
-  constructor(private tiles: Uint8Array, private W: number, private H: number, private TILE: number) {}
+  constructor(private tiles: Uint8Array, private W: number, private H: number, private TILE: number) {
+    this.buildOverview();
+  }
+
+  private buildOverview() {
+    // A tiny 1-pixel-per-tile overview avoids showing fake ocean while nearby
+    // chunks are baked over several frames. It is only used as a placeholder.
+    const { W, H, tiles } = this;
+    const canvas = document.createElement("canvas"); canvas.width = W; canvas.height = H;
+    const ctx = canvas.getContext("2d");
+    const image = ctx?.createImageData(W, H);
+    if (!ctx || !image?.data) { this.overview = null; return; }
+    const colors = Object.fromEntries(Object.entries(PAL).map(([id, p]) => {
+      const rgb = parseInt(p.base.slice(1), 16);
+      return [id, [rgb >> 16, (rgb >> 8) & 255, rgb & 255]];
+    })) as Record<number, number[]>;
+    for (let i = 0; i < W * H; i++) {
+      const color = colors[tiles[i]] ?? colors[T_WATER];
+      const at = i * 4;
+      image.data[at] = color[0]; image.data[at + 1] = color[1]; image.data[at + 2] = color[2]; image.data[at + 3] = 255;
+    }
+    ctx.putImageData(image, 0, 0);
+    this.overview = canvas;
+  }
 
   tile(x: number, y: number) {
     if (x < 0 || y < 0 || x >= this.W || y >= this.H) return T_WATER;
     return this.tiles[y * this.W + x];
   }
 
-  invalidateAll() { this.chunks.clear(); }
+  invalidateAll() { this.chunks.clear(); this.buildOverview(); }
 
   draw(ctx: CanvasRenderingContext2D, camX: number, camY: number, viewW: number, viewH: number, ox: number, oy: number, now: number) {
     const cpx = this.CH * this.TILE;
@@ -56,8 +80,13 @@ export class Terrain {
         let e = this.chunks.get(key);
         if (!e) {
           if (baked >= 2) { // spread baking across frames
-            ctx.fillStyle = "#3f86b8";
+            ctx.fillStyle = PAL[T_WATER].base;
             ctx.fillRect(cx * cpx + ox, cy * cpx + oy, cpx, cpx);
+            if (this.overview) {
+              const x = cx * this.CH, y = cy * this.CH;
+              const w = Math.min(this.CH, this.W - x), h = Math.min(this.CH, this.H - y);
+              if (w > 0 && h > 0) ctx.drawImage(this.overview, x, y, w, h, cx * cpx + ox, cy * cpx + oy, w * this.TILE, h * this.TILE);
+            }
             continue;
           }
           e = { cv: this.bake(cx, cy), last: now };

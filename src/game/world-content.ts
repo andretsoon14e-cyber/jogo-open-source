@@ -33,6 +33,7 @@ export interface CreatureEntry {
 }
 export const BESTIARY: CreatureEntry[] = [
   { sprite: "goblin", name: "Saqueador Verde", habitat: "Trilhas e acampamentos", hp: 14, damage: 10, speed: "Muito rápido", attack: "Estocada em matilha", tip: "Não deixe que cerquem você. Um golpe de espada interrompe a estocada.", category: "Bandos" },
+  { sprite: "orc", name: "Orc Guerreiro", habitat: "Florestas e cavernas", hp: 90, damage: 20, speed: "Médio", attack: "Golpe de espada", tip: "Observe a preparação do ataque e role para o lado antes de contra-atacar.", category: "Povos da ilha" },
   { sprite: "demonbat", name: "Morcego Infernal", habitat: "Torre dos Ecos e noites", hp: 19, damage: 9, speed: "Veloz", attack: "Mergulho rasante", tip: "Observe as asas. Role de lado quando o mergulho começar.", category: "Voadores" },
   { sprite: "iceslime", name: "Gota Glacial", habitat: "Lagos congelados", hp: 36, damage: 12, speed: "Lento", attack: "Salto gelado", tip: "O corpo comprime antes de saltar. Ataque durante a recuperação.", category: "Elementais" },
   { sprite: "ghost", name: "Alma Errante", habitat: "Floresta Sombria", hp: 30, damage: 10, speed: "Médio", attack: "Toque espectral", tip: "Fique perto de uma fogueira para conseguir ver a aproximação.", category: "Espíritos" },

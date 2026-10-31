@@ -14,3 +14,6 @@
 next-env.d.ts
 .DS_Store
 /previas-ilha-ultima-luz.zip
+
+# Artes CraftPix opcionais geradas localmente (não redistribuir)
+/public/craftpix/

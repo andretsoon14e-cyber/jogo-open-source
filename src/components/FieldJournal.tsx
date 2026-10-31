@@ -2,16 +2,21 @@
 
 import { memo, useEffect, useState } from "react";
 import { getCharacterUrl, getSpriteUrl } from "@/game/sprites";
+import { hasCraftOrcs } from "@/game/craftpix";
 import { GAME_TITLE } from "@/game/identity";
 import { BESTIARY, EQUIPMENT, SITES, type EquipmentKey } from "@/game/world-content";
 import { RES_LABEL, TOOL_LABEL, type GamePanel, type Snapshot, type ResKey, type ToolKey, type FenceStyle } from "@/game/engine";
 import { Icon } from "./Icons";
 
-export const SpriteThumb = memo(function SpriteThumb({ name, size = 46, character = false, view = "down", tool = "axe" }: { name: string; size?: number; character?: boolean; view?: "up" | "down" | "side"; tool?: ToolKey }) {
+export const SpriteThumb = memo(function SpriteThumb({ name, size = 46, character = false, view = "down", tool = "axe", craftPix = true, level = 1 }: { name: string; size?: number; character?: boolean; view?: "up" | "down" | "side"; tool?: ToolKey; craftPix?: boolean; level?: number }) {
   const [url, setUrl] = useState("");
   // Sprites are generated with a browser canvas, unavailable during SSR.
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { setUrl(character ? getCharacterUrl(name, view, tool) : getSpriteUrl(name)); }, [name, character, view, tool]);
+  useEffect(() => {
+    const refresh = () => setUrl(character ? getCharacterUrl(name, view, tool, craftPix, level) : getSpriteUrl(name, craftPix));
+    refresh();
+    window.addEventListener("craftpix-ready", refresh);
+    return () => window.removeEventListener("craftpix-ready", refresh);
+  }, [name, character, view, tool, craftPix, level]);
   if (!url) return <span style={{ width: size, height: size }} className="inline-block" />;
   // eslint-disable-next-line @next/next/no-img-element
   return <img alt="" draggable={false} src={url} width={size} height={size} style={{ width: size, height: size, objectFit: "contain", imageRendering: "pixelated" }} />;
@@ -20,6 +25,7 @@ export const SpriteThumb = memo(function SpriteThumb({ name, size = 46, characte
 interface Props {
   panel: Exclude<GamePanel, "none">;
   snap: Snapshot;
+  craftPix: boolean;
   onClose: () => void;
   onPanel: (panel: Exclude<GamePanel, "none">) => void;
   onBuild: (id: string) => void;
@@ -67,7 +73,8 @@ export default function FieldJournal(props: Props) {
   const [upgradeTool, setUpgradeTool] = useState<ToolKey>("axe");
   const [characterView, setCharacterView] = useState<"down" | "up" | "side">("up");
   const recipe = snap.buildOptions.find((b) => b.id === selected) ?? snap.buildOptions[0];
-  const creature = BESTIARY[creatureIndex];
+  const creatures = BESTIARY.filter((entry) => entry.sprite !== "orc" || snap.seenCreatures.includes("orc") || (props.craftPix && hasCraftOrcs()));
+  const creature = creatures[Math.min(creatureIndex, creatures.length - 1)];
   const site = SITES[siteIndex];
   const upgrade = snap.upgradeOptions.find((entry) => entry.tool === upgradeTool)!;
 
@@ -139,7 +146,7 @@ export default function FieldJournal(props: Props) {
       </div>}
 
       {panel === "inventory" && <div className="p-4 sm:p-6 grid md:grid-cols-[220px_1fr] gap-5">
-        <aside className="journal-page text-center"><h3 className="journal-ribbon">Explorador</h3><div className="character-paper"><SpriteThumb name="player" character size={160} view={characterView} tool={snap.heldTool} /></div>
+        <aside className="journal-page text-center"><h3 className="journal-ribbon">Explorador</h3><div className="character-paper"><SpriteThumb name="player" character size={160} view={characterView} tool={snap.heldTool} craftPix={props.craftPix} level={snap.tools.sword} /></div>
           <div className="flex justify-center gap-1 mb-3">{([["down","Frente"],["up","Costas"],["side","Lado"]] as const).map(([key,label]) => <button key={key} className={`journal-button small ${characterView === key ? "" : "muted"}`} onClick={() => setCharacterView(key)}>{label}</button>)}</div>
           <p className="font-display text-lg">Seu equipamento</p><p className="text-[11px] opacity-65">A ferramenta fora de uso fica presa no arreio das costas.</p>
           <div className="grid grid-cols-3 gap-1 mt-4">{(["axe","pick","sword"] as ToolKey[]).map((t) => <button key={t} title={`Equipar ${TOOL_LABEL[t]}`} className={`journal-slot ${snap.heldTool === t ? "selected" : ""}`} onClick={() => props.onTool(t)}><SpriteThumb name={`tool_${t}`} size={40} /><small className="text-[9px]">Nv. {snap.tools[t]}</small></button>)}</div>
@@ -158,12 +165,12 @@ export default function FieldJournal(props: Props) {
         <div className="journal-book-grid">
           <aside className="journal-page">
             <h3 className="journal-ribbon">{bookTab === "creatures" ? "Criaturas" : "Destinos"}</h3>
-            {bookTab === "creatures" ? BESTIARY.map((entry,i) => <button className={`journal-row ${i === creatureIndex ? "active" : ""}`} key={entry.sprite} onClick={() => setCreatureIndex(i)}><SpriteThumb name={entry.sprite} size={32} /><span>{entry.name}<small>{snap.seenCreatures.includes(entry.sprite) ? `Registrado · ${snap.creatureKills[entry.sprite] ?? 0} abates` : "Ainda não avistado"}</small></span></button>) : SITES.map((entry,i) => <button className={`journal-row ${i === siteIndex ? "active" : ""}`} key={entry.id} onClick={() => setSiteIndex(i)}><span className="w-2 h-2 rounded-full shrink-0" style={{background:entry.color}} /><span>{entry.name}<small>{snap.claimedSites.includes(entry.id) ? "Suprimentos recolhidos" : snap.discoveredSites.includes(entry.id) ? "Descoberto" : "Por explorar"}</small></span></button>)}
+            {bookTab === "creatures" ? creatures.map((entry,i) => <button className={`journal-row ${i === creatureIndex ? "active" : ""}`} key={entry.sprite} onClick={() => setCreatureIndex(i)}><SpriteThumb name={entry.sprite} size={32} craftPix={props.craftPix} /><span>{entry.name}<small>{snap.seenCreatures.includes(entry.sprite) ? `Registrado · ${snap.creatureKills[entry.sprite] ?? 0} abates` : "Ainda não avistado"}</small></span></button>) : SITES.map((entry,i) => <button className={`journal-row ${i === siteIndex ? "active" : ""}`} key={entry.id} onClick={() => setSiteIndex(i)}><span className="w-2 h-2 rounded-full shrink-0" style={{background:entry.color}} /><span>{entry.name}<small>{snap.claimedSites.includes(entry.id) ? "Suprimentos recolhidos" : snap.discoveredSites.includes(entry.id) ? "Descoberto" : "Por explorar"}</small></span></button>)}
           </aside>
           <main className="journal-page book-detail">
             {bookTab === "creatures" ? <>
               <span className="journal-eyebrow">{creature.category} · REGISTRO DE CAMPO</span><h3 className="font-display text-3xl mt-1">{creature.name}</h3>
-              <div className="book-art"><SpriteThumb name={creature.sprite} size={160} /></div>
+              <div className="book-art"><SpriteThumb name={creature.sprite} size={160} craftPix={props.craftPix} /></div>
               <p className="text-sm text-[#775739] text-center">{creature.habitat}</p>
               <div className="grid grid-cols-3 gap-2 my-4 text-center">{[["VIDA",creature.hp],["DANO",creature.damage],["RITMO",creature.speed]].map(([label,value]) => <div key={label} className="journal-stat"><small>{label}</small><b>{value}</b></div>)}</div>
               <h4 className="font-display text-xl">{creature.attack}</h4><p className="text-sm leading-relaxed mt-2 text-[#775739]">{creature.tip}</p><p className="text-[10px] mt-5 opacity-55">Estatísticas-base. Dificuldade e dias sobrevividos aumentam a força das criaturas.</p>
