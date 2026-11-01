@@ -52,11 +52,15 @@ async function decode(ctx: AudioContext, url: string, signal: AbortSignal): Prom
 export class Sfx {
   ctx: AudioContext | null = null;
   private output: GainNode | null = null;
+  private ownsContext = false;
   private _vol = 0.35;
   private sprite: AudioBuffer | null = null;
   private spriteLoading: Promise<void> | null = null;
   private toolSprite: AudioBuffer | null = null;
   private toolSpriteLoading: Promise<void> | null = null;
+  private introExplosion: AudioBuffer | null = null;
+  private introLoading: Promise<void> | null = null;
+  private introVoice: AudioBufferSourceNode | null = null;
   private abort = new AbortController();
   private closed = false;
   private voices = new Set<AudioBufferSourceNode>();
@@ -77,17 +81,24 @@ export class Sfx {
     }
     if (!this._vol) this.silenceAmbience();
   }
+  constructor(private readonly sharedContext: AudioContext | null = null) {}
+
   get samplesReady() { return !!this.sprite; }
   get toolSamplesReady() { return !!this.toolSprite; }
+  get introExplosionReady() { return !!this.introExplosion; }
 
   /** Called directly from pointer/keyboard/gamepad gestures to unlock browsers. */
   ensure() {
     if (this.closed || typeof window === "undefined") return;
     if (!this.ctx) {
       try {
+        const shared = this.sharedContext?.state !== "closed" ? this.sharedContext : null;
         const Ctor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-        if (!Ctor) return;
-        const ctx = new Ctor();
+        if (!shared && !Ctor) return;
+        // Reuse the context unlocked by the menu's actual start gesture. This
+        // keeps an independent effects gain even when music is muted.
+        const ctx = shared ?? new Ctor!();
+        this.ownsContext = !shared;
         this.ctx = ctx;
         this.output = ctx.createGain();
         this.output.gain.value = this._vol;
@@ -106,6 +117,43 @@ export class Sfx {
         if (!this.closed && this.ctx === ctx && buffer) this.toolSprite = buffer;
       }).finally(() => { this.toolSpriteLoading = null; });
     }
+  }
+
+  /** Start decoding during the flight, never after the impact has passed. */
+  prepareIntroExplosion() {
+    this.ensure();
+    const ctx = this.ctx;
+    if (!ctx || this.introExplosion || this.introLoading || this.closed) return;
+    this.introLoading = decode(ctx, "/audio/intro-explosion.mp3", this.abort.signal).then((buffer) => {
+      if (!this.closed && this.ctx === ctx && buffer) this.introExplosion = buffer;
+    }).finally(() => { this.introLoading = null; });
+  }
+
+  /** A single one-shot at impact. No late replay when a download finishes. */
+  playIntroExplosion() {
+    const ctx = this.ctx, out = this.output;
+    if (!ctx || ctx.state !== "running" || !out || this._vol <= 0) return;
+    this.stopIntroExplosion();
+    if (!this.introExplosion) {
+      this.introVoice = this.noise(0.8, 0.8);
+      return;
+    }
+    const source = ctx.createBufferSource(), gain = ctx.createGain();
+    source.buffer = this.introExplosion; gain.gain.value = 0.72;
+    source.connect(gain); gain.connect(out);
+    this.introVoice = source; this.voices.add(source);
+    source.onended = () => {
+      if (this.introVoice === source) this.introVoice = null;
+      this.voices.delete(source); source.disconnect(); gain.disconnect();
+    };
+    source.start(ctx.currentTime);
+  }
+
+  /** Skipping the scene must not leave the blast playing over the world. */
+  stopIntroExplosion() {
+    const voice = this.introVoice;
+    this.introVoice = null;
+    if (voice) { try { voice.stop(); } catch { /* already ended */ } }
   }
 
   private play(group: Group, volume: number, pan = 0, rate = 1, cooldown = 0.09, delay = 0): boolean {
@@ -150,10 +198,10 @@ export class Sfx {
     osc.connect(gain); gain.connect(out); osc.start(now); osc.stop(now + dur + 0.02);
   }
 
-  /** Short fallback used by the plane crash; the buffer is shared, never per frame. */
-  noise(dur: number, vol: number) {
+  /** Fallback if the recording cannot be decoded; its buffer is shared. */
+  noise(dur: number, vol: number): AudioBufferSourceNode | null {
     const ctx = this.ctx, out = this.output;
-    if (!ctx || ctx.state !== "running" || !out || this._vol <= 0 || vol <= 0) return;
+    if (!ctx || ctx.state !== "running" || !out || this._vol <= 0 || vol <= 0) return null;
     if (!this.noiseBuffer) {
       this.noiseBuffer = ctx.createBuffer(1, Math.ceil(ctx.sampleRate), ctx.sampleRate);
       const data = this.noiseBuffer.getChannelData(0);
@@ -162,7 +210,14 @@ export class Sfx {
     const source = ctx.createBufferSource(), filter = ctx.createBiquadFilter(), gain = ctx.createGain(), now = ctx.currentTime;
     source.buffer = this.noiseBuffer; filter.type = "lowpass"; filter.frequency.value = 900;
     gain.gain.setValueAtTime(clamp(vol) * 0.5, now); gain.gain.linearRampToValueAtTime(0, now + dur);
-    source.connect(filter); filter.connect(gain); gain.connect(out); source.start(now, 0, Math.min(dur, 1));
+    source.connect(filter); filter.connect(gain); gain.connect(out);
+    this.voices.add(source);
+    source.onended = () => {
+      if (this.introVoice === source) this.introVoice = null;
+      this.voices.delete(source); source.disconnect(); filter.disconnect(); gain.disconnect();
+    };
+    source.start(now, 0, Math.min(dur, 1));
+    return source;
   }
 
   creature(type: string, proximity: number, pan = 0) {
@@ -288,9 +343,11 @@ export class Sfx {
       node.source.disconnect(); node.gain.disconnect();
     }
     this.ambientNodes.clear(); this.ambientTargets.clear(); this.ambientBuffers.clear();
+    this.stopIntroExplosion();
     for (const voice of this.voices) { try { voice.stop(); } catch { /* já terminou */ } }
     this.voices.clear();
-    if (this.ctx && this.ctx.state !== "closed") void this.ctx.close().catch(() => {});
-    this.ctx = null; this.output = null; this.sprite = null; this.toolSprite = null; this.noiseBuffer = null;
+    this.output?.disconnect();
+    if (this.ownsContext && this.ctx && this.ctx.state !== "closed") void this.ctx.close().catch(() => {});
+    this.ctx = null; this.output = null; this.sprite = null; this.toolSprite = null; this.introExplosion = null; this.noiseBuffer = null;
   }
 }

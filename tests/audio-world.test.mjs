@@ -60,10 +60,10 @@ test("mar e riachos usam a costa real em sementes diferentes; distância, foguei
 
 test("botão de controle tenta retomar os dois contextos mesmo durante o despertar", () => {
   let sfxResumes = 0, musicResumes = 0;
-  const music = { setEnabled() {}, setVolume() {}, setVoice() {}, resume() { musicResumes++; } };
+  const music = { ensure() { return null; }, setEnabled() {}, setVolume() {}, setVoice() {}, resume() { musicResumes++; } };
   const game = make(77, { music });
   game.sfx.ensure = () => { sfxResumes++; };
-  game.wakeT = 1;
+  game.state = "playing"; game.wakeT = 1;
   Object.defineProperty(globalThis, "navigator", { value: { getGamepads: () => [{ axes: [0, 0], buttons: [{ pressed: true }] }] }, configurable: true });
   try {
     game.pollGamepad(); game.pollGamepad();

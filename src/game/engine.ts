@@ -9,6 +9,7 @@ import { drawReferenceArcher, drawReferenceCreature, drawReferenceFigure, drawRe
 import { Terrain, drawWaterAnim } from "@/game/terrain";
 import { MusicManager } from "@/game/music";
 import { Sfx } from "@/game/sfx";
+import { INTRO_FALL, INTRO_IMPACT, INTRO_BEACH, introImpactX, preloadIntroArt, drawFlightOcean, drawIntroExplosion, drawLandingBackdrop } from "@/game/intro-art";
 import { GameSettings, DEFAULT_SETTINGS } from "@/game/settings";
 import { FrameLimiter } from "@/game/frame-limiter";
 import { SITES, GLACIER, MINERAL_BASIN, EQUIPMENT, type EquipmentKey } from "@/game/world-content";
@@ -378,6 +379,7 @@ interface SaveData {
   combatWeapon?: CombatWeapon;
   territoryLevel?: number;
   territoryLayout?: "compact" | "legacy";
+  beachLayout?: "shore" | "legacy";
   fenceRing?: number;
   buildPatrolDay?: number;
   pendingRespawn?: boolean;
@@ -394,12 +396,15 @@ export class Engine {
   ctx: CanvasRenderingContext2D;
   opts: EngineOptions;
   diff: DiffCfg;
-  sfx = new Sfx();
+  sfx: Sfx;
   running = false;
   destroyed = false;
   state: GameState = "cutscene";
   softPause = false;
   activePanel: GamePanel = "none";
+
+  // Old saves retain their original coastline and structure positions.
+  beachLayout: "shore" | "legacy" = "shore";
 
   // world
   tiles = new Uint8Array(W * H);
@@ -553,8 +558,9 @@ export class Engine {
     this.settings = { ...DEFAULT_SETTINGS, ...(opts.settings ?? {}) };
     // Optional assets load asynchronously; procedural art works immediately.
     if (this.settings.craftPix) { void loadCraftPix(); void loadReferenceArt(); }
-    this.sfx.vol = Math.max(0, Math.min(1, this.settings.sfxVol)) * 0.5;
     this.music = opts.music ?? null;
+    this.sfx = new Sfx(this.music?.ensure() ?? null);
+    this.sfx.vol = Math.max(0, Math.min(1, this.settings.sfxVol)) * 0.5;
     if (this.music) {
       this.music.setEnabled(this.settings.music);
       this.music.setVolume(this.settings.musicVol);
@@ -727,6 +733,7 @@ export class Engine {
     // Repair the landing after resource generation. This does not consume RNG
     // or change node ordering, so existing saves keep their resource progress.
     this.prepareLandingAndRoute();
+    if (this.beachLayout === "shore") this.carveLandingShore(seed);
     this.expandWorld();
     this.addBiomeDetails(seed);
     this.distributeBiomes(seed);
@@ -796,6 +803,39 @@ export class Engine {
         node.y = spot.y + (index % 5 - 2) * 7;
       }
     });
+  }
+
+  /** A shallow cove makes the open sea visible from the landing. It is carved
+   * only after the legacy RNG/resource pass: indices, health and seed order
+   * stay stable, and the later spacing passes move any submerged nodes ashore. */
+  private carveLandingShore(seed: number) {
+    const cx = WAKE.x / TILE, start = (WAKE.y + 128) / TILE;
+    const changed: number[] = [];
+    for (let y = Math.floor(start); y < H; y++) {
+      const depth = y - start;
+      const half = Math.min(18, 7 + Math.max(0, depth) * 0.7);
+      for (let x = Math.max(1, Math.floor(cx - half)); x <= Math.min(W - 2, Math.ceil(cx + half)); x++) {
+        const dx = x - cx;
+        const lip = start + 3.5 * (dx / 10) ** 2 + Math.sin(x * 0.72 + (seed % 31) * 0.13) * 0.45;
+        if (Math.abs(dx) > half || y < lip) continue;
+        const i = y * W + x;
+        this.tiles[i] = T_WATER;
+        this.oceanTiles[i] = 1;
+        changed.push(i);
+      }
+    }
+    // Sand meets the water rather than a straight grass edge. Preserve roads,
+    // bridges and all other biome tiles; no random numbers are consumed.
+    for (const i of changed) {
+      const x = i % W, y = Math.floor(i / W);
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+        if (dx * dx + dy * dy > 4) continue;
+        const nx = x + dx, ny = y + dy;
+        if (nx < 1 || ny < 1 || nx >= W - 1 || ny >= H - 1) continue;
+        const neighbor = ny * W + nx;
+        if (this.tiles[neighbor] === T_GRASS) this.tiles[neighbor] = T_SAND;
+      }
+    }
   }
 
   private expandWorld() {
@@ -1259,6 +1299,9 @@ export class Engine {
         (terrain === T_MINERAL && [T_ROCK, T_GRASS, T_AUTUMN].includes(tile));
       if (tile === T_WATER || (!onRoad && tile !== terrain && !relatedTerrain)) return false;
       if (this.resourceAreaBlocked("tree", x, y)) return false;
+      // Keep the waterline visible behind the player instead of packing the
+      // landing with oversized canopies. Resources are moved, never deleted.
+      if (this.beachLayout === "shore" && Math.abs(x - WAKE.x) < 260 && y > WAKE.y + 28 && y < WAKE.y + 320) return false;
       if ([WAKE, RIAN_START, { x: CRASH.x + 110, y: CRASH.y - 60 }, { x: BASE.x + 100, y: BASE.y - 40 },
         { x: VILLAGE.x + 70, y: VILLAGE.y + 30 }].some((p) => dist2(x, y, p.x, p.y) < 55 ** 2)) return false;
       if (dist2(x, y, VILLAGE.x - 215, VILLAGE.y + 45) < 125 ** 2) return false;
@@ -1529,6 +1572,7 @@ export class Engine {
     this.keys.add(k);
     this.sfx.ensure();
     if (this.state === "cutscene") {
+      this.sfx.prepareIntroExplosion();
       if (k === " " || k === "e" || k === "enter") this.advanceDialogue();
       if (k === "escape") this.skipCutscene();
       e.preventDefault();
@@ -1569,7 +1613,10 @@ export class Engine {
   onBlur = () => { this.keys.clear(); };
   // The canvas, touch joystick and HUD are separate elements. Any pointer
   // gesture must unlock the effects context, not only clicks on the canvas.
-  onAudioGesture = () => { this.sfx.ensure(); };
+  onAudioGesture = () => {
+    if (this.state === "cutscene") this.sfx.prepareIntroExplosion();
+    else this.sfx.ensure();
+  };
 
   bindInput() {
     window.addEventListener("pointerdown", this.onAudioGesture);
@@ -1651,15 +1698,12 @@ export class Engine {
 
   /** Move a stranded old save to nearby dry, unobstructed ground. */
   private ensurePlayablePosition(): boolean {
-    const onWreck = Math.abs(this.px - CRASH.x) < 72 && Math.abs(this.py - CRASH.y) < 48;
     const invalid = !Number.isFinite(this.px) || !Number.isFinite(this.py) || this.tileAt(this.px, this.py) === T_WATER;
-    if (!onWreck && !invalid) return false;
+    if (!invalid) return false;
 
-    const target = onWreck || !Number.isFinite(this.px) || !Number.isFinite(this.py)
-      ? WAKE : { x: this.px, y: this.py };
+    const target = !Number.isFinite(this.px) || !Number.isFinite(this.py) ? WAKE : { x: this.px, y: this.py };
     const isClear = (x: number, y: number) => {
       if (this.tileAt(x, y) === T_WATER) return false;
-      if (Math.abs(x - CRASH.x) < 72 && Math.abs(y - CRASH.y) < 48) return false;
       if (this.nodes.some((n) => n.hp > 0 && n.type !== "bush" && n.type !== "berry" && dist2(n.x, n.y, x, y) < 26 * 26)) return false;
       if (this.structures.some((s) => (s.type === "wall" || s.type === "house" || s.type === "tower" || s.type === "forge") && dist2(s.x, s.y, x, y) < 28 * 28)) return false;
       return [[TILE, 0], [-TILE, 0], [0, TILE], [0, -TILE]].some(([dx, dy]) => this.tileAt(x + dx, y + dy) !== T_WATER);
@@ -1724,7 +1768,8 @@ export class Engine {
     if (!p) { this.padConnected = false; return { mx: 0, my: 0 }; }
     this.padConnected = true;
     if (p.buttons.some((button, i) => button.pressed && !this.lastPadButtons[i])) {
-      this.sfx.ensure(); this.music?.resume();
+      if (this.state === "cutscene") this.sfx.prepareIntroExplosion(); else this.sfx.ensure();
+      this.music?.resume();
     }
     if (this.wakeT > 0) { this.lastPadButtons = p.buttons.map((button) => button.pressed); return { mx: 0, my: 0 }; }
     const dead = (v: number) => (Math.abs(v) < 0.18 ? 0 : v);
@@ -1832,9 +1877,11 @@ export class Engine {
   skipCutscene() { if (this.state === "cutscene") this.endCutscene(); }
   endCutscene() {
     this.state = "playing";
+    this.sfx.stopIntroExplosion();
     // The intro uses screen-space particles; don't carry them into the world.
     this.particles.length = 0;
     this.cutParticleAcc = 0;
+    this.flashWhite = 0; this.shake = 0;
     this.time = MORNING_LEN - 200;
     this.ensurePlayablePosition();
     this.centerCamera();
@@ -2733,7 +2780,7 @@ export class Engine {
         if (n.hp <= 0 && (n.type === "tree" || n.type === "pine")) nodeStumps.push([i, Math.max(0, Math.round(n.stumpHp ?? 0))]);
       });
       const data: SaveData = {
-        v: 2, seed: this.opts.seed,
+        v: 2, seed: this.opts.seed, beachLayout: this.beachLayout,
         px: this.px, py: this.py, hp: this.hp, maxHp: this.maxHp,
         inv: { ...this.inv }, tools: { ...this.tools },
         time: this.time, day: this.day, score: this.score, kills: this.kills, deaths: this.deaths,
@@ -2759,13 +2806,25 @@ export class Engine {
       const raw = localStorage.getItem(this.saveKey());
       if (!raw) return false;
       const d = JSON.parse(raw) as SaveData;
-      if (!d || d.v !== 2) return false;
-      if (d.seed !== this.opts.seed) {
-        // regenerate world with saved seed
-        this.opts.seed = d.seed;
+      const optionalArray = (value: unknown) => value === undefined || Array.isArray(value);
+      const tuples = (value: unknown, length: number) => Array.isArray(value) && value.every((row) =>
+        Array.isArray(row) && row.length >= length && row.slice(0, length).every(Number.isFinite));
+      if (!d || d.v !== 2 || !Number.isFinite(d.seed) || !Array.isArray(d.structures) ||
+          !d.structures.every((st) => st && st.type in STRUCT_DEF && Number.isFinite(st.x) && Number.isFinite(st.y) &&
+            (st.fenceStyle === undefined || st.fenceStyle in FENCE_DEF)) ||
+          !Array.isArray(d.questP) || !Array.isArray(d.questDone) || !Array.isArray(d.allies) ||
+          !Array.isArray(d.visited) || !tuples(d.nodeHp, 3) ||
+          (d.nodeStumps !== undefined && !tuples(d.nodeStumps, 2)) || !optionalArray(d.chests) ||
+          !optionalArray(d.discoveredSites) || !optionalArray(d.claimedSites) || !optionalArray(d.seenCreatures)) return false;
+      // v2 saves without this field were created with the earlier coastline.
+      // Keep it so a house or a player built on that land is never submerged.
+      const layout = d.beachLayout === "shore" ? "shore" : "legacy";
+      if (d.seed !== this.opts.seed || layout !== this.beachLayout) {
+        this.opts.seed = d.seed; this.beachLayout = layout;
         this.nodes = []; this.tiles = new Uint8Array(W * H);
         this.nodeBuckets.clear(); this.depletedNodes.clear(); this.shakingNodes.clear();
         this.genWorld(d.seed);
+        this.villagers = []; this.spawnVillagers();
         this.animals = []; this.spawnAnimals(90);
         this.placeChests();
       }
@@ -3853,6 +3912,8 @@ export class Engine {
   start() {
     if (this.running) return;
     this.running = true;
+    this.sfx.ensure();
+    if (this.state === "cutscene") { this.sfx.prepareIntroExplosion(); preloadIntroArt(); }
     this.lastT = performance.now();
     const limiter = new FrameLimiter(this.lastT, this.settings.fpsCap);
     const loop = (t: number) => {
@@ -3892,10 +3953,14 @@ export class Engine {
 
     if (this.state === "cutscene") {
       this.cutT += dt;
-      if (this.cutPhase === 0 && this.cutT > 4.2) this.cutPhase = 1;
-      else if (this.cutPhase === 1 && this.cutT > 7.2) { this.cutPhase = 2; this.flashWhite = 1; this.shake = 20; this.sfx.noise(0.5, 0.8); }
-      else if (this.cutPhase === 2 && this.cutT > 8.6) { this.cutPhase = 3; this.dialogueIdx = 0; }
-      this.flashWhite = Math.max(0, this.flashWhite - dt * 1.2);
+      if (this.cutPhase === 0 && this.cutT >= INTRO_FALL) this.cutPhase = 1;
+      if (this.cutPhase === 1 && this.cutT >= INTRO_IMPACT) {
+        this.cutPhase = 2; this.flashWhite = 1; this.shake = 18;
+        this.particles.length = 0; this.cutParticleAcc = 0;
+        this.sfx.playIntroExplosion();
+      }
+      if (this.cutPhase === 2 && this.cutT >= INTRO_BEACH) { this.cutPhase = 3; this.dialogueIdx = 0; }
+      this.flashWhite = Math.max(0, this.flashWhite - dt * 4.8);
       this.shake = Math.max(0, this.shake - dt * 30);
       this.renderCutscene(dt);
       return;
@@ -4375,9 +4440,6 @@ export class Engine {
         Math.abs(arena.x - (this.camX + this.viewW / 2)) < this.viewW / 2 + 150 && Math.abs(arena.y - (this.camY + this.viewH / 2)) < this.viewH / 2 + 150) {
       this.drawTrainingFloor(arena.x + ox, arena.y + oy);
     }
-
-    // plane wreck at crash site
-    this.drawWreck(CRASH.x + ox, CRASH.y + oy);
 
     // collect drawables sorted by y
     interface DrawItem { y: number; fn: () => void; }
@@ -5010,20 +5072,6 @@ export class Engine {
       c.fillStyle = `rgba(255,226,138,${g * 0.55})`;
       c.beginPath(); c.arc(x, y - (referenceChest ? 76 : baseChest ? 50 : 36) - Math.sin(tnow * 3) * 3, 3, 0, Math.PI * 2); c.fill();
     }
-  }
-
-  drawWreck(x: number, y: number) {
-    const c = this.ctx;
-    if (x < -200 || x > this.viewW + 200 || y < -200 || y > this.viewH + 200) return;
-    this.drawShadow(x, y + 12, 50);
-    c.save();
-    c.translate(x, y);
-    c.rotate(-0.3);
-    c.scale(0.75, 0.75);
-    this.drawIntroPlane(0, 0, 0);
-    c.fillStyle = "#454752"; c.fillRect(-14, -4, 24, 12); c.fillRect(-24, 4, 18, 5);
-    c.fillStyle = "#8b715a"; c.fillRect(-8, 0, 6, 3); c.fillRect(5, 4, 5, 3);
-    c.restore();
   }
 
   drawVillager(v: Villager, ox: number, oy: number, tnow: number) {
@@ -5959,156 +6007,106 @@ export class Engine {
   renderCutscene(dt: number) {
     const c = this.ctx;
     c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
-    const w = this.viewW, h = this.viewH;
-    const t = this.cutT;
+    c.imageSmoothingEnabled = false;
+    const w = this.viewW, h = this.viewH, t = this.cutT;
     const shx = this.shake > 0 ? (Math.random() - 0.5) * this.shake : 0;
     const shy = this.shake > 0 ? (Math.random() - 0.5) * this.shake : 0;
 
-    if (this.cutPhase <= 1) {
-      // sky
-      const g = c.createLinearGradient(0, 0, 0, h);
-      g.addColorStop(0, "#7db8e8"); g.addColorStop(0.55, "#b8d8ee"); g.addColorStop(0.56, "#2e5e8e"); g.addColorStop(1, "#1b3a5c");
-      c.fillStyle = g; c.fillRect(0, 0, w, h);
-      // sun
-      this.drawCutsceneSun(w * 0.8, h * 0.18, Math.min(36, h * 0.07));
-      // clouds
-      c.fillStyle = "rgba(255,255,255,0.85)";
-      for (let i = 0; i < 5; i++) {
-        const cx = ((i * 230 + t * 40) % (w + 200)) - 100;
-        const cy = h * 0.12 + (i % 3) * 46;
-        c.beginPath(); c.arc(cx, cy, 24, 0, Math.PI * 2); c.arc(cx + 26, cy + 6, 18, 0, Math.PI * 2); c.arc(cx - 26, cy + 8, 16, 0, Math.PI * 2); c.fill();
-      }
-      // waves
-      c.strokeStyle = "rgba(255,255,255,0.3)"; c.lineWidth = 2;
-      for (let i = 0; i < 9; i++) {
-        const wy = h * 0.58 + i * (h * 0.05);
-        c.beginPath();
-        for (let x = 0; x <= w; x += 22) {
-          const yy = wy + Math.sin(x * 0.03 + t * 2 + i) * 4;
-          if (x === 0) c.moveTo(x, yy); else c.lineTo(x, yy);
-        }
-        c.stroke();
-      }
-      // plane
-      const px = w * 0.15 + t * (w * 0.1) + shx;
-      const py = (this.cutPhase === 0 ? h * 0.3 : h * 0.3 + (t - 4.2) * (t - 4.2) * 40) + shy + Math.sin(t * 3) * 4;
-      const rot = this.cutPhase === 0 ? 0.03 * Math.sin(t * 2) : 0.5 * Math.min(1, (t - 4.2) / 2);
-      this.drawIntroPlane(px, py, rot);
-      if (this.cutPhase === 1) {
-        // Match the old 60 Hz rate regardless of the actual display refresh.
-        this.cutParticleAcc += dt * 60;
-        const bursts = Math.floor(this.cutParticleAcc);
-        this.cutParticleAcc -= bursts;
-        for (let burst = 0; burst < bursts; burst++) {
-          for (let i = 0; i < 3 && this.particles.length < this.particleCap; i++) {
-            this.particles.push({ x: px - 40 - Math.random() * 30, y: py + (Math.random() - 0.5) * 16, vx: -80 - Math.random() * 60, vy: (Math.random() - 0.5) * 40, t: 0, max: 0.8, c: i === 0 ? "#ff9b2d" : i === 1 ? "#ffd34d" : "#555", s: 4 + Math.random() * 5, grav: -20 });
+    if (this.cutPhase <= 2) {
+      drawFlightOcean(c, w, h, t);
+      this.drawCutsceneSun(w * 0.18, h * 0.18, Math.min(36, h * 0.07));
+      if (this.cutPhase <= 1) {
+        const fall = clamp((t - INTRO_FALL) / (INTRO_IMPACT - INTRO_FALL), 0, 1);
+        // The same screen-space endpoint is used for the explosion, at every
+        // aspect ratio. The plane is never drawn once impact starts.
+        const px = w * (0.15 + Math.min(t, INTRO_FALL) * 0.1) + fall * (introImpactX(w) - w * 0.57) + shx;
+        const py = h * (0.3 + fall * fall * 0.3) + shy + Math.sin(t * 3) * 4 * (1 - fall);
+        const rot = this.cutPhase === 0 ? 0.03 * Math.sin(t * 2) : 0.65 * fall;
+        this.drawIntroPlane(px, py, rot);
+        if (this.cutPhase === 1) {
+          // Match the old 60 Hz rate regardless of the display refresh.
+          this.cutParticleAcc += dt * 60;
+          const bursts = Math.floor(this.cutParticleAcc);
+          this.cutParticleAcc -= bursts;
+          for (let burst = 0; burst < bursts; burst++) {
+            for (let i = 0; i < 3 && this.particles.length < this.particleCap; i++) {
+              this.particles.push({ x: px - 40 - Math.random() * 30, y: py + (Math.random() - 0.5) * 16, vx: -80 - Math.random() * 60, vy: (Math.random() - 0.5) * 40, t: 0, max: 0.8, c: i === 0 ? "#ff9b2d" : i === 1 ? "#ffd34d" : "#555", s: 4 + Math.random() * 5, grav: -20 });
+            }
           }
+          this.shake = Math.min(10, this.shake + dt * 24);
         }
-        this.shake = Math.min(10, this.shake + dt * 24);
+        this.updateParticles(dt);
+        for (const p of this.particles) {
+          c.globalAlpha = 1 - p.t / p.max; c.fillStyle = p.c;
+          c.fillRect(p.x, p.y, p.s, p.s);
+        }
+        c.globalAlpha = 1;
+      } else {
+        c.save(); c.translate(shx, shy);
+        drawIntroExplosion(c, w, h, t);
+        c.restore();
+        if (this.flashWhite > 0) {
+          c.fillStyle = `rgba(255,249,228,${this.flashWhite * 0.55})`; c.fillRect(0, 0, w, h);
+        }
       }
-      // particles (screen space)
-      this.updateParticles(dt);
-      for (const p of this.particles) {
-        c.globalAlpha = 1 - p.t / p.max; c.fillStyle = p.c;
-        c.fillRect(p.x, p.y, p.s, p.s);
+      c.fillStyle = "#090e17";
+      c.fillRect(0, 0, w, h * 0.07); c.fillRect(0, h * 0.93, w, h * 0.07);
+      if (this.cutPhase <= 1) {
+        c.textAlign = "center"; c.font = "italic 16px Georgia, serif"; c.fillStyle = "#fff";
+        const caption = this.cutPhase === 0 ? "Em algum lugar sobre o oceano..." : "⚠ FALHA NO MOTOR ⚠";
+        if (this.cutPhase === 1 && Math.sin(t * 10) > 0) c.fillStyle = "#ff8a73";
+        c.fillText(caption, w / 2, h * 0.975);
       }
-      c.globalAlpha = 1;
-      // letterbox + caption
-      c.fillStyle = "#000";
-      c.fillRect(0, 0, w, h * 0.08); c.fillRect(0, h * 0.92, w, h * 0.08);
-      c.textAlign = "center"; c.font = "italic 16px Georgia, serif"; c.fillStyle = "#fff";
-      const cap = this.cutPhase === 0 ? "Em algum lugar sobre o oceano..." : "⚠ FALHA NO MOTOR ⚠";
-      if (this.cutPhase === 1 && Math.sin(t * 10) > 0) c.fillStyle = "#ff6060";
-      c.fillText(cap, w / 2, h * 0.965);
-    } else if (this.cutPhase === 2) {
-      // Time-based impact, flame, smoke and water spray; skipping the intro and
-      // different refresh rates do not alter gameplay or particle counts.
-      const progress = clamp((t - 7.2) / 1.4, 0, 1), x = w * 0.72, y = h * 0.63;
-      c.fillStyle = "#1a3855"; c.fillRect(0, 0, w, h);
-      c.fillStyle = "#284f70"; c.fillRect(0, y, w, h - y);
-      c.save(); c.globalAlpha = Math.max(0, 1 - progress * 0.85);
-      for (let i = 0; i < 10; i++) {
-        const a = i * 2.399963, reach = (28 + i * 7) * (0.4 + progress);
-        c.fillStyle = i % 3 === 0 ? "#594a46" : i % 2 ? "#f0782e" : "#f9ba4e";
-        c.beginPath(); c.arc(x + Math.cos(a) * reach, y - Math.abs(Math.sin(a)) * reach, 20 + progress * (18 + i * 2), 0, Math.PI * 2); c.fill();
-      }
-      c.fillStyle = "#fff4b9"; c.beginPath(); c.arc(x, y - 12, Math.max(0, 48 * (1 - progress)), 0, Math.PI * 2); c.fill();
-      c.strokeStyle = "#d0edf0"; c.lineWidth = 3 + progress * 3;
-      c.beginPath(); c.ellipse(x, y + 8, 25 + progress * 145, 6 + progress * 28, 0, Math.PI, Math.PI * 2); c.stroke();
-      for (let i = 0; i < 18; i++) {
-        const a = Math.PI + i * Math.PI / 17, reach = 40 + progress * (70 + (i % 5) * 20);
-        c.fillStyle = i % 3 ? "#f4c77b" : "#d7eef1"; c.fillRect(x + Math.cos(a) * reach, y + Math.sin(a) * reach * 0.75 + progress * progress * 65, 4 + i % 3, 4 + i % 3);
-      }
-      c.restore();
-      if (this.flashWhite > 0) { c.fillStyle = `rgba(255,255,255,${this.flashWhite * 0.65})`; c.fillRect(0, 0, w, h); }
     } else {
-      // beach dusk scene
-      const g = c.createLinearGradient(0, 0, 0, h);
-      g.addColorStop(0, "#2c2a4a"); g.addColorStop(0.45, "#8a4a62"); g.addColorStop(0.6, "#e8955c"); g.addColorStop(0.62, "#1b3a5c"); g.addColorStop(0.75, "#d9c38a"); g.addColorStop(1, "#c9b37a");
-      c.fillStyle = g; c.fillRect(0, 0, w, h);
-      // sun setting
-      this.drawCutsceneSun(w * 0.5, h * 0.58, 29);
-      // stars fading in
-      c.fillStyle = "rgba(255,255,255,0.8)";
-      for (let i = 0; i < 24; i++) {
-        const sx = (i * 977) % w, sy = ((i * 331) % Math.floor(h * 0.4));
-        if (Math.sin(t * 2 + i) > 0.2) c.fillRect(sx, sy, 2, 2);
+      drawLandingBackdrop(c, w, h, t);
+      const narrow = w < 520;
+      const boxH = narrow ? 142 : h < 500 ? 100 : 118;
+      const boxBottom = h - Math.max(30, h * 0.065);
+      const boxY = boxBottom - boxH;
+      const ground = Math.min(h * 0.7, boxY - 15);
+      const palmScale = clamp(Math.min(h / 720 * 1.25, w / 700 * 1.25), 0.65, 1.4);
+      for (const [x, flip] of [[w * 0.055, false], [w * 0.965, true]] as const) {
+        c.save(); c.translate(x, ground + 32); c.scale(palmScale, palmScale);
+        if (!(this.settings.craftPix && drawCraftPlant(c, "palm", 0, 0, 0, flip))) {
+          drawSprite(c, "tree_palm", 0, 0, { flip });
+        }
+        c.restore();
       }
-      // wreck
-      this.ctxWreckOnBeach(w * 0.72, h * 0.8, t);
-      // player lying/standing
-      const wake = clamp((t - 9) / 1.4, 0, 1);
-      c.save();
-      c.translate(w * 0.34, h * 0.84);
-      c.rotate((1 - wake) * Math.PI / 2);
-      this.drawHumanoid(0, 0, "player", 0, false, 0);
-      c.restore();
-      // Rian approaching
-      const rx = w * (0.9 - clamp((t - 8.6) / 2.2, 0, 1) * 0.42);
-      this.drawHumanoid(rx, h * 0.84, "rian", Math.PI, t < 11, t * 8);
-      // fire sticks
-      // dialogue box
-      if (this.dialogueIdx >= 0) {
-        const d = this.dialogue[this.dialogueIdx];
-        c.fillStyle = "rgba(8,10,18,0.88)";
-        this.rr(w * 0.08, h - 150, w * 0.84, 110, 14); c.fill();
-        c.strokeStyle = "rgba(255,210,120,0.4)"; c.lineWidth = 2;
-        this.rr(w * 0.08, h - 150, w * 0.84, 110, 14); c.stroke();
-        c.textAlign = "left";
-        c.font = "bold 15px system-ui"; c.fillStyle = "#ffd34d";
-        c.fillText(d.who, w * 0.08 + 20, h - 122);
-        c.font = "14px system-ui"; c.fillStyle = "#e8eef4";
-        this.wrapText(d.text, w * 0.08 + 20, h - 100, w * 0.84 - 40, 20);
-        c.textAlign = "right"; c.font = "12px system-ui"; c.fillStyle = "#8aa0b8";
-        const cont = this.dialogueIdx < this.dialogue.length - 1 ? "toque / ESPAÇO para continuar ▸" : "toque / ESPAÇO para começar ▸";
-        if (Math.sin(t * 4) > -0.3) c.fillText(cont, w * 0.92 - 16, h - 52);
-      }
-      c.fillStyle = "#000";
-      c.fillRect(0, 0, w, h * 0.06); c.fillRect(0, h * 0.94, w, h * 0.06);
-    }
-    // skip hint
-    c.textAlign = "right"; c.font = "12px system-ui"; c.fillStyle = "rgba(255,255,255,0.6)";
-    c.fillText("ESC: pular cutscene", w - 14, 24 + (this.cutPhase <= 1 ? this.viewH * 0.08 : 0));
-  }
 
-  ctxWreckOnBeach(x: number, y: number, t: number) {
-    const c = this.ctx;
-    c.save(); c.translate(x, y); c.rotate(-0.22);
-    c.scale(0.82, 0.82); this.drawIntroPlane(0, 0, 0);
-    c.fillStyle = "#4c5055"; c.fillRect(-15, -7, 28, 13); c.fillRect(0, 7, 15, 5);
-    c.restore();
-    // smoke
-    c.fillStyle = "rgba(60,60,60,0.5)";
-    for (let i = 0; i < 4; i++) {
-      const sy = y - 30 - ((t * 30 + i * 40) % 160);
-      const sx = x + Math.sin(t + i) * 10;
-      const r = 8 + ((t * 30 + i * 40) % 160) * 0.12;
-      c.beginPath(); c.arc(sx, sy, r, 0, Math.PI * 2); c.fill();
+      // The exact same CraftPix hero/Rian and their animations are used in
+      // the world and the scene; no replacement character design is drawn.
+      const wake = clamp((t - INTRO_BEACH - 0.35) / 1.3, 0, 1);
+      const playerX = w * (narrow ? 0.39 : 0.40);
+      const actorScale = w >= 600 && h >= 500 ? 4 / 3 : 1;
+      this.drawShadow(playerX, ground + 3, 18 * actorScale);
+      c.save(); c.translate(playerX, ground); c.scale(actorScale, actorScale);
+      c.rotate((1 - wake) * Math.PI / 2);
+      this.drawHumanoid(0, 0, "player", Math.PI / 2, false, 0, 1, undefined, undefined, 1, false);
+      c.restore();
+      const approach = clamp((t - INTRO_BEACH) / 2.1, 0, 1);
+      const rianX = w * (0.91 - approach * (narrow ? 0.29 : 0.33));
+      this.drawShadow(rianX, ground + 3, 14 * actorScale);
+      c.save(); c.translate(rianX, ground); c.scale(actorScale, actorScale);
+      this.drawHumanoid(0, 0, "rian", Math.PI, approach < 1, t * 8, 1, undefined, undefined, 1, false);
+      c.restore();
+
+      if (this.dialogueIdx >= 0) {
+        const d = this.dialogue[this.dialogueIdx], left = w * 0.08, width = w * 0.84;
+        c.fillStyle = "rgba(8,15,23,0.91)";
+        this.rr(left, boxY, width, boxH, 14); c.fill();
+        c.strokeStyle = "rgba(255,218,143,0.6)"; c.lineWidth = 2;
+        this.rr(left, boxY, width, boxH, 14); c.stroke();
+        c.textAlign = "left"; c.font = "bold 15px system-ui"; c.fillStyle = "#ffd776";
+        c.fillText(d.who, left + 18, boxY + 24);
+        c.font = `${narrow ? 13 : 14}px system-ui`; c.fillStyle = "#f1f4ef";
+        this.wrapText(d.text, left + 18, boxY + 47, width - 36, narrow ? 19 : 20);
+        c.textAlign = "right"; c.font = "12px system-ui"; c.fillStyle = "#b3c7c7";
+        const cont = this.dialogueIdx < this.dialogue.length - 1 ? "toque / ESPAÇO para continuar ▸" : "toque / ESPAÇO para começar ▸";
+        if (Math.sin(t * 4) > -0.3) c.fillText(cont, left + width - 16, boxBottom - 13);
+      }
+      c.fillStyle = "#090e17";
+      c.fillRect(0, 0, w, h * 0.045); c.fillRect(0, h * 0.955, w, h * 0.045);
     }
-    // small fire
-    const fl = Math.sin(t * 12) * 3;
-    c.fillStyle = "#ff9b2d";
-    c.beginPath(); c.moveTo(x - 30, y - 24 - fl); c.lineTo(x - 38, y - 4); c.lineTo(x - 22, y - 4); c.closePath(); c.fill();
   }
 
   wrapText(text: string, x: number, y: number, maxW: number, lh: number) {

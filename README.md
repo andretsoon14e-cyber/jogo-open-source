@@ -35,6 +35,12 @@ O padrão para novos jogadores é **FPS sem limite**. Quem já tinha um limite s
 
 [Veja as capturas, animações e amostras de áudio das melhorias](docs/previas-2026-10-30/).
 
+## Introdução e praia
+
+Na história, o avião cai no mar e desaparece após a explosão; não há destroços dele na cena da praia nem no mundo jogável. O efeito visual usa uma folha pixel art CC0 com clarão, fumaça e respingos, e o som também é uma amostra CC0: [créditos visuais](public/effects/CREDITOS.md) e [créditos de áudio](public/audio/CREDITOS.md). A reprodução respeita o volume de efeitos. No celular, **Pular introdução** permite entrar direto no jogo; também é possível usar Esc ou o botão Start do controle.
+
+Partidas novas têm uma enseada ligada ao oceano visível do ponto de chegada, com Rian, baús e trilha ainda em terra firme. Recursos são reposicionados, não excluídos ou reordenados. Saves antigos mantêm sua costa anterior para não colocar construções, recursos ou jogadores embaixo d’água; uma nova partida passa a usar a costa nova. O protagonista e Rian continuam usando os designs CraftPix antigos **quando os atlas opcionais abaixo estiverem instalados e ativados**; sem eles, a arte procedural continua como alternativa. A prévia local pode usar os ZIPs autorizados sem publicá-los no repositório.
+
 ## Artes CraftPix opcionais
 
 Os ZIPs originais não são publicados neste repositório. Para usar localmente os pacotes CraftPix fornecidos, guarde os ZIPs em uma pasta no seu computador, instale as dependências de desenvolvimento e execute:
@@ -105,7 +111,7 @@ As imagens `85` e `86` permitem importar os componentes da **Arena de treino**: 
 
 Novas partidas começam com um perímetro menor e ganham anéis maiores pelas expansões. Saves anteriores mantêm a barraca, o raio e os encaixes do primeiro anel originais. Depois da escolta, Rian fica na base por padrão; em **Pessoas → Rian**, escolha **Acompanhar** para chamá-lo ou **Ficar na base** para dispensá-lo.
 
-Árvores têm distribuição irregular e colisão menor, concentrada no tronco; é possível deslizar ao redor e sair se um save antigo começar dentro dele. Copas ficam translúcidas quando escondem o jogador ou monstros. Quando cortadas, deixam um toco que pode ser quebrado com o machado para render mais três madeiras. Moradores caminham entre pontos da vila; animais alternam deslocamento, pausas e fuga. Monstros passam pelas árvores e persistem no desvio de água e edifícios, mas ainda usam navegação local, não um percurso completo pelo mapa. O avião e a explosão da introdução são desenhados no jogo, sem copiar a imagem de avião com marca d'água.
+Árvores têm distribuição irregular e colisão menor, concentrada no tronco; é possível deslizar ao redor e sair se um save antigo começar dentro dele. Copas ficam translúcidas quando escondem o jogador ou monstros. Quando cortadas, deixam um toco que pode ser quebrado com o machado para render mais três madeiras. Moradores caminham entre pontos da vila; animais alternam deslocamento, pausas e fuga. Monstros passam pelas árvores e persistem no desvio de água e edifícios, mas ainda usam navegação local, não um percurso completo pelo mapa. O avião da introdução é desenhado no jogo, sem copiar a imagem de avião com marca d'água; ele deixa de aparecer após o impacto.
 
 ## Resgates, treinamento e profissões
 
@@ -158,6 +164,7 @@ Para os testes visuais/de navegação, instale também o navegador do Playwright
 
 ```bash
 npm run test:browser
+npm run test:intro-browser # história, áudio da explosão, pulo e celular
 APP_URL=http://localhost:3000 npm run test:audio-browser # MP3 reais, gesto, volume e fluxo do jogo
 APP_URL=http://localhost:3000 npm run test:inventory-browser # mochila vazia, coleta e save
 npm run test:craftpix-browser  # usa atlas sintéticos, sem exigir os ZIPs

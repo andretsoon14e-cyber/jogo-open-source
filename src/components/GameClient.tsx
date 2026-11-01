@@ -6,6 +6,7 @@ import {
   RES_ICON, RES_LABEL, TOOL_ICON, TOOL_LABEL, DIFF_LABEL, ResKey,
 } from "@/game/engine";
 import { music } from "@/game/music";
+import { loadCraftPix } from "@/game/craftpix";
 import { GAME_TITLE, GAME_TAGLINE } from "@/game/identity";
 import { getPortraitUrl } from "@/game/sprites";
 import { Icon, type IconName } from "@/components/Icons";
@@ -210,7 +211,7 @@ export default function GameClient() {
 
   /* ---------- ações ---------- */
   const startSingle = (diff: Difficulty, cont: boolean) => {
-    music.ensure();
+    music.ensure(); music.resume();
     setDifficulty(diff); setMode("single");
     setGameCfg({ seed: randomSeed(), continueSave: cont });
     setScreen("game");
@@ -222,6 +223,7 @@ export default function GameClient() {
     setSnap(null);
   };
   const mpCreate = async () => {
+    music.ensure(); music.resume();
     setMpBusy(true); setMpError("");
     try {
       const res = await fetch("/api/mp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "create", difficulty }) });
@@ -238,6 +240,7 @@ export default function GameClient() {
     finally { setMpBusy(false); }
   };
   const mpDoJoin = async () => {
+    music.ensure(); music.resume();
     setMpBusy(true); setMpError("");
     try {
       const res = await fetch("/api/mp", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "join", code: mpJoin }) });
@@ -486,6 +489,12 @@ export default function GameClient() {
   return (
     <div className="fixed inset-0 bg-slate-950 overflow-hidden select-none">
       <canvas ref={canvasRef} className="w-full h-full block touch-none" />
+      {gameState === "cutscene" && (
+        <button type="button" onClick={() => engineRef.current?.skipCutscene()}
+          className="absolute right-3 top-3 z-30 rounded-lg border border-white/30 bg-slate-950/80 px-3 py-2 text-xs font-bold text-white hover:bg-slate-800 cursor-pointer">
+          Pular introdução · Esc
+        </button>
+      )}
 
       {snap?.underAttack && gameState === "playing" && (
         <div className="pointer-events-none absolute inset-0 z-10 border-[6px] border-red-600/40 animate-alarm" />
@@ -635,7 +644,7 @@ export default function GameClient() {
           onMenu={() => { setScreen("menu"); setSnap(null); setGameState("cutscene"); }} />
       )}
 
-      {(isTouch || settings.controls === "touch") && settings.controls !== "keyboard" && settings.controls !== "gamepad" && (gameState === "playing" || gameState === "cutscene") && !showSettings && (
+      {(isTouch || settings.controls === "touch") && settings.controls !== "keyboard" && settings.controls !== "gamepad" && gameState === "playing" && !showSettings && (
         <>
           <div
             ref={joyRef}
@@ -797,6 +806,13 @@ function Toggle({ label, desc, on, onChange }: { label: string; desc?: string; o
 }
 
 function SettingsModal({ settings, onChange, onClose, audioOn }: { settings: GameSettings; onChange: (p: Partial<GameSettings>) => void; onClose: () => void; audioOn: boolean }) {
+  const [classicHero, setClassicHero] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!settings.craftPix) return;
+    let active = true;
+    void loadCraftPix().then((status) => { if (active) setClassicHero(status.hero); });
+    return () => { active = false; };
+  }, [settings.craftPix]);
   return (
     <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/70 p-3" onClick={onClose}>
       <div role="dialog" aria-modal="true" aria-label="Configurações" onClick={(e) => e.stopPropagation()} className="bg-slate-950 border border-amber-700/60 rounded-2xl w-full max-w-md max-h-[88vh] overflow-y-auto p-4 shadow-2xl">
@@ -829,7 +845,12 @@ function SettingsModal({ settings, onChange, onClose, audioOn }: { settings: Gam
             ))}
           </div>
           <Toggle label="Movimento das árvores" desc="Balanço das copas e folhas ao vento; desative para reduzir movimento" on={settings.treeMotion} onChange={(v) => onChange({ treeMotion: v })} />
-          <Toggle label="Artes CraftPix e referências" desc="Usa os pacotes CraftPix e referências locais quando disponíveis; desative para voltar ao visual anterior" on={settings.craftPix} onChange={(v) => onChange({ craftPix: v })} />
+          <Toggle label="Artes CraftPix e referências" desc="Usa os personagens clássicos e outras artes locais quando instaladas; desligado, usa a alternativa procedural" on={settings.craftPix} onChange={(v) => onChange({ craftPix: v })} />
+          {settings.craftPix && classicHero !== null && (
+            <p role="status" className={`text-[10px] leading-relaxed ${classicHero ? "text-emerald-400" : "text-amber-300"}`}>
+              {classicHero ? "Personagem clássico instalado." : "Personagem clássico não instalado neste servidor; usando a arte alternativa. Veja a importação no README."}
+            </p>
+          )}
         </section>
 
         <section className="border-t border-slate-800 py-2">

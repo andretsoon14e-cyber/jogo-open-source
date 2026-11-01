@@ -97,6 +97,27 @@ test("a praia tem saída e caminho até a base em várias sementes", () => {
     }
     assert.ok(canReachBase(game), `base inacessível, semente ${seed}`);
     assert.notEqual(game.tileAt(game.allies[0].x, game.allies[0].y), 0, `Rian preso, semente ${seed}`);
+    assert.equal(game.beachLayout, "shore");
+    const visibleSea = (width, height) => {
+      let count = 0;
+      for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
+        const index = y * SIZE + x;
+        if (game.tiles[index] === 0 && game.oceanTiles[index] &&
+            Math.abs((x + 0.5) * TILE - WAKE.x) < width / 2 && Math.abs((y + 0.5) * TILE - WAKE.y) < height / 2) count++;
+      }
+      return count;
+    };
+    assert.ok(visibleSea(1280, 720) >= 65, `sem mar suficiente no desktop, semente ${seed}`);
+    assert.ok(visibleSea(390, 844) >= 24, `sem mar suficiente no celular, semente ${seed}`);
+    assert.ok(game.nodes.every((node) => game.tileAt(node.x, node.y) !== 0), `recurso submerso, semente ${seed}`);
+    assert.ok(game.chests.every((chest) => game.tileAt(chest.x, chest.y) !== 0), `baú submerso, semente ${seed}`);
+    // The new water is connected to the map's southern ocean, not a lake.
+    const column = Math.floor(WAKE.x / TILE), startY = Math.floor((WAKE.y + 200) / TILE);
+    for (let y = startY; y < SIZE; y++) {
+      const index = y * SIZE + column;
+      assert.equal(game.tiles[index], 0, `enseada sem saída para o oceano, ${seed}/${y}`);
+      assert.equal(game.oceanTiles[index], 1, `água não marcada como mar, ${seed}/${y}`);
+    }
     game.destroy();
   }
 });
@@ -304,7 +325,7 @@ test("criaturas próximas emitem sons apenas quando a opção está ligada", () 
   }
 });
 
-test("um save antigo no avião é recuperado sem perder recursos", () => {
+test("save antigo no local do avião permanece jogável sem destroço ou perda de recursos", () => {
   storage.clear();
   storage.set("ilha-save-dificil-single", JSON.stringify({
     v: 2, seed: 8, px: CRASH.x, py: CRASH.y, hp: 88, maxHp: 100,
@@ -319,14 +340,17 @@ test("um save antigo no avião é recuperado sem perder recursos", () => {
   assert.equal(game.inv.wood, 57);
   assert.equal(game.hp, 88);
   assert.equal(game.score, 33);
-  assert.equal(game.px, WAKE.x);
-  assert.equal(game.py, WAKE.y);
+  assert.equal(game.beachLayout, "legacy");
+  assert.equal(game.px, CRASH.x);
+  assert.equal(game.py, CRASH.y);
   assert.ok(game.escort.active);
   game.updateSpawns = noop;
   game.updateMonsters = noop;
+  // Isolate the former wreck footprint: this seed has a real rock north of it.
+  game.nodes = []; game.nodeBuckets.clear(); game.animals = [];
   game.keys.add("w");
   for (let i = 0; i < 30; i++) game.update(1 / 60, { mx: 0, my: 0 });
-  assert.ok(game.py < WAKE.y - 35);
+  assert.ok(game.py < CRASH.y - 35, "não há colisão invisível do avião");
   game.destroy();
 });
 
@@ -1438,4 +1462,101 @@ test("arena pode ser posicionada pela prévia, cobra só ao confirmar e é salva
   assert.equal(loaded.structures.filter((s) => s.type === "training").length, 1);
   assert.equal(loaded.legacyTerritory, false);
   loaded.destroy(); game.destroy();
+});
+
+test("costas de saves antigos mantêm terreno original, construções e progresso", () => {
+  storage.clear();
+  const original = {
+    v: 2, seed: 8, px: WAKE.x, py: WAKE.y + 180, hp: 77, maxHp: 100,
+    inv: { wood: 57, stone: 9, fiber: 3, food: 2, iron: 4, crystal: 1 },
+    tools: { axe: 2, pick: 1, sword: 1 }, time: 280, day: 3, score: 80, kills: 4, deaths: 0,
+    // This was dry land in the old layout and is water in the new one.
+    structures: [{ type: "house", x: WAKE.x + 96, y: WAKE.y + 200, hp: 201 }],
+    questP: [10, 0, 0, 0, 0, 0, 0], questDone: [false, false, false, false, false, false, false],
+    allies: ["rian"], visited: [], nodeHp: [[12, 5, 0]], chests: [true, false], escortDone: true,
+  };
+  storage.set("ilha-save-dificil-single", JSON.stringify(original));
+  const legacy = makeEngine(8, true);
+  try {
+    assert.equal(legacy.state, "playing");
+    assert.equal(legacy.beachLayout, "legacy");
+    assert.equal(legacy.px, original.px); assert.equal(legacy.py, original.py);
+    assert.notEqual(legacy.tileAt(original.structures[0].x, original.structures[0].y), 0);
+    assert.deepEqual([legacy.structures[0].x, legacy.structures[0].y, legacy.structures[0].hp], [original.structures[0].x, original.structures[0].y, 201]);
+    assert.equal(legacy.inv.wood, 57); assert.equal(legacy.tools.axe, 2);
+    assert.equal(legacy.nodes[12].hp, 5); assert.equal(legacy.chests[0].opened, true);
+    assert.equal(createHash("sha256").update(legacy.tiles).digest("hex").slice(0, 16), "beaa5559a1732cf6", "terreno igual ao da versão anterior à enseada");
+    legacy.saveGame(true);
+    const written = JSON.parse(storage.get("ilha-save-dificil-single"));
+    assert.equal(written.beachLayout, "legacy");
+    const again = makeEngine(222, true);
+    try {
+      assert.equal(again.opts.seed, 8); assert.equal(again.beachLayout, "legacy");
+      assert.deepEqual(again.tiles, legacy.tiles); assert.equal(again.structures[0].hp, 201);
+      assert.equal(again.nodes[12].hp, 5); assert.equal(again.chests[0].opened, true);
+    } finally { again.destroy(); }
+  } finally { legacy.destroy(); storage.clear(); }
+});
+
+test("novo save reabre a mesma enseada sem alterar a ordem ou estado dos recursos", () => {
+  storage.clear();
+  const initial = makeEngine(23);
+  try {
+    initial.skipCutscene();
+    initial.nodes[12].hp = 4; initial.chests[0].opened = true; initial.inv.wood = 21;
+    initial.saveGame(true);
+    const saved = storage.get("ilha-save-dificil-single");
+    assert.equal(JSON.parse(saved).beachLayout, "shore");
+    for (const seed of [23, 999]) {
+      storage.set("ilha-save-dificil-single", saved);
+      const loaded = makeEngine(seed, true);
+      try {
+        assert.equal(loaded.opts.seed, 23); assert.equal(loaded.beachLayout, "shore");
+        assert.deepEqual(loaded.tiles, initial.tiles);
+        assert.deepEqual(loaded.nodes.map((node) => [node.type, node.maxHp]), initial.nodes.map((node) => [node.type, node.maxHp]));
+        assert.equal(loaded.nodes[12].hp, 4); assert.equal(loaded.chests[0].opened, true); assert.equal(loaded.inv.wood, 21);
+      } finally { loaded.destroy(); }
+    }
+  } finally { initial.destroy(); storage.clear(); }
+});
+
+test("save inválido ou ausente não obriga um jogo novo a usar a costa antiga", () => {
+  for (const corrupt of [null, "{", JSON.stringify({ v: 2, seed: 8 }), JSON.stringify({
+    v: 2, seed: 8, structures: [null], questP: [], questDone: [], allies: [], visited: [], nodeHp: [],
+  })]) {
+    storage.clear(); if (corrupt !== null) storage.set("ilha-save-dificil-single", corrupt);
+    const game = makeEngine(10, true);
+    try {
+      assert.equal(game.state, "cutscene"); assert.equal(game.beachLayout, "shore");
+      assert.equal(game.tileAt(WAKE.x, WAKE.y + 200), 0);
+    } finally { game.destroy(); }
+  }
+  storage.clear();
+});
+
+test("avião só aparece antes do impacto; explosão toca uma vez e pular interrompe", () => {
+  storage.clear();
+  const game = makeEngine(33);
+  try {
+    let planes = 0, sounds = 0, stops = 0;
+    game.drawIntroPlane = () => { planes++; };
+    game.sfx.playIntroExplosion = () => { sounds++; };
+    game.sfx.stopIntroExplosion = () => { stops++; };
+    game.cutPhase = 0; game.cutT = 2; game.renderCutscene(1 / 60);
+    game.cutPhase = 1; game.cutT = 5; game.renderCutscene(1 / 60);
+    assert.equal(planes, 2, "o avião aparece na viagem e na queda");
+    game.cutPhase = 1; game.cutT = 7.19; game.frame(0.02);
+    assert.equal(game.cutPhase, 2); assert.equal(sounds, 1);
+    for (let i = 0; i < 20; i++) game.frame(1 / 60);
+    assert.equal(sounds, 1, "o efeito não se repete por quadro");
+    assert.equal(planes, 2, "o avião não reaparece na explosão");
+    game.cutPhase = 3; game.cutT = 11; game.dialogueIdx = 0; game.renderCutscene(1 / 60);
+    assert.equal(ctx.imageSmoothingEnabled, false, "personagens e explosão preservam os pixels originais");
+    assert.equal(planes, 2, "não há avião na praia cinematográfica");
+    game.flashWhite = 0.8; game.shake = 12;
+    game.skipCutscene(); game.render();
+    assert.equal(game.flashWhite, 0, "o clarão não permanece sobre o jogo ao pular");
+    assert.equal(game.shake, 0);
+    assert.equal(stops, 1); assert.equal(planes, 2, "não há avião no mundo jogável");
+  } finally { game.destroy(); storage.clear(); }
 });

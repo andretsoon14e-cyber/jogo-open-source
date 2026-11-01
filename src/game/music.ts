@@ -151,9 +151,11 @@ export class MusicManager {
 
   /** Call from an actual gesture; browsers may suspend audio until then. */
   resume() {
+    // This is called from a user gesture. Unlock the shared context even if
+    // music is disabled: sound effects have their own independent volume.
+    const ctx = this.ensure();
+    if (ctx && (ctx.state === "suspended" || (ctx.state as string) === "interrupted")) void ctx.resume().catch(() => {});
     if (this.enabled && this.volume > 0 && this.track !== "none") {
-      const ctx = this.ensure();
-      if (ctx && (ctx.state === "suspended" || (ctx.state as string) === "interrupted")) void ctx.resume().catch(() => {});
       if (!this.active) this.startDesired();
     }
     if (this.enabled && this.track === "lobby" && !this.spokenLobby && this.voiceEnabled && this.volume > 0) this.speakLobbyChant();

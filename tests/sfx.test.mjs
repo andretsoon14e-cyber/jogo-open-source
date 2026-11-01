@@ -228,3 +228,56 @@ test("voz opcional do lobby respeita música desligada e silêncio", async (t) =
   assert.ok(cancelled > before, "silenciar a música interrompe também a fala em curso");
   player.stop(); await player.ctx.close();
 });
+
+test("explosão da introdução usa amostra local, volume de efeitos e para ao pular", async (t) => {
+  const requests = [];
+  audioEnvironment(t, async (url) => { requests.push(url); return { ok: true, arrayBuffer: async () => new ArrayBuffer(8) }; });
+  const sfx = await makeSfx(), ctx = sfx.ctx;
+  sfx.prepareIntroExplosion(); sfx.prepareIntroExplosion();
+  await tick(); await tick();
+  assert.equal(requests.filter((url) => url.endsWith("/intro-explosion.mp3")).length, 1);
+  assert.equal(sfx.introExplosionReady, true);
+  sfx.vol = 0.5; sfx.playIntroExplosion();
+  assert.equal(ctx.sources.length, 1);
+  assert.equal(ctx.sources[0].buffer, sfx.introExplosion, "não usa o ruído sintético quando a amostra está pronta");
+  assert.deepEqual(ctx.sources[0].started, [0]);
+  assert.equal(ctx.gains.at(-1).gain.value, 0.72);
+  assert.equal(sfx.output.gain.value, 0.5, "controle independente de efeitos");
+  sfx.stopIntroExplosion(); assert.ok(ctx.sources[0].stopped, "pular encerra a reprodução");
+  sfx.vol = 0; sfx.playIntroExplosion();
+  assert.equal(ctx.sources.length, 1, "volume zero não inicia outro som");
+  sfx.destroy();
+});
+
+test("fallback da explosão não toca amostra atrasada após pular ou destruir", async (t) => {
+  let releaseIntro;
+  audioEnvironment(t, (url) => url.endsWith("intro-explosion.mp3")
+    ? new Promise((resolve) => { releaseIntro = resolve; })
+    : Promise.resolve({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) }));
+  const sfx = await makeSfx(), ctx = sfx.ctx;
+  sfx.prepareIntroExplosion();
+  sfx.playIntroExplosion();
+  assert.equal(ctx.sources.length, 1); assert.equal(ctx.sources[0].buffer, sfx.noiseBuffer, "fallback imediato");
+  sfx.stopIntroExplosion(); assert.ok(ctx.sources[0].stopped);
+  releaseIntro({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) });
+  await tick(); await tick();
+  assert.equal(sfx.introExplosionReady, true);
+  assert.equal(ctx.sources.length, 1, "decodificação atrasada não toca por conta própria");
+  sfx.destroy(); assert.equal(ctx.state, "closed");
+});
+
+test("contexto liberado no menu funciona com música desligada e não fecha ao sair do jogo", async (t) => {
+  audioEnvironment(t);
+  const music = new MusicManager(); music.setEnabled(false);
+  const ctx = music.ensure(); ctx.state = "suspended";
+  music.resume();
+  assert.equal(ctx.state, "running", "gesto libera os efeitos mesmo com música desativada");
+  const sfx = new Sfx(ctx); sfx.ensure();
+  await tick(); await tick();
+  assert.equal(sfx.ctx, ctx, "efeitos reutilizam o contexto liberado pelo botão inicial");
+  const output = sfx.output;
+  sfx.destroy();
+  assert.equal(output.disconnected, true);
+  assert.equal(ctx.state, "running", "o retorno ao menu não fecha a música compartilhada");
+  music.stop(); await ctx.close();
+});
