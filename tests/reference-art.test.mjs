@@ -173,3 +173,17 @@ test("importador rejeita imagens novas incorretas antes de substituir a instalaÃ
     }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test("a cerca da arena conserva o quadro completo e o centro transparente ao ser ampliada", async () => {
+  const bg = [188, 200, 194], width = 12, height = 20, pixels = rgb(width, height, bg);
+  for (let y = 2; y < 18; y++) for (let x = 2; x < 10; x++) {
+    if (x === 2 || x === 9 || y === 2 || y === 17) put(pixels, width, x, y, [64, 39, 26]);
+  }
+  const source = await sharp(pixels, { raw: { width, height, channels: 3 } }).png().toBuffer();
+  const output = await makeReferenceObject(source, { left: 0, top: 0, width, height, targetWidth: 24, targetHeight: 20, mainOnly: true, clearInside: true, stretch: true, background: bg });
+  const { data, info } = await sharp(output).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  assert.deepEqual([info.width, info.height], [24, 20]);
+  assert.equal(alpha(data, 24, 12, 2), 255, "barra superior completa");
+  assert.equal(alpha(data, 24, 12, 17), 255, "barra inferior completa");
+  assert.equal(alpha(data, 24, 12, 10), 0, "miolo permanece transparente");
+});

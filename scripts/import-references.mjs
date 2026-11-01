@@ -53,6 +53,8 @@ const hashes = {
   76: "4f163db0ac79ea61f94ecc29eef03160afd252c31790895c76fa4f7db8c7a7c7",
   77: "710a0e097dbea7d857ddc5c9a0553690d6f165b55dfc51b4e08e2f902720925b",
   83: "be413625cadec28c49aa0f01f9e3a8d40e180117c1feb0eec86d8a5436a7ad11",
+  85: "15394bc3c952231796d6603c8e726607f3105881d6d8e88a0e71a0d8bee34d31",
+  86: "b7a15fb931c1b4eb31cb83bae429297676fb8c09be49c8da4a5aea2771b71bc2",
 };
 const objects = {
   forge: { id: 8, left: 55, top: 50, width: 795, height: 640, targetWidth: 260, targetHeight: 210, mainOnly: true },
@@ -80,6 +82,13 @@ const objects = {
   barricade_2: { id: 76, left: 460, top: 415, width: 120, height: 195, targetWidth: 96, targetHeight: 128, mainOnly: true, contain: true, background: [253, 224, 184] },
   barricade_3: { id: 76, left: 885, top: 645, width: 135, height: 195, targetWidth: 96, targetHeight: 128, mainOnly: true, contain: true, background: [253, 224, 184] },
   barricade_4: { id: 76, left: 885, top: 855, width: 150, height: 220, targetWidth: 96, targetHeight: 128, mainOnly: true, contain: true, background: [253, 224, 184] },
+  // Training-ground components from the submitted previews; retain their own
+  // silhouettes and avoid incorporating the surrounding sheet or characters.
+  training_fence: { id: 85, left: 1590, top: 285, width: 125, height: 195, targetWidth: 210, targetHeight: 180, mainOnly: true, clearInside: true, stretch: true, background: [188, 200, 194] },
+  training_mat: { id: 85, left: 70, top: 840, width: 350, height: 280, targetWidth: 210, targetHeight: 168, mainOnly: true, contain: true, background: [188, 200, 194] },
+  training_canopy: { id: 86, left: 760, top: 75, width: 375, height: 300, targetWidth: 168, targetHeight: 134, mainOnly: false, contain: true, background: [188, 200, 194] },
+  training_dummy: { id: 86, left: 1130, top: 995, width: 90, height: 130, targetWidth: 44, targetHeight: 64, mainOnly: true, contain: true, background: [188, 200, 194] },
+  training_rack: { id: 86, left: 500, top: 625, width: 215, height: 155, targetWidth: 90, targetHeight: 65, mainOnly: true, contain: true, background: [188, 200, 194] },
 };
 
 // Columns and rows are bounded individually because the previews are not

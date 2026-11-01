@@ -5,7 +5,8 @@ export type ReferenceScene = "forge" | "chapel" | "market" | "camp" | "sewer";
 export type ReferenceObject = ReferenceScene | "house" | "chest" | "castle_wall" | "castle_tower" | "castle_gate" | "castle_grate"
   | "house_half_timber" | "house_wood_a" | "house_wood_b" | "house_stone"
   | "bridge_wood_h" | "bridge_wood_v" | "bridge_stone_h" | "bridge_stone_v"
-  | "barricade_1" | "barricade_2" | "barricade_3" | "barricade_4";
+  | "barricade_1" | "barricade_2" | "barricade_3" | "barricade_4"
+  | "training_fence" | "training_mat" | "training_canopy" | "training_dummy" | "training_rack";
 export type ReferenceBridge = "bridge_wood_h" | "bridge_wood_v" | "bridge_stone_h" | "bridge_stone_v";
 type ArcherAction = "idle" | "walk" | "run" | "attack";
 export type ResidentLook = "mage-red" | "mage-blue" | "archer" | "archer-hood";
@@ -19,6 +20,7 @@ const dimensions: Record<ReferenceObject, [number, number]> = {
   house_half_timber: [220, 250], house_wood_a: [220, 250], house_wood_b: [220, 250], house_stone: [220, 250],
   bridge_wood_h: [160, 108], bridge_wood_v: [64, 136], bridge_stone_h: [160, 116], bridge_stone_v: [80, 140],
   barricade_1: [96, 128], barricade_2: [96, 128], barricade_3: [96, 128], barricade_4: [96, 128],
+  training_fence: [210, 180], training_mat: [210, 168], training_canopy: [168, 134], training_dummy: [44, 64], training_rack: [90, 65],
 };
 const objects = new Map<ReferenceObject, HTMLImageElement>();
 const scenes = new Set<ReferenceScene>();

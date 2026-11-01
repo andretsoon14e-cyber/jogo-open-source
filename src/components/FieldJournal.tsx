@@ -6,7 +6,7 @@ import { hasCraftOrcs } from "@/game/craftpix";
 import { hasReferenceScene, referenceIconUrl, referenceObjectUrl, referenceSpikeUrl } from "@/game/reference-art";
 import { GAME_TITLE } from "@/game/identity";
 import { BESTIARY, EQUIPMENT, SITES, type EquipmentKey } from "@/game/world-content";
-import { RES_LABEL, TOOL_LABEL, type GamePanel, type Snapshot, type ResKey, type ToolKey, type CombatWeapon, type FenceStyle, type DefenseTier, type SpecialistId, type SpecialistDuty } from "@/game/engine";
+import { RES_LABEL, TOOL_LABEL, type GamePanel, type Snapshot, type ResKey, type ToolKey, type CombatWeapon, type FenceStyle, type DefenseTier, type SpecialistId, type SpecialistDuty, type RianDuty } from "@/game/engine";
 import { Icon } from "./Icons";
 
 export const SpriteThumb = memo(function SpriteThumb({ name, size = 46, character = false, view = "down", tool = "axe", craftPix = true, level = 1 }: { name: string; size?: number; character?: boolean; view?: "up" | "down" | "side"; tool?: ToolKey | "bow"; craftPix?: boolean; level?: number }) {
@@ -15,8 +15,8 @@ export const SpriteThumb = memo(function SpriteThumb({ name, size = 46, characte
   useEffect(() => {
     const refresh = () => {
       const barricades = ["barricade_1", "barricade_2", "barricade_3", "barricade_4"] as const;
-      const object = name === "fence_stone" ? "castle_wall" : name === "gate_stone" ? "castle_gate" : name === "tower" ? "castle_tower" : name === "barricade" ? barricades[Math.max(0, Math.min(3, level - 1))] : null;
-      setUrl(character ? getCharacterUrl(name, view, tool, craftPix, level) : (craftPix && name === "spike_trap" && referenceSpikeUrl(level)) || (craftPix && object && referenceObjectUrl(object)) || (craftPix && referenceIconUrl(name)) || getSpriteUrl(name, craftPix));
+      const object = name === "fence_stone" ? "castle_wall" : name === "gate_stone" ? "castle_gate" : name === "tower" ? "castle_tower" : name === "training" ? "training_canopy" : name === "barricade" ? barricades[Math.max(0, Math.min(3, level - 1))] : null;
+      setUrl(character ? getCharacterUrl(name, view, tool, craftPix, level) : (craftPix && name === "spike_trap" && referenceSpikeUrl(level)) || (craftPix && object && referenceObjectUrl(object)) || (craftPix && referenceIconUrl(name)) || getSpriteUrl(name === "training" ? "workbench" : name, craftPix));
     };
     refresh();
     window.addEventListener("craftpix-ready", refresh);
@@ -45,6 +45,7 @@ interface Props {
   onTool: (tool: ToolKey) => void;
   onCombatWeapon: (weapon: CombatWeapon) => void;
   onEat: () => void;
+  onRianDuty: (duty: RianDuty) => void;
   onSpecialistDuty: (id: SpecialistId, duty: SpecialistDuty) => void;
   onSpecialistUpgrade: (id: SpecialistId) => void;
 }
@@ -210,6 +211,13 @@ export default function FieldJournal(props: Props) {
 
       {panel === "people" && <div className="p-3 sm:p-5">
         <p className="text-sm leading-relaxed text-[#795b3b] mb-4">Encontre os sinais <b>!</b> no mapa e afaste as criaturas para resgatar sobreviventes. Depois, converse para convidá-los: um profissional por encontro, começando no nível 1. Moradores comuns continuam desarmados.</p>
+        <article className="journal-page mb-3" aria-label="Rian">
+          <div className="flex justify-between gap-3 items-start"><div><h3 className="font-display text-xl">Rian</h3><p className="text-xs text-[#795b3b]">Guia e defensor</p></div><b className="text-xs text-[#447a58]">{snap.escort ? "Escolta em andamento" : "Na equipe"}</b></div>
+          <p className="text-xs mt-3 leading-relaxed">{snap.escort ? "Rian está guiando você até a base. Depois da chegada, escolha se ele fica ou acompanha." : "Depois da escolta, Rian fica na base até você pedir companhia."}</p>
+          <div role="group" aria-label="Tarefa de Rian" className="flex flex-wrap gap-1.5 mt-2">
+            {([["stay", "Ficar na base"], ["follow", "Acompanhar"]] as const).map(([duty, label]) => <button key={duty} type="button" disabled={snap.escort} aria-pressed={snap.rianDuty === duty} className={`journal-button small ${snap.rianDuty === duty ? "" : "muted"}`} onClick={() => props.onRianDuty(duty)}>{label}</button>)}
+          </div>
+        </article>
         <div className="grid sm:grid-cols-2 gap-3">
           {snap.specialists.map((person) => <article key={person.id} className="journal-page" aria-label={person.name}>
             <div className="flex justify-between gap-3 items-start"><div><h3 className="font-display text-xl">{person.name}</h3><p className="text-xs text-[#795b3b]">{person.role}</p></div><b className="text-xs text-[#447a58]">{person.hired ? `Nível ${person.level}` : person.rescued ? "A salvo" : "A resgatar"}</b></div>
@@ -219,7 +227,7 @@ export default function FieldJournal(props: Props) {
                 {(person.id === "miner" ? [["mine", "Minerar"], ["rest", "Descansar"]] : [["follow", "Acompanhar"], ["defend", "Defender base"], ["train", "Treinar"]]).map(([duty, label]) => <button key={duty} type="button" aria-pressed={person.duty === duty} className={`journal-button small ${person.duty === duty ? "" : "muted"}`} onClick={() => props.onSpecialistDuty(person.id, duty as SpecialistDuty)}>{label}</button>)}
               </div>
               {person.id === "miner" ? <p className="text-xs mt-3 leading-relaxed">Construa uma pedreira. Durante o dia e sem perigo próximo, o minerador produz ferro. Depois que você coletar cristal pela primeira vez, ele também encontra cristal.</p> : <>
-                <p className="text-xs mt-3 leading-relaxed">Treino diurno na base, sem inimigos: <b>{Math.min(person.training, person.trainingTarget)}/{person.trainingTarget}s</b>. Feche o caderno para o tempo passar.</p>
+                <p className="text-xs mt-3 leading-relaxed">Treino diurno na base ou na arena, sem inimigos: <b>{Math.min(person.training, person.trainingTarget)}/{person.trainingTarget}s</b>. Feche o caderno para o tempo passar.</p>
                 {person.weaponLevel < 3 && <div className="mt-2"><Costs cost={person.upgradeCost} inv={snap.inv} craftPix={props.craftPix} /></div>}
                 <button type="button" className="journal-button small w-full mt-2" disabled={!!person.upgradeReason || !person.affordable} onClick={() => props.onSpecialistUpgrade(person.id)}>{person.upgradeReason || (person.affordable ? "Forjar próximo equipamento" : "Faltam materiais")}</button>
               </>}

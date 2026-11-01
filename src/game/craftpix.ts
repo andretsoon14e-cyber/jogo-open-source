@@ -12,6 +12,8 @@ let rianHero: HTMLCanvasElement | null = null;
 const villagerHeroes: HTMLCanvasElement[] = [];
 const orcs: HTMLImageElement[] = [];
 let plants: HTMLImageElement | null = null;
+let buildings: HTMLImageElement | null = null;
+let villageReady = false, towerReady = false;
 let loading: Promise<CraftPixStatus> | null = null;
 
 function image(name: string, width: number, height: number): Promise<HTMLImageElement> {
@@ -88,7 +90,7 @@ export function loadCraftPix(): Promise<CraftPixStatus> {
       if (!response.ok) return { ...status };
       const manifest: unknown = await response.json();
       if (!manifest || typeof manifest !== "object" || !("version" in manifest) || manifest.version !== 1) return { ...status };
-      const flags = manifest as { hero?: unknown; orcs?: unknown; plants?: unknown };
+      const flags = manifest as { hero?: unknown; orcs?: unknown; plants?: unknown; village?: unknown; tower?: unknown };
       const tasks: Promise<void>[] = [];
       if (flags.hero === true) tasks.push(Promise.all([1, 2, 3].map((n) => image(`hero-${n}`, 384, 1088))).then((loaded) => {
         heroes.splice(0, heroes.length, ...loaded); rianHero = makeRianHero(loaded[1]);
@@ -99,6 +101,9 @@ export function loadCraftPix(): Promise<CraftPixStatus> {
       }).catch(() => {}));
       if (flags.plants === true) tasks.push(image("world", 256, 70).then((loaded) => {
         plants = loaded; status.plants = true;
+      }).catch(() => {}));
+      if (flags.village === true || flags.tower === true) tasks.push(image("buildings", 640, 290).then((loaded) => {
+        buildings = loaded; villageReady = flags.village === true; towerReady = flags.tower === true;
       }).catch(() => {}));
       await Promise.all(tasks);
       window.dispatchEvent(new Event("craftpix-ready"));
@@ -111,6 +116,22 @@ export function loadCraftPix(): Promise<CraftPixStatus> {
 export function craftPixStatus(): CraftPixStatus { return { ...status }; }
 export function hasCraftHero(): boolean { return status.hero; }
 export function hasCraftOrcs(): boolean { return status.orcs; }
+export function hasCraftVillage(): boolean { return villageReady; }
+export function hasCraftTower(): boolean { return towerReady; }
+
+/** Fallback buildings from the optional village and tower packs. The original
+ * examples remain separate from the player's reference-house variants. */
+export function drawCraftVillageHouse(ctx: CanvasRenderingContext2D, index: number, x: number, y: number): boolean {
+  if (!buildings || !villageReady) return false;
+  const cell = ((index % 4) + 4) % 4;
+  ctx.drawImage(buildings, cell * 160, 0, 160, 160, x - 160, y - 320, 320, 320);
+  return true;
+}
+export function drawCraftTower(ctx: CanvasRenderingContext2D, x: number, y: number): boolean {
+  if (!buildings || !towerReady) return false;
+  ctx.drawImage(buildings, 0, 160, 70, 130, x - 70, y - 260, 140, 260);
+  return true;
+}
 
 function mod(n: number, count: number) { return ((n % count) + count) % count; }
 function progressFrame(progress: number, count: number) {

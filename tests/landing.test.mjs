@@ -379,7 +379,7 @@ test("cerca custa um pacote e coloca dois trechos no círculo da base", () => {
   assert.equal(game.inv.iron, beforeIron - (price.iron ?? 0));
   for (const p of preview) {
     assert.ok(game.structures.some((s) => s.type === "wall" && Math.hypot(s.x - p.x, s.y - p.y) < 1));
-    assert.ok(Math.abs(Math.hypot(p.x - BASE.x, p.y - BASE.y) - 350.4) < 1);
+    assert.ok(Math.abs(Math.hypot(p.x - BASE.x, p.y - BASE.y) - game.fenceSpec().fenceRadius) < 1);
   }
   game.rotateFence(3);
   assert.equal(game.placeReason, "");
@@ -394,7 +394,7 @@ test("cerca custa um pacote e coloca dois trechos no círculo da base", () => {
   game.destroy();
 });
 
-test("31 compras duplas e um portão fecham o círculo sem lacunas", () => {
+test("compras duplas e um portão fecham o círculo compacto sem lacunas", () => {
   storage.clear();
   const game = makeEngine(63);
   simplifySimulation(game);
@@ -402,18 +402,19 @@ test("31 compras duplas e um portão fecham o círculo sem lacunas", () => {
   game.px = BASE.x; game.py = BASE.y;
   game.inv.wood = 100000; game.inv.stone = 100000; game.inv.iron = 100000; game.inv.fiber = 100000; game.inv.food = 100000;
   assert.ok(game.build("wall"));
-  for (let i = 0; i < 31; i++) assert.ok(game.confirmPlace(), `par ${i + 1} não colocado`);
-  assert.equal(game.structures.filter((s) => s.type === "wall").length, 62);
+  const count = game.fenceSpec().slots;
+  for (let i = 0; i < (count - 1) / 2; i++) assert.ok(game.confirmPlace(), `par ${i + 1} não colocado`);
+  assert.equal(game.structures.filter((s) => s.type === "wall").length, count - 1);
   game.cancelPlace();
   assert.ok(game.build("gate"));
   assert.equal(game.placeReason, "");
   assert.ok(game.confirmPlace());
-  assert.equal(game.structures.length, 63);
+  assert.equal(game.structures.length, count);
   const slots = new Set(game.structures.map((s) => {
     const angle = Math.atan2(s.y - BASE.y, s.x - BASE.x);
-    return (Math.round(angle * 63 / (2 * Math.PI)) + 63) % 63;
+    return (Math.round(angle * count / (2 * Math.PI)) + count) % count;
   }));
-  assert.equal(slots.size, 63, "o anel tem uma lacuna");
+  assert.equal(slots.size, count, "o anel tem uma lacuna");
   game.destroy();
 });
 
@@ -723,7 +724,7 @@ test("o território cresce com recursos e estruturas sem perder cercas, portões
   game.px = BASE.x; game.py = BASE.y;
   game.inv = { wood: 100000, stone: 100000, fiber: 100000, food: 100000, iron: 100000, crystal: 100000 };
   assert.equal(game.territoryLevel, 1);
-  assert.equal(game.territoryRadius(), 480);
+  assert.equal(game.territoryRadius(), 320);
   assert.match(game.territoryUpgrade().reason, /nível 4/);
   assert.equal(game.upgradeTerritory(), false);
   const structure = (type, x, y) => ({ type, x, y, hp: 100, maxHp: 100, prodT: 0, open: false, rotation: 0, fenceStyle: "palisade" });
@@ -762,10 +763,11 @@ test("o território cresce com recursos e estruturas sem perder cercas, portões
   loaded.structures.push(structure("tower", BASE.x + 190, BASE.y));
   assert.ok(loaded.upgradeTerritory()); assert.equal(loaded.territoryRadius(), 960);
   assert.equal(loaded.upgradeTerritory(), false, "não existe expansão infinita");
-  const saved = JSON.parse(storage.get(game.saveKey())); delete saved.territoryLevel; delete saved.fenceRing;
+  const saved = JSON.parse(storage.get(game.saveKey())); delete saved.territoryLevel; delete saved.fenceRing; delete saved.territoryLayout;
   storage.set(game.saveKey(), JSON.stringify(saved));
   const legacy = makeEngine(77, true);
   assert.equal(legacy.territoryLevel, 1); assert.equal(legacy.fenceRing, 1);
+  assert.equal(legacy.territoryRadius(), 480); assert.equal(legacy.fenceSpec().slots, 63);
   assert.ok(firstRing.every((first) => legacy.structures.some((s) => s.type === first.type && s.x === first.x && s.y === first.y)));
   legacy.destroy(); loaded.destroy(); game.destroy();
 });
@@ -818,7 +820,8 @@ test("lacunas isoladas no perímetro podem ser fechadas com cerca simples e pre�
   const game = makeEngine(70); simplifySimulation(game); game.escort.active = false; game.px = BASE.x; game.py = BASE.y;
   game.inv = { wood: 100000, stone: 100000, fiber: 100000, food: 100000, iron: 100000, crystal: 100000 };
   game.structures = [];
-  for (let i = 0; i < 63; i++) {
+  const count = game.fenceSpec().slots;
+  for (let i = 0; i < count; i++) {
     if (i === 0 || i === 3) continue;
     const p = game.fencePosition(i, 1);
     game.structures.push({ type: i === 1 ? "gate" : "wall", ...p, hp: 100, maxHp: 100, prodT: 0, open: false, rotation: 0, fenceStyle: "palisade" });
@@ -827,10 +830,10 @@ test("lacunas isoladas no perímetro podem ser fechadas com cerca simples e pre�
   const before = { ...game.inv }, cost = game.costFor("wall");
   assert.ok(game.build("wall")); assert.equal(game.fencePositions("wall").length, 1);
   assert.ok(game.confirmPlace());
-  assert.equal(game.structures.length, 62); assert.equal(game.inv.wood, before.wood - cost.wood);
+  assert.equal(game.structures.length, count - 1); assert.equal(game.inv.wood, before.wood - cost.wood);
   assert.equal(game.wallPurchaseSize(), 1);
-  assert.ok(game.confirmPlace()); assert.equal(game.structures.length, 63);
-  assert.equal(new Set(game.structures.map((s) => `${s.x}:${s.y}`)).size, 63);
+  assert.ok(game.confirmPlace()); assert.equal(game.structures.length, count);
+  assert.equal(new Set(game.structures.map((s) => `${s.x}:${s.y}`)).size, count);
   game.destroy();
 });
 
@@ -849,11 +852,12 @@ test("o último espaço fica reservado para o portão caso o anel ainda não ten
   const game = makeEngine(70); simplifySimulation(game); game.escort.active = false; game.px = BASE.x; game.py = BASE.y;
   game.inv = { wood: 100000, stone: 100000, fiber: 100000, food: 100000, iron: 100000, crystal: 100000 };
   game.structures = [];
-  for (let i = 1; i < 63; i++) game.structures.push({ type: "wall", ...game.fencePosition(i, 1), hp: 100, maxHp: 100, prodT: 0, open: false, rotation: 0, fenceStyle: "palisade" });
+  const count = game.fenceSpec().slots;
+  for (let i = 1; i < count; i++) game.structures.push({ type: "wall", ...game.fencePosition(i, 1), hp: 100, maxHp: 100, prodT: 0, open: false, rotation: 0, fenceStyle: "palisade" });
   assert.match(game.structLock("wall"), /portão/); assert.equal(game.build("wall"), false);
   assert.ok(game.build("gate")); assert.ok(game.confirmPlace());
   assert.equal(game.structures.filter((s) => s.type === "gate").length, 1);
-  assert.equal(game.structures.length, 63); game.destroy();
+  assert.equal(game.structures.length, count); game.destroy();
 });
 
 test("limite de casas cresce junto com o território", () => {
@@ -1074,17 +1078,19 @@ test("primeiras noites têm teto menor, crescem com dias e dificuldade e não em
   game.destroy();
 });
 
-test("moradores mantêm direção, pés no chão e param diante de obstáculos", () => {
+test("moradores caminham para destinos úteis, contornam obstáculos e mantêm os pés no chão", () => {
   storage.clear(); const game = makeEngine(17); simplifySimulation(game);
   const v = game.villagers[0]; game.villagers = [v]; game.chests = []; game.nearbyNodes = () => [];
-  v.x = 58 * TILE; v.y = 122 * TILE; v.dir = 0; v.steps = 0; v.vx = 27; v.vy = 0; v.t = 5;
+  v.x = 58 * TILE; v.y = 122 * TILE; v.dir = 0; v.steps = 0;
+  v.goalX = v.x + 100; v.goalY = v.y; v.t = 10;
   game.px = v.x + 1000; game.py = v.y; game.tileAt = () => 2;
   const wall = v.x + 5; game.referenceStructureAt = (x) => x >= wall;
   game.updateVillagers(0.1); assert.ok(v.x > 58 * TILE); assert.ok(v.steps > 0);
-  game.updateVillagers(0.1);
-  assert.ok(v.x < wall); assert.equal(v.vx, 0); assert.equal(v.vy, 0);
-  const dir = v.dir; game.px = v.x - 100; game.updateVillagers(0.1);
-  assert.equal(v.dir, dir, "parado não deve girar instantaneamente para o jogador");
+  for (let i = 0; i < 25; i++) game.updateVillagers(0.1);
+  assert.ok(v.x < wall, "não atravessa a construção");
+  assert.ok(Number.isFinite(v.dir));
+  v.goalX = undefined; v.goalY = undefined; v.stopT = 0; game.referenceStructureAt = () => false;
+  game.updateVillagers(0.1); assert.ok(Number.isFinite(v.goalX) && Number.isFinite(v.goalY), "seleciona outro destino na vila");
   game.destroy();
 });
 
@@ -1296,4 +1302,140 @@ test("raio da maga é apenas um efeito visual do projétil, sem dano adicional",
   game.projectiles = [{ kind: "ally", x: 1220, y: 1100, vx: 420, vy: 0, t: 2, dmg: 7 }];
   game.updateMonsters(0.2); assert.equal(target.hp, 86); assert.equal(game.magicEffects.length, 0);
   game.destroy(); storage.clear();
+});
+
+test("Rian acompanha só quando solicitado e a escolha sobrevive ao save", () => {
+  storage.clear(); const game = makeEngine(12); simplifySimulation(game);
+  const rian = game.allies.find((ally) => ally.id === "rian");
+  game.escort.active = true;
+  assert.equal(game.setRianDuty("follow"), false, "durante a escolta, Rian conduz o caminho");
+  game.escort.active = false; game.monsters = []; game.px = BASE.x + 1400; game.py = BASE.y + 1000;
+  rian.x = BASE.x; rian.y = BASE.y;
+  game.updateAllies(0.1);
+  assert.equal(game.rianDuty, "stay");
+  assert.ok(Math.hypot(rian.x - BASE.x, rian.y - BASE.y) < 200, "ele não vai atrás do jogador por padrão");
+  assert.equal(game.setRianDuty("follow"), true);
+  game.updateAllies(0.1);
+  assert.ok(Math.hypot(rian.x - game.px, rian.y - game.py) < 200, "um chamado alcança o jogador");
+  const loaded = makeEngine(12, true);
+  assert.equal(loaded.rianDuty, "follow"); assert.equal(loaded.escort.active, false);
+  assert.equal(loaded.setRianDuty("stay"), true);
+  const reloaded = makeEngine(12, true);
+  const returned = reloaded.allies.find((ally) => ally.id === "rian");
+  assert.equal(reloaded.rianDuty, "stay");
+  assert.ok(Math.hypot(returned.x - BASE.x, returned.y - BASE.y) < 150, "ao carregar, Rian aparece na base");
+  reloaded.destroy(); loaded.destroy(); game.destroy();
+});
+
+test("árvores espaçadas preservam índices e deixam tocos persistentes que rendem madeira", () => {
+  storage.clear();
+  for (const seed of [1, 2, 77]) {
+    const game = makeEngine(seed);
+    const trees = game.nodes.filter((n) => n.type === "tree" || n.type === "pine");
+    for (let i = 0; i < trees.length; i++) for (let j = i + 1; j < trees.length; j++) {
+      assert.ok(Math.hypot(trees[i].x - trees[j].x, trees[i].y - trees[j].y) >= 50, `árvores sobrepostas na semente ${seed}`);
+    }
+    game.destroy();
+  }
+  const game = makeEngine(77); simplifySimulation(game); game.escort.active = false;
+  const node = game.nodes.find((n) => n.type === "tree"), index = game.nodes.indexOf(node);
+  node.hp = 1; game.harvest(node);
+  assert.equal(node.hp, 0); assert.equal(node.stumpHp, 12);
+  game.harvest(node); assert.ok(node.stumpHp > 0 && node.stumpHp < 12);
+  game.saveGame(true);
+  const loaded = makeEngine(77, true), stump = loaded.nodes[index];
+  assert.equal(stump.stumpHp, node.stumpHp);
+  loaded.drops = []; loaded.harvest(stump);
+  assert.equal(stump.stumpHp, 0); assert.equal(loaded.drops.filter((d) => d.res === "wood").length, 3);
+  loaded.saveGame(true);
+  const gone = makeEngine(77, true); assert.equal(gone.nodes[index].stumpHp, 0);
+  const oldSave = JSON.parse(storage.get(game.saveKey())); delete oldSave.nodeStumps;
+  storage.set(game.saveKey(), JSON.stringify(oldSave));
+  const legacy = makeEngine(77, true); assert.equal(legacy.nodes[index].stumpHp, 12, "saves anteriores também têm toco");
+  legacy.destroy(); gone.destroy(); loaded.destroy(); game.destroy();
+});
+
+test("arena verifica toda a área, impede respawn e recebe profissionais para treinar", () => {
+  storage.clear(); const game = makeEngine(22); simplifySimulation(game); game.escort.active = false;
+  game.px = BASE.x - 200; game.py = BASE.y - 200; game.tileAt = () => 2; game.settings.craftPix = false;
+  game.structures = []; game.monsters = []; game.nearbyNodes = () => [];
+  const x = BASE.x + 65, y = BASE.y + 65;
+  assert.equal(game.placeCheck("training", x, y), "");
+  const tree = { type: "tree", x: x + 95, y: y + 70, hp: 10, maxHp: 10, respawn: 0, wob: 0 };
+  game.nearbyNodes = () => [tree];
+  assert.match(game.placeCheck("training", x, y), /árvores/);
+  tree.hp = 0; tree.respawn = 0.01; game.depletedNodes.add(tree);
+  const arena = { type: "training", x, y, hp: 220, maxHp: 220, prodT: 0, open: false, rotation: 0, fenceStyle: "palisade" };
+  game.structures.push(arena); game.update(0.1, { mx: 0, my: 0 });
+  assert.equal(tree.hp, 0); assert.ok(tree.respawn > 0, "árvore não cresce por cima do piso");
+  assert.match(game.placeCheck("farm", x + 80, y), /arena/);
+  game.specialists.archer.rescued = true; assert.ok(game.hireSpecialist("archer"));
+  assert.ok(game.setSpecialistDuty("archer", "train"));
+  const archer = game.allies.find((ally) => ally.id === "archer"), station = game.trainingStation(arena, "archer");
+  archer.x = station.x; archer.y = station.y; archer.vx = 0; archer.vy = 0;
+  game.isNight = () => false; game.updateAllies(0.1); game.updateSpecialists(5);
+  assert.ok(archer.atkCd > 0, "a prática usa a animação de ataque");
+  assert.equal(game.specialists.archer.training, 5);
+  assert.equal(game.projectiles.length, 0, "treino não fere criaturas");
+  game.spawnMonster(x, y, "imp"); game.updateSpecialists(5);
+  assert.equal(game.specialists.archer.training, 5, "treino para quando há perigo");
+  game.monsters = []; game.isNight = () => true; game.updateSpecialists(5);
+  assert.equal(game.specialists.archer.training, 5, "treino acontece durante o dia");
+  game.destroy();
+});
+
+test("saves legados preservam os encaixes originais e suas ligações", () => {
+  storage.clear(); const original = makeEngine(55); simplifySimulation(original); original.escort.active = false;
+  original.legacyTerritory = true; original.px = BASE.x; original.py = BASE.y;
+  const wall = (slot) => ({ type: "wall", ...original.fencePosition(slot, 1), hp: 200, maxHp: 200, prodT: 0, open: false, rotation: 0, fenceStyle: "palisade" });
+  original.structures = [wall(0), wall(1)]; original.saveGame(true);
+  const data = JSON.parse(storage.get(original.saveKey())); delete data.territoryLayout;
+  storage.set(original.saveKey(), JSON.stringify(data));
+  const loaded = makeEngine(55, true); loaded.dpr = 0.8;
+  assert.equal(loaded.fenceSpec(1).slots, 63);
+  assert.equal(loaded.fenceSpec(1).fenceRadius, 350.4);
+  assert.deepEqual(loaded.structures.map(({ x, y }) => ({ x, y })), original.structures.map(({ x, y }) => ({ x, y })));
+  const camp = loaded.worldProps.find((p) => p.sprite === "reference_camp");
+  assert.deepEqual({ x: camp.x, y: camp.y }, { x: BASE.x - 130, y: BASE.y - 120 });
+  const links = []; loaded.drawFenceLink = (...args) => links.push(args);
+  loaded.drawFenceConnections(-BASE.x + 640, -BASE.y + 360);
+  assert.equal(links.length, 1, "trechos antigos adjacentes continuam conectados");
+  loaded.destroy(); original.destroy();
+});
+
+test("monstros contornam água próxima sem perder o aviso de ataque ou a capacidade de serem derrotados", () => {
+  storage.clear(); const game = makeEngine(42); game.skipCutscene(); game.escort.active = false;
+  game.structures = []; game.monsters = []; game.px = 1200; game.py = 1200; game.isNight = () => false;
+  game.referenceStructureAt = () => false;
+  // A small water strip lies directly between the creature and the player.
+  game.tileAt = (x, y) => x > 1080 && x < 1120 && Math.abs(y - 1200) < 18 ? 0 : 2;
+  game.spawnMonster(1050, 1200, "crawler");
+  const enemy = game.monsters[0]; enemy.state = "chase";
+  game.updateMonsters(0.1);
+  assert.notEqual(enemy.dir, 0, "escolheu uma direção lateral diante da água");
+  assert.notEqual(game.tileAt(enemy.x, enemy.y), 0);
+  game.tileAt = () => 2; enemy.x = game.px - 32; enemy.y = game.py; enemy.vx = 0; enemy.vy = 0; enemy.state = "chase"; enemy.atkCd = 0;
+  game.updateMonsters(0.01); assert.equal(enemy.state, "windup"); assert.ok(enemy.t >= 0.3, "o ataque continua telegráfico");
+  enemy.hp = 1; game.killMonster(enemy); assert.equal(game.kills, 1); assert.equal(enemy.defeated, true);
+  game.destroy();
+});
+
+test("arena pode ser posicionada pela prévia, cobra só ao confirmar e é salva", () => {
+  storage.clear(); const game = makeEngine(77); simplifySimulation(game); game.escort.active = false;
+  game.settings.craftPix = false; game.tileAt = () => 2; game.nearbyNodes = () => []; game.chests = [];
+  game.structures = []; game.px = BASE.x + 56; game.py = BASE.y + 176; game.centerCamera();
+  game.inv = { wood: 500, stone: 500, fiber: 500, food: 10, iron: 0, crystal: 0 };
+  const price = game.costFor("training"), before = { ...game.inv };
+  assert.ok(game.build("training"));
+  game.settings.controls = "kb-mouse"; game.mouseValid = true;
+  game.mouseX = BASE.x + 56 - game.camX; game.mouseY = BASE.y + 56 - game.camY;
+  game.updatePlacement(); assert.equal(game.placeReason, "");
+  assert.equal(game.inv.wood, before.wood, "a prévia não cobra materiais");
+  assert.ok(game.confirmPlace()); assert.equal(game.inv.wood, before.wood - price.wood);
+  assert.equal(game.structures.filter((s) => s.type === "training").length, 1);
+  assert.match(game.structLock("training"), /Já existe/);
+  game.saveGame(true); const loaded = makeEngine(77, true);
+  assert.equal(loaded.structures.filter((s) => s.type === "training").length, 1);
+  assert.equal(loaded.legacyTerritory, false);
+  loaded.destroy(); game.destroy();
 });

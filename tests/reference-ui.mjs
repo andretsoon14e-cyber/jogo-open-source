@@ -5,10 +5,10 @@ import sharp from "sharp";
 const base = process.env.APP_URL ?? "http://127.0.0.1:3000";
 const scene = await sharp({ create: { width: 960, height: 517, channels: 4, background: "#4a6f55" } }).png().toBuffer();
 const chapelScene = await sharp({ create: { width: 960, height: 640, channels: 4, background: "#4a6f55" } }).png().toBuffer();
-const sizes = { archer: [768, 1152], forge: [260, 210], house: [220, 250], chest: [100, 82], chapel: [240, 294], market: [200, 176], camp: [200, 200], sewer: [200, 87], spikes: [576, 384], barricade_1: [96, 128], barricade_2: [96, 128], barricade_3: [96, 128], barricade_4: [96, 128] };
+const sizes = { archer: [768, 1152], forge: [260, 210], house: [220, 250], chest: [100, 82], chapel: [240, 294], market: [200, 176], camp: [200, 200], sewer: [200, 87], spikes: [576, 384], barricade_1: [96, 128], barricade_2: [96, 128], barricade_3: [96, 128], barricade_4: [96, 128], training_canopy: [168, 134] };
 const images = {};
 for (const [name, [width, height]] of Object.entries(sizes)) images[name] = await sharp({ create: { width, height, channels: 4, background: "#6c924b" } }).png().toBuffer();
-const manifest = JSON.stringify({ version: 1, archer: true, spikes: true, objects: { forge: true, house: true, chest: true, chapel: true, market: true, camp: true, sewer: true, barricade_1: true, barricade_2: true, barricade_3: true, barricade_4: true }, scenes: { forge: true, chapel: true, market: true, camp: true, sewer: true } });
+const manifest = JSON.stringify({ version: 1, archer: true, spikes: true, objects: { forge: true, house: true, chest: true, chapel: true, market: true, camp: true, sewer: true, barricade_1: true, barricade_2: true, barricade_3: true, barricade_4: true, training_canopy: true }, scenes: { forge: true, chapel: true, market: true, camp: true, sewer: true } });
 const browser = await chromium.launch({ headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage"], ...(process.env.CHROMIUM_EXECUTABLE_PATH ? { executablePath: process.env.CHROMIUM_EXECUTABLE_PATH } : {}) });
 function saveAt(x, y, structures = []) {
   return { v: 2, seed: 77, px: x, py: y, hp: 100, maxHp: 100, inv: { wood: 200, stone: 200, fiber: 100, food: 8, iron: 60, crystal: 30 }, tools: { axe: 2, pick: 2, sword: 2 }, time: 280, day: 1, score: 720, kills: 20, deaths: 0, structures, questP: [60, 20, 1, 20, 0, 2, 0], questDone: [true, true, false, false, false, false, false], allies: ["rian", "maya", "archer"], visited: [], nodeHp: [], chests: [true, true, true, true, true], escortDone: true, equipment: { harness: true, coat: false, charm: false } };
@@ -105,6 +105,9 @@ try {
   assert.equal(await rings.getByRole("button", { name: "Anel 1" }).getAttribute("aria-pressed"), "true");
   const persisted = await page.evaluate(() => JSON.parse(localStorage.getItem("ilha-save-dificil-single")));
   assert.equal(persisted.territoryLevel, 2); assert.equal(persisted.fenceRing, 1);
+  await workshop.getByTitle("Arena de treino").click();
+  assert.match(await workshop.locator(".recipe-art img").getAttribute("src"), /training_canopy\.png$/);
+  assert.match(await workshop.textContent(), /Designe-os na aba Pessoas/);
   await workshop.getByTitle("Armadilha de espinhos").click();
   const tiers = workshop.getByRole("group", { name: "Escolher nível da defesa" });
   assert.equal(await tiers.getByRole("button", { name: "Nv. 1" }).getAttribute("aria-pressed"), "true");
@@ -117,6 +120,12 @@ try {
   assert.equal((await page.evaluate(() => JSON.parse(localStorage.getItem("ilha-save-dificil-single")))).defenseTier, 2);
   await workshop.getByRole("button", { name: "Pessoas" }).click();
   const people = page.getByRole("dialog", { name: "Pessoas & tarefas" }); await people.waitFor();
+  const rian = people.getByRole("article", { name: "Rian" });
+  assert.equal(await rian.getByRole("button", { name: "Ficar na base" }).getAttribute("aria-pressed"), "true");
+  await rian.getByRole("button", { name: "Acompanhar" }).click();
+  assert.equal(await rian.getByRole("button", { name: "Acompanhar" }).getAttribute("aria-pressed"), "true");
+  assert.equal((await page.evaluate(() => JSON.parse(localStorage.getItem("ilha-save-dificil-single")))).rianDuty, "follow");
+  await rian.getByRole("button", { name: "Ficar na base" }).click();
   const archer = people.getByRole("article", { name: "Arqueiro" });
   await archer.getByRole("button", { name: "Treinar" }).click();
   assert.equal(await archer.getByRole("button", { name: "Treinar" }).getAttribute("aria-pressed"), "true");
@@ -127,6 +136,13 @@ try {
   await placementWorkshop.getByTitle("Barricada").click();
   await placementWorkshop.getByRole("button", { name: "Preparar construção" }).click();
   assert.equal(await page.getByRole("button", { name: /Virar de/ }).count(), 0, "barricada não deve oferecer rotação que a deita");
+  await page.getByRole("button", { name: "Sair", exact: true }).click();
+  await openSave(page, saveAt(104 * 32, 88 * 32, development));
+  await page.getByRole("button", { name: "Construir", exact: true }).first().click();
+  const arenaWorkshop = page.getByRole("dialog", { name: "Oficina da Clareira" });
+  await arenaWorkshop.getByTitle("Arena de treino").click();
+  await arenaWorkshop.getByRole("button", { name: "Preparar construção" }).click();
+  assert.equal(await page.getByRole("button", { name: /Virar de/ }).count(), 0, "arena não deve oferecer rotação indisponível");
   await page.getByRole("button", { name: "Sair", exact: true }).click();
   // Reload a pending death and verify the recovery report is not obscured by
   // the duplicate toast when the player wakes up.
@@ -186,6 +202,9 @@ try {
   await phoneWorkshop.getByRole("button", { name: "Pessoas" }).click();
   const phonePeople = phone.getByRole("dialog", { name: "Pessoas & tarefas" }); await phonePeople.waitFor();
   assert.equal(await phonePeople.evaluate((el) => el.scrollWidth > el.clientWidth + 2), false, "painel de pessoas transborda no celular");
+  const phoneRian = phonePeople.getByRole("article", { name: "Rian" });
+  await phoneRian.getByRole("button", { name: "Acompanhar" }).click();
+  assert.equal(await phoneRian.getByRole("button", { name: "Acompanhar" }).getAttribute("aria-pressed"), "true");
   const phoneArcher = phonePeople.getByRole("article", { name: "Arqueiro" });
   await phoneArcher.getByRole("button", { name: "Defender base" }).click();
   assert.equal(await phoneArcher.getByRole("button", { name: "Defender base" }).getAttribute("aria-pressed"), "true");

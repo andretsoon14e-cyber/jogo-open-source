@@ -135,3 +135,26 @@ test("pacotes incompletos ou quadros que seriam cortados não substituem uma ins
     assert.deepEqual(hashes(output), before);
   } finally { rmSync(temp, { recursive: true, force: true }); }
 });
+
+test("vila e torre são importadas separadamente, com fallback seguro e sem incluir outros arquivos", async () => {
+  const temp = mkdtempSync(join(tmpdir(), "craftpix-buildings-"));
+  try {
+    const output = join(temp, "out"), pack = join(temp, "buildings.zip"), entries = {};
+    for (let i = 1; i <= 4; i++) entries[`2 Objects/7 House/${i}.png`] = await pixelPng(116, 112, [[10, 10, i * 30, 45, 60]]);
+    entries["2 Idle/3.png"] = await pixelPng(280, 130, [[20, 20, 220, 110, 55], [90, 20, 1, 2, 3]]);
+    entries["outro-arquivo.txt"] = new TextEncoder().encode("não importar");
+    writeFileSync(pack, zipSync(entries)); runImport(pack, output);
+    assert.deepEqual(JSON.parse(readFileSync(join(output, "manifest.json"), "utf8")), { version: 1, hero: false, orcs: false, plants: false, village: true, tower: true });
+    assert.deepEqual(readdirSync(output).sort(), ["buildings.png", "manifest.json"]);
+    const atlas = await sharp(join(output, "buildings.png")).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    assert.deepEqual([atlas.info.width, atlas.info.height], [640, 290]);
+    const pixel = (x, y) => [...atlas.data.subarray((y * atlas.info.width + x) * 4, (y * atlas.info.width + x) * 4 + 4)];
+    assert.deepEqual(pixel(32, 58), [30, 45, 60, 255]);
+    assert.deepEqual(pixel(20, 180), [220, 110, 55, 255]);
+    assert.deepEqual(pixel(90, 180), [0, 0, 0, 0], "não mistura os quadros da torre");
+    const before = hashes(output), partial = join(temp, "partial.zip");
+    writeFileSync(partial, zipSync({ "2 Objects/7 House/1.png": entries["2 Objects/7 House/1.png"] }));
+    assert.throws(() => runImport(partial, output), /incompleto/i);
+    assert.deepEqual(hashes(output), before);
+  } finally { rmSync(temp, { recursive: true, force: true }); }
+});

@@ -220,7 +220,7 @@ try {
       const escaped = structureGame.py > market.y + 8;
       const camp = structureGame.worldProps.find((p) => p.sprite === "reference_camp");
       const solidCamp = structureGame.referenceStructureAt(camp.x, camp.y - 100);
-      const firstRingFree = Array.from({ length: 63 }, (_, slot) => structureGame.fencePosition(slot, 1)).every((p) => !structureGame.referenceStructureAt(p.x, p.y));
+      const firstRingFree = Array.from({ length: structureGame.fenceSpec(1).slots }, (_, slot) => structureGame.fencePosition(slot, 1)).every((p) => !structureGame.referenceStructureAt(p.x, p.y));
       const attempts = [[-105, -80, 1, 0], [105, -80, -1, 0], [0, -185, 0, 1], [0, 35, 0, -1]];
       const campCollisions = attempts.map(([dx, dy, mx, my]) => {
         structureGame.px = camp.x + dx; structureGame.py = camp.y + dy; structureGame.pvx = 0; structureGame.pvy = 0;

@@ -35,6 +35,7 @@ for (let tier = 1; tier <= 3; tier++) {
   }
   fixtures[`orc-${tier}.png`] = await syntheticImage(512, 768, enemies);
 }
+fixtures["buildings.png"] = await syntheticImage(640, 290, [[30, 30, 100, 120, "#cc8844"], [0, 160, 70, 130, "#668899"]]);
 fixtures["world.png"] = await syntheticImage(256, 70, [
   [10, 5, 40, 60, "#348248"], [70, 5, 48, 53, "#a0c541"], [135, 5, 49, 64, "#418b89"],
   [196, 2, 23, 19, "#a5dd55"], [228, 3, 23, 26, "#e3a347"],
@@ -55,7 +56,7 @@ try {
       if (pathname === "/") return route.fulfill({ status: 200, contentType: "text/html", body: '<canvas style="width:1280px;height:720px"></canvas>' });
       if (pathname === "/craftpix/manifest.json") {
         if (scenario === "missing") return route.fulfill({ status: 404, body: "" });
-        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ version: 1, hero: true, orcs: true, plants: true }) });
+        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ version: 1, hero: true, orcs: true, plants: true, village: true, tower: true }) });
       }
       const name = pathname.split("/").at(-1);
       if (scenario === "broken-hero" && name === "hero-2.png") return route.fulfill({ status: 200, contentType: "image/png", body: fixtures["world.png"] });
@@ -95,6 +96,7 @@ try {
       ]) api.drawCharacter(ctx, "player", 100, 100, angle, false, 0, { craftPix: true, heroLevel: 2, ...options });
       ctx.drawImage = originalDrawImage;
       const drewPlant = api.drawCraftPlant(ctx, "tree", 100, 180, 0, false, 1);
+      const buildings = { house: api.drawCraftVillageHouse(ctx, 0, 400, 400), tower: api.drawCraftTower(ctx, 600, 400), village: api.hasCraftVillage(), readyTower: api.hasCraftTower() };
       const plantDraws = [];
       if (status.plants) {
         const original = ctx.drawImage.bind(ctx);
@@ -152,7 +154,7 @@ try {
         sameAnchor: plantDraws[0][1] - plantDraws[1][1] === (plantDraws[1][0].width - plantDraws[0][0].width) / 2,
       } : null;
       game.destroy();
-      return { status, avatarChanged: importedAvatar !== fallbackAvatar, rianDifferent, heroDraws, attackOverlays, drewPlant, kills, plantCache, spawningWithArt, spawningWithoutArt, damageApplied };
+      return { status, avatarChanged: importedAvatar !== fallbackAvatar, rianDifferent, heroDraws, attackOverlays, drewPlant, buildings, kills, plantCache, spawningWithArt, spawningWithoutArt, damageApplied };
     });
     const expected = scenario === "missing" ? { hero: false, orcs: false, plants: false }
       : scenario === "broken-hero" ? { hero: false, orcs: true, plants: true }
@@ -171,6 +173,7 @@ try {
       importedSword: expected.hero ? 0 : 1, advancedSword: 1, axe: 1, proceduralSword: 1,
     }, `${scenario}: evitar ataque duplicado e preservar ferramentas`);
     assert.equal(result.drewPlant, expected.plants, `${scenario}: fallback das plantas`);
+    assert.deepEqual(result.buildings, { house: scenario !== "missing", tower: scenario !== "missing", village: scenario !== "missing", readyTower: scenario !== "missing" }, `${scenario}: prédios opcionais`);
     assert.equal(result.kills, 1, `${scenario}: registro e abate do orc`);
     assert.equal(result.damageApplied, true, `${scenario}: o ataque do orc deve causar dano`);
     assert.equal(result.spawningWithArt === "orc", expected.orcs, `${scenario}: surgimento com arte`);
@@ -223,9 +226,10 @@ try {
     const results = [];
     for (const style of styles) {
       engine.structures = [];
-      for (let i = 0; i < 63; i++) {
+      const count = engine.fenceSpec().slots;
+      for (let i = 0; i < count; i++) {
         const p = engine.fencePosition(i);
-        engine.structures.push({ type: i === 3 ? "gate" : "wall", x: p.x, y: p.y, hp: 100, maxHp: 100, prodT: 0, open: i === 3, rotation: i / 63 * Math.PI * 2 + Math.PI / 2, fenceStyle: style === "mixed" ? styles[i % 4] : style });
+        engine.structures.push({ type: i === 3 ? "gate" : "wall", x: p.x, y: p.y, hp: 100, maxHp: 100, prodT: 0, open: i === 3, rotation: i / count * Math.PI * 2 + Math.PI / 2, fenceStyle: style === "mixed" ? styles[i % 4] : style });
       }
       const render = (cached) => {
         const canvas = document.createElement("canvas"); canvas.width = 1280; canvas.height = 720;

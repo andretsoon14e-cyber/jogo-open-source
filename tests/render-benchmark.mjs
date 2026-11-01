@@ -58,6 +58,8 @@ try {
       game.applySettings({ ...game.settings, quality: scene.quality });
       game.px = scene.x; game.py = scene.y; game.hp = game.maxHp; game.invulnT = 20; game.time = 280;
       game.territoryLevel = scene.kingdom ? 4 : 1; game.fenceRing = 1;
+      // The 63-piece scenario intentionally measures a preserved legacy ring.
+      game.legacyTerritory = scene.walls === 63;
       game.centerCamera(); game.monsters = []; game.structures = []; game.particles = []; game.floaters = [];
       game.allies = initialAllies.slice();
       if (scene.archer) { game.specialists.archer.rescued = true; game.hireSpecialist("archer"); const ally = game.allies.at(-1); ally.x = game.px - 60; ally.y = game.py + 30; }

@@ -148,7 +148,7 @@ export function matteObject(rgb, width, height, background = [189, 200, 192]) {
   return out;
 }
 
-export async function makeReferenceObject(input, { left, top, width, height, targetWidth, targetHeight, mainOnly, background, shadowBelow, clearInside, contain = false }) {
+export async function makeReferenceObject(input, { left, top, width, height, targetWidth, targetHeight, mainOnly, background, shadowBelow, clearInside, contain = false, stretch = false }) {
   const { data } = await sharp(input).extract({ left, top, width, height }).removeAlpha().raw().toBuffer({ resolveWithObject: true });
   const rgba = matteObject(data, width, height, background);
   // The grate has enclosed openings filled with the preview background. Unlike
@@ -166,7 +166,7 @@ export async function makeReferenceObject(input, { left, top, width, height, tar
   if (mainOnly) keepMainSilhouette(rgba, width, height);
   return sharp(rgba, { raw: { width, height, channels: 4 } }).resize(targetWidth, targetHeight, contain
     ? { fit: "contain", position: "bottom", background: "#00000000", kernel: "nearest" }
-    : { kernel: "nearest" }).png({ compressionLevel: 9 }).toBuffer();
+    : stretch ? { fit: "fill", kernel: "nearest" } : { kernel: "nearest" }).png({ compressionLevel: 9 }).toBuffer();
 }
 
 /** Pack independently cropped animation frames without inventing extra frames.

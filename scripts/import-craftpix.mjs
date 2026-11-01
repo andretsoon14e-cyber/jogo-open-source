@@ -44,7 +44,9 @@ for (let variant = 1; variant <= 3; variant++) {
   }
 }
 const plantNames = ["PNG/Plants.png", "PNG/Supplies.png"];
-const expected = new Set([...heroNames, ...orcNames, ...plantNames]);
+const villageNames = [1, 2, 3, 4].map((i) => `2 Objects/7 House/${i}.png`);
+const towerNames = ["2 Idle/3.png"];
+const expected = new Set([...heroNames, ...orcNames, ...plantNames, ...villageNames, ...towerNames]);
 const femaleMarker = "PNG/Unarmed/Parts/Unarmed_Idle2_body.png";
 const selected = new Map();
 let foundFemale = false;
@@ -143,6 +145,24 @@ async function generatePlants() {
     .composite(pieces).png({ compressionLevel: 9 }).toBuffer();
 }
 
+// A small optional atlas from the two additional packs. It is generated
+// locally, never committed, and each group may be absent independently.
+async function generateBuildings(village, tower) {
+  const pieces = [];
+  if (village) for (let i = 0; i < villageNames.length; i++) {
+    const src = selected.get(villageNames[i]), meta = await sharp(src).metadata();
+    if (!meta.width || !meta.height || meta.width > 160 || meta.height > 160) throw new Error(`Dimensões inesperadas na casa ${i + 1}.`);
+    pieces.push({ input: src, left: i * 160 + Math.floor((160 - meta.width) / 2), top: 160 - meta.height });
+  }
+  if (tower) {
+    const src = selected.get(towerNames[0]), meta = await sharp(src).metadata();
+    if (meta.width !== 280 || meta.height !== 130) throw new Error("Dimensões inesperadas na torre de arqueiros.");
+    pieces.push({ input: await sharp(src).extract({ left: 0, top: 0, width: 70, height: 130 }).png().toBuffer(), left: 0, top: 160 });
+  }
+  return sharp({ create: { width: 640, height: 290, channels: 4, background: "#00000000" } })
+    .composite(pieces).png({ compressionLevel: 9 }).toBuffer();
+}
+
 async function main() {
   const archives = archivesFrom(args);
   if (!archives.length) throw new Error("Nenhum ZIP encontrado na pasta informada.");
@@ -163,17 +183,20 @@ async function main() {
   const hero = completeGroup(heroNames, "espadachim");
   const orcs = completeGroup(orcNames, "orcs");
   const plants = completeGroup(plantNames, "plantas");
-  if (!hero && !orcs && !plants) throw new Error("Nenhum dos pacotes compatíveis foi encontrado.");
+  const village = completeGroup(villageNames, "vila");
+  const tower = completeGroup(towerNames, "torre");
+  if (!hero && !orcs && !plants && !village && !tower) throw new Error("Nenhum dos pacotes compatíveis foi encontrado.");
 
   // Generate everything first, so a malformed pack cannot leave a partial set.
   const generated = new Map();
   if (hero) for (let i = 1; i <= 3; i++) generated.set(`hero-${i}.png`, await generateHero(i));
   if (orcs) for (let i = 1; i <= 3; i++) generated.set(`orc-${i}.png`, await generateOrc(i));
   if (plants) generated.set("world.png", await generatePlants());
-  const manifest = Buffer.from(JSON.stringify({ version: 1, hero, orcs, plants }, null, 2) + "\n");
+  if (village || tower) generated.set("buildings.png", await generateBuildings(village, tower));
+  const manifest = Buffer.from(JSON.stringify({ version: 1, hero, orcs, plants, ...(village ? { village: true } : {}), ...(tower ? { tower: true } : {}) }, null, 2) + "\n");
 
   mkdirSync(outputDir, { recursive: true });
-  const known = ["hero-1.png", "hero-2.png", "hero-3.png", "orc-1.png", "orc-2.png", "orc-3.png", "world.png"];
+  const known = ["hero-1.png", "hero-2.png", "hero-3.png", "orc-1.png", "orc-2.png", "orc-3.png", "world.png", "buildings.png"];
   for (const [name, data] of generated) {
     const temporary = path.join(outputDir, `.${name}.tmp`);
     writeFileSync(temporary, data);
@@ -183,7 +206,7 @@ async function main() {
   const temporaryManifest = path.join(outputDir, ".manifest.json.tmp");
   writeFileSync(temporaryManifest, manifest);
   renameSync(temporaryManifest, path.join(outputDir, "manifest.json"));
-  console.log(`Artes instaladas em ${outputDir}: ${[hero && "espadachim (3 níveis)", orcs && "orcs (3 versões)", plants && "plantas e suprimentos"].filter(Boolean).join(", ")}.`);
+  console.log(`Artes instaladas em ${outputDir}: ${[hero && "espadachim (3 níveis)", orcs && "orcs (3 versões)", plants && "plantas e suprimentos", village && "casas da vila", tower && "torre de arqueiros"].filter(Boolean).join(", ")}.`);
   if (foundFemale) console.log("O pacote de base feminina foi encontrado, mas precisa de roupa/cabelo antes de virar um personagem jogável.");
   console.log("Não publique os arquivos gerados sem confirmar os termos da CraftPix.");
 }

@@ -347,22 +347,27 @@ export class Terrain {
   }
 }
 
-/** Animated water highlights drawn on top of baked chunks (cheap). */
+/** Lightweight, time-based current and rolling crests, drawn only on water.
+ * The static terrain remains cached and bridge tiles are never overpainted. */
 export function drawWaterAnim(ctx: CanvasRenderingContext2D, tiles: Uint8Array, W: number, H: number, TILE: number, x0: number, y0: number, x1: number, y1: number, ox: number, oy: number, now: number, referenceArt = false) {
-  ctx.fillStyle = "rgba(225,250,255,0.35)";
-  for (let ty = y0; ty <= y1; ty++) {
-    for (let tx = x0; tx <= x1; tx++) {
-      if (tiles[ty * W + tx] !== T_WATER) continue;
-      const wave = Math.sin(tx * 1.7 + ty * 2.3 + now * 2.2);
-      const flow = Math.floor((now * 8 + tx * 5 + ty * 3) % 22);
-      const x = tx * TILE + ox, y = ty * TILE + oy;
-      // Two small moving highlights per tile evoke a current without animating
-      // or rebaking terrain chunks; all drawing is clipped inside the tile.
-      ctx.fillRect(x + 2 + flow, y + 6 + (tx * 7 + ty * 11) % 10, 7, 2);
-      if (wave > -0.18) ctx.fillRect(x + 3 + (flow + 10) % 20, y + 21, 9, 2);
-      // Sparse animated rings from the supplied effects sheet; no per-frame
-      // allocations and never on land or on a walkable bridge.
-      if (referenceArt && tileHash(tx, ty, 91) > 0.9) drawReferenceRipple(ctx, now * 5 + tx + ty, x + TILE / 2, y + TILE / 2);
+  ctx.fillStyle = "rgba(215,246,255,0.32)";
+  for (let ty = y0; ty <= y1; ty++) for (let tx = x0; tx <= x1; tx++) {
+    if (tiles[ty * W + tx] !== T_WATER) continue;
+    const phase = now * 1.8 + tx * 0.8 + ty * 0.48;
+    const flow = ((Math.floor(now * 10 + tx * 7 + ty * 3) % 22) + 22) % 22;
+    const x = tx * TILE + ox, y = ty * TILE + oy;
+    // A three-step crest rises and falls as it travels down the current. All
+    // pieces remain inside the tile, including at the banks.
+    const crest = 5 + Math.round((Math.sin(phase) + 1) * 3);
+    ctx.fillRect(x + 2 + flow, y + crest, 5, 2);
+    ctx.fillRect(x + 5 + flow, y + crest - 1, 5, 2);
+    if (Math.sin(phase + 1.2) > -0.25) {
+      const next = (flow + 11) % 21;
+      ctx.fillRect(x + 2 + next, y + 21, 7, 2);
+      ctx.fillRect(x + 5 + next, y + 20, 5, 1);
     }
+    // Sparse supplied ripple frames add a second layer without allocating
+    // canvases or updating the baked terrain per frame.
+    if (referenceArt && tileHash(tx, ty, 91) > 0.91) drawReferenceRipple(ctx, now * 4 + tx + ty, x + TILE / 2, y + TILE / 2);
   }
 }

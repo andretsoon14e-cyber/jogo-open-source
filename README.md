@@ -49,6 +49,8 @@ npm run dev
 
 São usados os três níveis de corpo e cabeça do espadachim; o nível visual acompanha o nível da espada. Rian usa uma variante do mesmo personagem com cabelo azulado, para diferenciá-lo sem trocar de estilo. A espada original e sua animação aparecem nos níveis 1–3, enquanto o machado, a picareta e as espadas mais avançadas mantêm o visual existente. As três versões de orc podem aparecer em florestas e cavernas e entram no bestiário. Árvores, macieiras, palmeiras, uma planta pequena e a cesta de suprimentos usam os sprites correspondentes; outras espécies mantêm sua arte anterior. A opção **Configurações → Artes CraftPix e referências** desliga as artes importadas. Sem os pacotes, o jogo continua funcionando com a arte procedural e os orcs novos não surgem. O ZIP da base feminina contém apenas uma base sem roupa/cabelo completos e foi preservado para uso posterior, não incluído como personagem jogável.
 
+Os pacotes adicionais de **vila** e **torres de arqueiros** podem ser importados pelo mesmo comando: as casas e uma torre servem como alternativa quando as referências equivalentes não estão instaladas. O pacote de interface também foi examinado, mas não substitui os painéis existentes sem um pedido de redesign.
+
 Os [termos da CraftPix](https://craftpix.net/file-licenses/) permitem certos usos em jogos, mas restringem a redistribuição de arquivos reutilizáveis. A importação é para uso local e não substitui a revisão da licença: os PNGs gerados são acessíveis pelo navegador. Antes de publicar ou hospedar uma versão que os inclua, confirme com a CraftPix se a forma de distribuição é permitida.
 
 ## Referências visuais enviadas
@@ -85,11 +87,19 @@ Na **Oficina da Clareira**, as receitas **Armadilha de espinhos** e **Barricada*
 
 Sem as imagens ou com a opção **Artes CraftPix e referências** desativada, as defesas permanecem jogáveis com sprites simples e as pontes mantêm o terreno anterior. Saves antigos continuam válidos, e os novos guardam o nível selecionado e o de cada defesa.
 
+## Arena, base e movimentação
+
+As imagens `85` e `86` permitem importar os componentes da **Arena de treino**: piso, cerca, toldo, alvos, bonecos e suporte de armas. A receita aparece em **Construir** e ocupa uma área retangular dentro do perímetro; remova árvores e pedras antes de posicioná-la. Sem as imagens, a arena usa formas simples e continua funcionando. Na aba **Pessoas**, um arqueiro, uma maga ou um espadachim recrutado pode receber a tarefa **Treinar** e ir à arena. O treino visual não dispara projéteis nem causa dano; sem arena, eles ainda podem treinar na base.
+
+Novas partidas começam com um perímetro menor e ganham anéis maiores pelas expansões. Saves anteriores mantêm a barraca, o raio e os encaixes do primeiro anel originais. Depois da escolta, Rian fica na base por padrão; em **Pessoas → Rian**, escolha **Acompanhar** para chamá-lo ou **Ficar na base** para dispensá-lo.
+
+Árvores são espaçadas sem mudar seus índices nos saves. Quando cortadas, deixam um toco que pode ser quebrado com o machado para render mais três madeiras. Moradores caminham entre pontos da vila; animais alternam deslocamento, pausas e fuga. Monstros antecipam ataques e tentam contornar água e edifícios próximos, mas ainda não utilizam navegação completa pelo mapa. O avião e a explosão da introdução são desenhados no jogo, sem copiar a imagem de avião com marca d'água.
+
 ## Resgates, treinamento e profissões
 
 O mapa marca com **!** quatro encontros independentes: um pequeno grupo de arqueiros, uma maga, um espadachim e um minerador. Depois que Rian terminar a escolta, aproxime-se, derrote as criaturas do encontro e converse para convidar **um** profissional por encontro. A tela **Pessoas** fica nas abas do caderno (ou pela tecla P); ali é possível designar os combatentes para acompanhar, defender a base ou treinar, e escolher entre mineração e descanso para o minerador. Os três defensores e o minerador são indivíduos fixos; ainda não há contratação ilimitada nem uma economia de salários.
 
-Cada novo defensor começa no nível 1. O treino acontece em tempo de jogo, durante o dia, na base e sem inimigos próximos: são necessários 45 segundos de treino para o nível 2 e 120 segundos acumulados para o nível 3. Para efetivar cada melhoria, construa uma forja e pague o equipamento mostrado na aba Pessoas. O nível 3 também requer cristal. Feche o caderno no modo solo para o tempo voltar a passar.
+Cada novo defensor começa no nível 1. O treino acontece em tempo de jogo, durante o dia, na arena ou na base e sem inimigos próximos: são necessários 45 segundos de treino para o nível 2 e 120 segundos acumulados para o nível 3. Para efetivar cada melhoria, construa uma forja e pague o equipamento mostrado na aba Pessoas. O nível 3 também requer cristal. Feche o caderno no modo solo para o tempo voltar a passar.
 
 Com uma pedreira, o minerador designado produz **2 ferros a cada 45 segundos de trabalho diurno**, enquanto estiver perto dela e não houver criaturas próximas. Depois que o jogador coletar cristal pela primeira vez, ele produz também **1 cristal por ciclo**. Isso não é produção offline; as tarefas e o progresso são guardados no save. As posições dos encontros e as receitas são uma primeira implementação jogável, não um sistema completo de administração de uma cidade.
 
