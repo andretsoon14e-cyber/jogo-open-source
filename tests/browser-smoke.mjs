@@ -152,9 +152,12 @@ try {
     await dialog.getByRole("heading", { name: "Orc Guerreiro" }).waitFor();
     await page.screenshot({ path: screenshotPath("orc-bestiario") });
   }
-  if (process.env.WITHOUT_CRAFTPIX === "1") {
-    assert.equal(await dialog.getByRole("button", { name: /Orc Guerreiro/ }).count(), 0, "orc opcional apareceu sem o pacote instalado");
+  assert.equal(await dialog.getByRole("button", { name: /Orc Guerreiro/ }).count(), 1, "orc com fallback deve aparecer mesmo sem o pacote");
+  for (const name of ["Zumbi Perdido", "Esqueleto Guerreiro", "Vampiro Noturno", "Lich da Necrópole"]) {
+    await dialog.getByRole("button", { name }).click();
+    await dialog.getByRole("heading", { name }).waitFor();
   }
+  await page.screenshot({ path: screenshotPath("lich-bestiario") });
   await dialog.getByRole("button", { name: "Arauto das Brasas" }).click();
   await dialog.getByRole("heading", { name: "Arauto das Brasas" }).waitFor();
   await page.screenshot({ path: screenshotPath("bestiary") });

@@ -6,8 +6,9 @@
 
 import { CHARACTER_WIDTH, CHARACTER_HEIGHT, CHARACTER_HEAD_HEIGHT, makeCharacterSprite } from "./character-art";
 import { EXPANSION_SPRITES } from "./expansion-art";
+import { MONSTER_FALLBACKS } from "./monster-fallbacks";
 import { craftOrcThumbnail, drawCraftHero, hasCraftHero, hasCraftOrcs } from "./craftpix";
-import { drawReferenceIcon, referenceIconUrl } from "./reference-art";
+import { drawReferenceIcon, referenceIconUrl, referenceCreatureUrl } from "./reference-art";
 
 export const SCALE = 3;
 
@@ -595,7 +596,7 @@ function hutSprite(): PixelSprite {
 }
 S.hut = hutSprite();
 
-Object.assign(S, EXPANSION_SPRITES);
+Object.assign(S, EXPANSION_SPRITES, MONSTER_FALLBACKS);
 export const SPRITES = S;
 const METRICS = new Map<string, { width: number; height: number; ax: number; ay: number; pad: number }>();
 function metrics(name: string) {
@@ -850,6 +851,10 @@ export function drawToolSprite(ctx: CanvasRenderingContext2D, tool: "axe" | "pic
 /** Cached thumbnails shared by inventory, workshop and bestiary panels. */
 const thumbnailCache = new Map<string, string>();
 export function getSpriteUrl(name: string, useCraftPix = true): string {
+  // The local preview is preferred for bestiary entries; missing/disabled art
+  // still uses the independently authored fallback sprite.
+  const reference = useCraftPix ? referenceCreatureUrl(name) : "";
+  if (reference) return reference;
   const imported = name === "orc" && useCraftPix && hasCraftOrcs();
   const key = imported ? "craftpix:orc" : name;
   const hit = thumbnailCache.get(key);
@@ -859,7 +864,7 @@ export function getSpriteUrl(name: string, useCraftPix = true): string {
     if (url) thumbnailCache.set(key, url);
     return url;
   }
-  const fallback = name === "orc" ? "treant" : name;
+  const fallback = name;
   const sprite = S[fallback];
   if (!sprite) return "";
   const url = getBaked(fallback, sprite, false, 3).toDataURL();

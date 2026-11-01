@@ -10,14 +10,14 @@ await build({ entryPoints: ["tests/browser-entry.ts"], bundle: true, platform: "
 async function image(width, height, color) {
   return sharp({ create: { width, height, channels: 4, background: color } }).png().toBuffer();
 }
-const sizes = { archer: [768, 1152], "archer-hood": [768, 1152], "mage-blue": [1152, 768], "mage-red": [1152, 768], minerals: [960, 96], rocks: [768, 96], icons: [512, 64], plants: [384, 64], bow: [64, 64], menu: [960, 640], forge: [260, 210], house: [220, 250], chest: [100, 82], chapel: [240, 294], market: [200, 176], camp: [200, 200], sewer: [200, 87], castle_wall: [44, 84], castle_tower: [112, 196], castle_gate: [82, 70], castle_grate: [31, 25], house_half_timber: [220, 250], house_wood_a: [220, 250], house_wood_b: [220, 250], house_stone: [220, 250], bridge_wood_h: [160, 108], bridge_wood_v: [64, 136], bridge_stone_h: [160, 116], bridge_stone_v: [80, 140], barricade_1: [96, 128], barricade_2: [96, 128], barricade_3: [96, 128], barricade_4: [96, 128], spikes: [576, 384], lightning: [480, 200], ripples: [384, 64] };
+const sizes = { figures: [384, 96], creatures: [1152, 96], archer: [768, 1152], "archer-hood": [768, 1152], "mage-blue": [1152, 768], "mage-red": [1152, 768], minerals: [960, 96], rocks: [768, 96], icons: [512, 64], plants: [384, 64], bow: [64, 64], menu: [960, 640], forge: [260, 210], house: [220, 250], chest: [100, 82], chapel: [240, 294], market: [200, 176], camp: [200, 200], sewer: [200, 87], castle_wall: [44, 84], castle_tower: [112, 196], castle_gate: [82, 70], castle_grate: [31, 25], house_half_timber: [220, 250], house_wood_a: [220, 250], house_wood_b: [220, 250], house_stone: [220, 250], bridge_wood_h: [160, 108], bridge_wood_v: [64, 136], bridge_stone_h: [160, 116], bridge_stone_v: [80, 140], barricade_1: [96, 128], barricade_2: [96, 128], barricade_3: [96, 128], barricade_4: [96, 128], spikes: [576, 384], lightning: [480, 200], ripples: [384, 64] };
 const objectNames = ["forge", "house", "chest", "chapel", "market", "camp", "sewer", "castle_wall", "castle_tower", "castle_gate", "castle_grate", "house_half_timber", "house_wood_a", "house_wood_b", "house_stone", "bridge_wood_h", "bridge_wood_v", "bridge_stone_h", "bridge_stone_v", "barricade_1", "barricade_2", "barricade_3", "barricade_4"];
 const fixtures = {};
 for (const [key, [width, height]] of Object.entries(sizes)) fixtures[`${key}.png`] = await image(width, height, key === "bow" ? "#993344" : "#68a438");
 
 const browser = await chromium.launch({ headless: true, args: ["--no-sandbox", "--disable-dev-shm-usage"], ...(process.env.CHROMIUM_EXECUTABLE_PATH ? { executablePath: process.env.CHROMIUM_EXECUTABLE_PATH } : {}) });
 try {
-  for (const scenario of ["missing", "complete", "broken-archer", "broken-object", "broken-resident", "broken-effects"]) {
+  for (const scenario of ["missing", "complete", "broken-archer", "broken-object", "broken-resident", "broken-effects", "partial-figures", "broken-figures", "broken-creatures"]) {
     const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
@@ -26,9 +26,10 @@ try {
       if (pathname === "/") return route.fulfill({ status: 200, contentType: "text/html", body: '<canvas style="width:1280px;height:720px"></canvas>' });
       if (pathname === "/referencias/manifest.json") {
         if (scenario === "missing") return route.fulfill({ status: 404, body: "" });
-        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ version: 1, archer: true, archerHood: true, mageBlue: true, mageRed: true, minerals: true, rocks: true, icons: true, plants: true, bow: true, menu: true, spikes: true, lightning: true, ripples: true, objects: Object.fromEntries(objectNames.map((x) => [x, true])), scenes: { forge: true, chapel: true, market: true, camp: true, sewer: true } }) });
+        return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ version: 1, archer: true, archerHood: true, mageBlue: true, mageRed: true, minerals: true, rocks: true, icons: true, plants: true, bow: true, menu: true, spikes: true, lightning: true, ripples: true, figures: scenario === "partial-figures" ? [true, false, false, true] : [true, true, true, true], creatures: true, objects: Object.fromEntries(objectNames.map((x) => [x, true])), scenes: { forge: true, chapel: true, market: true, camp: true, sewer: true } }) });
       }
       const name = pathname.split("/").at(-1);
+      if ((scenario === "broken-figures" && name === "figures.png") || (scenario === "broken-creatures" && name === "creatures.png")) return route.fulfill({ status: 200, contentType: "image/png", body: fixtures["sewer.png"] });
       if ((scenario === "broken-archer" && name === "archer.png") || (scenario === "broken-object" && name === "chapel.png") || (scenario === "broken-resident" && ["mage-blue.png", "minerals.png"].includes(name)) || (scenario === "broken-effects" && ["spikes.png", "barricade_2.png"].includes(name))) return route.fulfill({ status: 200, contentType: "image/png", body: fixtures["sewer.png"] });
       if (pathname.startsWith("/referencias/") && fixtures[name]) return route.fulfill({ status: 200, contentType: "image/png", body: fixtures[name] });
       return route.fulfill({ status: 404, body: "" });
@@ -43,6 +44,14 @@ try {
       const calls = [];
       const original = ctx.drawImage.bind(ctx);
       ctx.drawImage = (...args) => { if (args[0] instanceof HTMLImageElement && args[0].src.includes("/referencias/")) calls.push({ src: new URL(args[0].src).pathname, args: args.slice(1) }); original(...args); };
+      const newPreviews = {
+        figure0: api.drawReferenceFigure(ctx, 0, 60, 100), figure1: api.drawReferenceFigure(ctx, 1, 60, 100),
+        figure3: api.drawReferenceFigure(ctx, 3, 60, 100), figure4: api.drawReferenceFigure(ctx, 4, 60, 100),
+        creature: api.hasReferenceCreature("zombie"), drawn: api.drawReferenceCreature(ctx, "zombie", true),
+        white: api.drawReferenceCreature(ctx, "zombie", false, "white"), red: api.drawReferenceCreature(ctx, "lich", false, "red"),
+        unknown: api.drawReferenceCreature(ctx, "unknown", false), thumb: !!api.referenceCreatureUrl("skeleton"),
+        cached: api.referenceCreatureUrl("skeleton") === api.referenceCreatureUrl("skeleton"),
+      };
       const drewArcher = api.drawReferenceArcher(ctx, "side", true, "attack", 0, 0.5);
       const drewChapel = api.drawReferenceObject(ctx, "chapel", 100, 200);
       const objects = { chapel: drewChapel, sewer: api.drawReferenceObject(ctx, "sewer", 100, 200), forge: api.drawReferenceObject(ctx, "forge", 100, 200), house: api.drawReferenceObject(ctx, "house", 100, 200), chest: api.drawReferenceObject(ctx, "chest", 100, 200) };
@@ -93,6 +102,15 @@ try {
       calls.length = 0;
       for (const resident of game.villagers) game.drawVillager(resident, 0, 0, 0);
       const residentSources = calls.map((call) => call.src.split("/").at(-1));
+      const figureDraws = residentSources.filter((name) => name === "figures.png").length;
+      game.monsters = []; game.spawnMonster(game.px + 100, game.py, "zombie");
+      calls.length = 0; game.drawMonster(game.monsters[0], 0, 0, 0);
+      const monsterDraw = calls.some((call) => call.src.endsWith("/creatures.png"));
+      const thumbChanged = api.getSpriteUrl("zombie", true) !== api.getSpriteUrl("zombie", false);
+      game.applySettings({ ...game.settings, craftPix: false });
+      calls.length = 0; game.drawVillager(game.villagers.find((v) => v.figure === 0), 0, 0, 0); game.drawMonster(game.monsters[0], 0, 0, 0);
+      const disabledNewDraw = calls.some((call) => /\/(?:figures|creatures)\.png$/.test(call.src));
+      game.applySettings({ ...game.settings, craftPix: true });
       game.tileAt = () => 2;
       game.structures = []; game.monsters = [];
       game.questP[1] = 19;
@@ -255,9 +273,16 @@ try {
       const renderedArcher = calls.some((call) => call.src.endsWith("/archer.png"));
       fight.destroy();
       ctx.drawImage = original;
-      return { status, drewArcher, objects, icon, newAssets, expansion, bridgePaint, defenseSources, houseSources, disabledDefenseSources, regional, residentSources, paperdollBow, calls: directCalls, frame, recruited, questDoesNotHire, oldCount, oldLevel, upgradedSave, premature, arrow, combat, closed, open, noTunnel, hostileDamage, noTarget, monsterAtBuilding, buildingShots, placedFootprints, shadowCalls, closedChestArt, openChestArt, castleWall, closedCastleGate, openCastleGate, towerFootprint, castleTower, footprint, placement, front, escaped, solidCamp, firstRingFree, campCollisions, disabledFootprint, escort, scene, disabled, renderedArcher };
+      return { status, newPreviews, figureDraws, monsterDraw, thumbChanged, disabledNewDraw, drewArcher, objects, icon, newAssets, expansion, bridgePaint, defenseSources, houseSources, disabledDefenseSources, regional, residentSources, paperdollBow, calls: directCalls, frame, recruited, questDoesNotHire, oldCount, oldLevel, upgradedSave, premature, arrow, combat, closed, open, noTunnel, hostileDamage, noTarget, monsterAtBuilding, buildingShots, placedFootprints, shadowCalls, closedChestArt, openChestArt, castleWall, closedCastleGate, openCastleGate, towerFootprint, castleTower, footprint, placement, front, escaped, solidCamp, firstRingFree, campCollisions, disabledFootprint, escort, scene, disabled, renderedArcher };
     });
     const assets = scenario !== "missing", archer = assets && scenario !== "broken-archer", chapel = assets && scenario !== "broken-object";
+    const figures = assets && scenario !== "broken-figures", creatures = assets && scenario !== "broken-creatures";
+    assert.deepEqual(result.newPreviews, { figure0: figures, figure1: figures && scenario !== "partial-figures", figure3: figures, figure4: false,
+      creature: creatures, drawn: creatures, white: creatures, red: creatures, unknown: false, thumb: creatures, cached: true }, `${scenario}: figuras e criaturas opcionais`);
+    assert.equal(result.figureDraws, figures ? scenario === "partial-figures" ? 2 : 4 : 0, `${scenario}: visitantes usam as células disponíveis`);
+    assert.equal(result.monsterDraw, creatures, `${scenario}: criatura renderizada no mundo`);
+    assert.equal(result.thumbChanged, creatures, `${scenario}: miniatura do bestiário`);
+    assert.equal(result.disabledNewDraw, false, `${scenario}: arte desativada usa fallback`);
     assert.equal(result.status.archer, archer, scenario);
     assert.equal(result.drewArcher, archer, scenario);
     assert.equal(result.objects.chapel, chapel, scenario);

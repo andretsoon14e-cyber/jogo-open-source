@@ -6,7 +6,7 @@
 
 import { drawReferenceBridge, drawReferenceRipple, hasReferenceObject, type ReferenceBridge } from "@/game/reference-art";
 
-export const T_WATER = 0, T_SAND = 1, T_GRASS = 2, T_DARK = 3, T_PATH = 4, T_ROCK = 5, T_CAVE = 6, T_BRIDGE = 7, T_SNOW = 8, T_ICE = 9, T_RUIN = 10, T_SNOW_PATH = 11, T_NECRO = 12, T_MINERAL = 13;
+export const T_WATER = 0, T_SAND = 1, T_GRASS = 2, T_DARK = 3, T_PATH = 4, T_ROCK = 5, T_CAVE = 6, T_BRIDGE = 7, T_SNOW = 8, T_ICE = 9, T_RUIN = 10, T_SNOW_PATH = 11, T_NECRO = 12, T_MINERAL = 13, T_AUTUMN = 14, T_BLOSSOM = 15;
 
 export function tileHash(x: number, y: number, s: number) {
   let n = (x * 374761393 + y * 668265263 + s * 1274126177) | 0;
@@ -30,9 +30,11 @@ const PAL: Record<number, Pal> = {
   [T_SNOW_PATH]: { base: "#bdac87", alt: "#b5a481", dark: "#95815e", light: "#d3c7a7" },
   [T_NECRO]: { base: "#565e57", alt: "#505750", dark: "#343b3a", light: "#777b68" },
   [T_MINERAL]: { base: "#6c604f", alt: "#625747", dark: "#453f37", light: "#94836a" },
+  [T_AUTUMN]: { base: "#a6a250", alt: "#9d994b", dark: "#777d3b", light: "#c6bc6a" },
+  [T_BLOSSOM]: { base: "#9abf70", alt: "#93b568", dark: "#70974d", light: "#c1d994" },
 };
 // which terrain visually overlaps which (higher wins on borders)
-const PRIO: Record<number, number> = { [T_WATER]: 0, [T_SAND]: 1, [T_PATH]: 2, [T_GRASS]: 3, [T_DARK]: 4, [T_ROCK]: 5, [T_CAVE]: 6, [T_BRIDGE]: 1.5, [T_SNOW]: 7, [T_ICE]: 6.5, [T_RUIN]: 2.5, [T_SNOW_PATH]: 3, [T_NECRO]: 7.5, [T_MINERAL]: 5.5 };
+const PRIO: Record<number, number> = { [T_WATER]: 0, [T_SAND]: 1, [T_PATH]: 2, [T_GRASS]: 3, [T_DARK]: 4, [T_ROCK]: 5, [T_CAVE]: 6, [T_BRIDGE]: 1.5, [T_SNOW]: 7, [T_ICE]: 6.5, [T_RUIN]: 2.5, [T_SNOW_PATH]: 3, [T_NECRO]: 7.5, [T_MINERAL]: 5.5, [T_AUTUMN]: 3, [T_BLOSSOM]: 3 };
 
 interface BridgeRegion {
   x: number; y: number; width: number; height: number;
@@ -253,7 +255,7 @@ export class Terrain {
   private decor(c: CanvasRenderingContext2D, gx: number, gy: number, t: number, px: number, py: number) {
     const T = this.TILE;
     const h = tileHash(gx, gy, 3);
-    if (t === T_GRASS || t === T_DARK) {
+    if (t === T_GRASS || t === T_DARK || t === T_AUTUMN || t === T_BLOSSOM) {
       const dark = t === T_DARK;
       const n = dark ? 2 : 3;
       for (let i = 0; i < n; i++) {
@@ -271,7 +273,7 @@ export class Terrain {
         // flower cluster like the reference (3 yellow blossoms)
         const fx = px + 6 + Math.floor(tileHash(gx, gy, 41) * 14);
         const fy = py + 6 + Math.floor(tileHash(gx, gy, 42) * 12);
-        const col = h > 0.965 ? "#f7f4ee" : h > 0.93 ? "#e58ab8" : "#f2d24a";
+        const col = t === T_BLOSSOM ? "#f2b6cf" : t === T_AUTUMN ? "#edbb66" : h > 0.965 ? "#f7f4ee" : h > 0.93 ? "#e58ab8" : "#f2d24a";
         for (let k = 0; k < 3; k++) {
           const ox = [0, 6, 3][k], oy = [0, 2, 7][k];
           c.fillStyle = "#4f8a30";

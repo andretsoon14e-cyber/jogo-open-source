@@ -187,3 +187,23 @@ test("a cerca da arena conserva o quadro completo e o centro transparente ao ser
   assert.equal(alpha(data, 24, 12, 17), 255, "barra inferior completa");
   assert.equal(alpha(data, 24, 12, 10), 0, "miolo permanece transparente");
 });
+
+test("figuras estáticas são recortadas com transparência e atlas parcial mantém os espaços ausentes", async () => {
+  const { matteScene, makeFigureAtlas } = await import("../scripts/reference-figures.mjs");
+  const width = 80, height = 80, pixels = rgb(width, height, [100, 125, 76]);
+  for (let y = 18; y < 68; y++) for (let x = 28; x < 52; x++) put(pixels, width, x, y, [38, 27, 25]);
+  for (let y = 24; y < 40; y++) for (let x = 32; x < 48; x++) put(pixels, width, x, y, [220, 164, 120]);
+  const matte = matteScene(pixels, width, height, { background: "grass" });
+  assert.equal(alpha(matte, width, 0, 0), 0);
+  assert.equal(alpha(matte, width, 40, 40), 255);
+  const figure = await sharp({ create: { width: 150, height: 380, channels: 3, background: "#261b19" } }).png().toBuffer();
+  const source = await sharp({ create: { width: 2048, height: 2048, channels: 3, background: "#647d4c" } })
+    .composite([{ input: figure, left: 950, top: 520 }]).png().toBuffer();
+  const { atlas, flags } = await makeFigureAtlas({ 88: source });
+  assert.deepEqual(flags, [true, false, false, false]);
+  const unpacked = await sharp(atlas).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  assert.deepEqual([unpacked.info.width, unpacked.info.height], [384, 96]);
+  assert.equal(alpha(unpacked.data, 384, 48, 50), 255);
+  assert.equal(alpha(unpacked.data, 384, 144, 50), 0, "célula sem original permanece vazia");
+  assert.equal((await makeFigureAtlas({})).atlas, null);
+});

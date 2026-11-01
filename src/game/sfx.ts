@@ -75,7 +75,7 @@ export class Sfx {
     const t = ctx.currentTime;
     this.nextCreatureAt = t + 1.6;
     const deep = type === "brute" || type === "hulk" || type === "demon" || type === "orc";
-    const spectral = type === "bat" || type === "stalker" || type === "crawler" || type === "spitter";
+    const spectral = type === "bat" || type === "stalker" || type === "crawler" || type === "spitter" || type === "lich" || type === "vampire";
     const duration = spectral ? 0.52 : 0.38;
     const pitch = deep ? 86 : spectral ? 270 : 150;
     const oscillator = ctx.createOscillator();

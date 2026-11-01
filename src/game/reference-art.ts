@@ -37,6 +37,13 @@ let menu: HTMLImageElement | null = null;
 let spikes: HTMLImageElement | null = null;
 let lightning: HTMLImageElement | null = null;
 let ripples: HTMLImageElement | null = null;
+let figures: HTMLImageElement | null = null;
+let figureFlags: boolean[] = [];
+let creatures: HTMLImageElement | null = null;
+let whiteCreatures: HTMLCanvasElement | null = null;
+let redCreatures: HTMLCanvasElement | null = null;
+const creatureCells: Record<string, number> = { goblin: 0, orc: 1, ghost: 2, lizardman: 3, zombie: 4, emberdemon: 5, vampire: 6, lich: 7, skeleton: 8, demonbat: 9, wraith: 10, skelmage: 11 };
+const creatureThumbnails = new Map<string, string>();
 const iconThumbnails = new Map<ReferenceIcon, string>();
 const spikeThumbnails = new Map<number, string>();
 let loading: Promise<void> | null = null;
@@ -60,7 +67,7 @@ export function loadReferenceArt(): Promise<void> {
       if (!response.ok) return;
       const manifest: unknown = await response.json();
       if (!manifest || typeof manifest !== "object" || !("version" in manifest) || manifest.version !== 1) return;
-      const flags = manifest as { archer?: unknown; archerHood?: unknown; mageBlue?: unknown; mageRed?: unknown; minerals?: unknown; rocks?: unknown; icons?: unknown; plants?: unknown; bow?: unknown; menu?: unknown; spikes?: unknown; lightning?: unknown; ripples?: unknown; objects?: Partial<Record<ReferenceObject, unknown>>; scenes?: Partial<Record<ReferenceScene, unknown>> };
+      const flags = manifest as { archer?: unknown; archerHood?: unknown; mageBlue?: unknown; mageRed?: unknown; minerals?: unknown; rocks?: unknown; icons?: unknown; plants?: unknown; bow?: unknown; menu?: unknown; spikes?: unknown; lightning?: unknown; ripples?: unknown; figures?: unknown; creatures?: unknown; objects?: Partial<Record<ReferenceObject, unknown>>; scenes?: Partial<Record<ReferenceScene, unknown>> };
       const tasks: Promise<void>[] = [];
       if (flags.archer === true) tasks.push(image("archer", 768, 1152).then((loaded) => { archer = loaded; }).catch(() => {}));
       if (flags.archerHood === true) tasks.push(image("archer-hood", 768, 1152).then((loaded) => { archerHood = loaded; }).catch(() => {}));
@@ -75,6 +82,22 @@ export function loadReferenceArt(): Promise<void> {
       if (flags.spikes === true) tasks.push(image("spikes", 576, 384).then((loaded) => { spikes = loaded; }).catch(() => {}));
       if (flags.lightning === true) tasks.push(image("lightning", 480, 200).then((loaded) => { lightning = loaded; }).catch(() => {}));
       if (flags.ripples === true) tasks.push(image("ripples", 384, 64).then((loaded) => { ripples = loaded; }).catch(() => {}));
+      if (Array.isArray(flags.figures) && flags.figures.length === 4 && flags.figures.some((value: unknown) => value === true)) {
+        const available = flags.figures.map((value: unknown) => value === true);
+        tasks.push(image("figures", 384, 96).then((loaded) => { figures = loaded; figureFlags = available; }).catch(() => {}));
+      }
+      if (flags.creatures === true) tasks.push(image("creatures", 1152, 96).then((loaded) => {
+        creatures = loaded;
+        const tint = (color: string) => {
+          const canvas = document.createElement("canvas"); canvas.width = 1152; canvas.height = 96;
+          const painter = canvas.getContext("2d");
+          if (!painter) return null;
+          painter.drawImage(loaded, 0, 0); painter.globalCompositeOperation = "source-in";
+          painter.fillStyle = color; painter.fillRect(0, 0, 1152, 96);
+          return canvas;
+        };
+        whiteCreatures = tint("#ffffff"); redCreatures = tint("#ff4040");
+      }).catch(() => {}));
       for (const name of Object.keys(dimensions) as ReferenceObject[]) {
         const [width, height] = dimensions[name];
         if (flags.objects?.[name] === true) tasks.push(image(name, width, height).then((loaded) => { objects.set(name, loaded); }).catch(() => {}));
@@ -202,6 +225,37 @@ export function drawReferenceResident(ctx: CanvasRenderingContext2D, look: Resid
   const frame = ((Math.floor(time * (walking ? 8 : 5)) % count) + count) % count;
   ctx.drawImage(atlas, frame * 96, (walking ? 4 + row : row) * 96, 96, 96, -64, -95, 128, 128);
   return true;
+}
+
+/** The supplied character pictures contain a single frontal pose. Use them
+ * for stationary visitors only; animated residents keep directional frames. */
+export function drawReferenceFigure(ctx: CanvasRenderingContext2D, index: number, x: number, y: number): boolean {
+  if (!figures || !figureFlags[index]) return false;
+  ctx.drawImage(figures, index * 96, 0, 96, 96, Math.round(x - 48), Math.round(y - 92), 96, 96);
+  return true;
+}
+
+export function hasReferenceCreature(skin: string): boolean {
+  return !!creatures && Object.hasOwn(creatureCells, skin);
+}
+/** A static reference pose may be bobbed/mirrored by the engine, but it is not
+ * represented as a sprite sheet with invented directional frames. */
+export function drawReferenceCreature(ctx: CanvasRenderingContext2D, skin: string, flip: boolean, tint?: "white" | "red"): boolean {
+  const index = Object.hasOwn(creatureCells, skin) ? creatureCells[skin] : undefined;
+  const atlas = tint === "white" ? whiteCreatures : tint === "red" ? redCreatures : creatures;
+  if (index === undefined || !atlas) return false;
+  ctx.save();
+  if (flip) ctx.scale(-1, 1);
+  ctx.drawImage(atlas, index * 96, 0, 96, 96, -48, -92, 96, 96);
+  ctx.restore(); return true;
+}
+export function referenceCreatureUrl(skin: string): string {
+  if (!hasReferenceCreature(skin) || typeof document === "undefined") return "";
+  const cached = creatureThumbnails.get(skin); if (cached) return cached;
+  const canvas = document.createElement("canvas"); canvas.width = canvas.height = 96;
+  const painter = canvas.getContext("2d"); if (!painter) return "";
+  painter.translate(48, 92); drawReferenceCreature(painter, skin, false);
+  const url = canvas.toDataURL(); creatureThumbnails.set(skin, url); return url;
 }
 
 /** Selected mineral/rock examples from the reference sheets, bottom-centered. */

@@ -176,8 +176,8 @@ try {
     assert.deepEqual(result.buildings, { house: scenario !== "missing", tower: scenario !== "missing", village: scenario !== "missing", readyTower: scenario !== "missing" }, `${scenario}: prédios opcionais`);
     assert.equal(result.kills, 1, `${scenario}: registro e abate do orc`);
     assert.equal(result.damageApplied, true, `${scenario}: o ataque do orc deve causar dano`);
-    assert.equal(result.spawningWithArt === "orc", expected.orcs, `${scenario}: surgimento com arte`);
-    assert.notEqual(result.spawningWithoutArt, "orc", `${scenario}: tabela de surgimento original sem arte`);
+    assert.equal(result.spawningWithArt, "orc", `${scenario}: surgimento com arte`);
+    assert.equal(result.spawningWithoutArt, "orc", `${scenario}: o fallback também permite orcs sem arte`);
     if (expected.plants) assert.deepEqual(result.plantCache, { repeat: true, sameHeight: true, sameAnchor: true });
     assert.deepEqual(errors, [], scenario);
     await page.close();

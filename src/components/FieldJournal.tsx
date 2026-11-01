@@ -2,7 +2,6 @@
 
 import { memo, useEffect, useState } from "react";
 import { getCharacterUrl, getSpriteUrl } from "@/game/sprites";
-import { hasCraftOrcs } from "@/game/craftpix";
 import { hasReferenceScene, referenceIconUrl, referenceObjectUrl, referenceSpikeUrl } from "@/game/reference-art";
 import { GAME_TITLE } from "@/game/identity";
 import { BESTIARY, EQUIPMENT, SITES, type EquipmentKey } from "@/game/world-content";
@@ -88,7 +87,7 @@ export default function FieldJournal(props: Props) {
   const [characterView, setCharacterView] = useState<"down" | "up" | "side">("up");
   const recipe = snap.buildOptions.find((b) => b.id === selected) ?? snap.buildOptions[0];
   const defenseRecipe = recipe.id === "spike_trap" || recipe.id === "barricade";
-  const creatures = BESTIARY.filter((entry) => entry.sprite !== "orc" || snap.seenCreatures.includes("orc") || (props.craftPix && hasCraftOrcs()));
+  const creatures = BESTIARY;
   const creature = creatures[Math.min(creatureIndex, creatures.length - 1)];
   const site = SITES[siteIndex];
   const upgrade = snap.upgradeOptions.find((entry) => entry.tool === upgradeTool)!;

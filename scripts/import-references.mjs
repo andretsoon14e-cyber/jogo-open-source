@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
 import { makeArcher, makeMage, makeReferenceObject, makeEffectAtlas } from "./reference-art-core.mjs";
+import { makeFigureAtlas, makeCreatureAtlas } from "./reference-figures.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -55,7 +56,13 @@ const hashes = {
   83: "be413625cadec28c49aa0f01f9e3a8d40e180117c1feb0eec86d8a5436a7ad11",
   85: "15394bc3c952231796d6603c8e726607f3105881d6d8e88a0e71a0d8bee34d31",
   86: "b7a15fb931c1b4eb31cb83bae429297676fb8c09be49c8da4a5aea2771b71bc2",
+  88: "c8d03180b8dc17b32009f6b6bd24a6f6eea1148614db4a7fc4c8b2654038e7d0",
+  89: "b33cd549b96b6e749fbba08618d345baaef26ca7a6e72c9de1937a127acc3b2f",
+  90: "c4264a3cf530f8af9218739bdf8e379344dd60b36d41cf291a09d855a3dc5a2f",
+  91: "99751a919a2d96a8ea5d8686af482bf3ce9380cb55c98145daa4402e559e92aa",
+  92: "66ad46232dc853a36b94022ed1897d5b30fec1adc4ea7adc13426de0577af05a",
 };
+const previewSizes = { 88: [2048, 2048], 89: [1254, 1254], 90: [2464, 1696], 91: [2048, 2048], 92: [2048, 2048] };
 const objects = {
   forge: { id: 8, left: 55, top: 50, width: 795, height: 640, targetWidth: 260, targetHeight: 210, mainOnly: true },
   house: { id: 8, left: 825, top: 45, width: 530, height: 600, targetWidth: 220, targetHeight: 250, mainOnly: true },
@@ -144,7 +151,8 @@ async function main() {
       throw new Error(`image-${id}.png não corresponde à imagem fornecida. Nenhum arquivo foi alterado.`);
     }
     const meta = await sharp(data).metadata();
-    if (meta.width !== 1800 || meta.height !== 1200) throw new Error(`Dimensões inesperadas em image-${id}.png.`);
+    const [width, height] = previewSizes[id] ?? [1800, 1200];
+    if (meta.width !== width || meta.height !== height) throw new Error(`Dimensões inesperadas em image-${id}.png.`);
     inputs[id] = data;
   }
   if (!!inputs[30] !== !!inputs[31]) throw new Error("As duas imagens do arqueiro (image-30.png e image-31.png) precisam estar juntas.");
@@ -180,6 +188,14 @@ async function main() {
     }
     generated.set("icons.png", await sharp({ create: { width: 512, height: 64, channels: 4, background: "#00000000" } }).composite(pieces).png({ compressionLevel: 9 }).toBuffer());
   }
+  // These sheets are static marketing previews. Their single frontal poses
+  // are used only for stationary visitors and stylized monsters, never passed
+  // off as animated/directional spritesheets.
+  const figureAtlas = await makeFigureAtlas(inputs);
+  manifest.figures = figureAtlas.flags;
+  manifest.creatures = Boolean(inputs[92]);
+  if (figureAtlas.atlas) generated.set("figures.png", figureAtlas.atlas);
+  if (inputs[92]) generated.set("creatures.png", await makeCreatureAtlas(inputs[92]));
   for (const [name, spec] of Object.entries(objects)) {
     manifest.objects[name] = !!inputs[spec.id];
     if (inputs[spec.id]) generated.set(`${name}.png`, await makeReferenceObject(inputs[spec.id], spec));
@@ -195,7 +211,7 @@ async function main() {
   if (!generated.size) throw new Error("Nenhuma das imagens reconhecidas foi encontrada.");
 
   mkdirSync(output, { recursive: true });
-  const known = ["archer.png", "archer-hood.png", "mage-blue.png", "mage-red.png", "minerals.png", "rocks.png", "icons.png", "plants.png", "bow.png", "menu.png", "spikes.png", "lightning.png", "ripples.png", ...Object.keys(objects).map((n) => `${n}.png`), ...Object.keys(scenes).map((n) => `scene-${n}.png`)];
+  const known = ["figures.png", "creatures.png", "archer.png", "archer-hood.png", "mage-blue.png", "mage-red.png", "minerals.png", "rocks.png", "icons.png", "plants.png", "bow.png", "menu.png", "spikes.png", "lightning.png", "ripples.png", ...Object.keys(objects).map((n) => `${n}.png`), ...Object.keys(scenes).map((n) => `scene-${n}.png`)];
   for (const [name, buffer] of generated) {
     const temp = path.join(output, `.${name}.tmp`); writeFileSync(temp, buffer); renameSync(temp, path.join(output, name));
   }
