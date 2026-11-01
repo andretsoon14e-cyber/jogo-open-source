@@ -119,7 +119,7 @@ Com uma pedreira, o minerador designado produz **2 ferros a cada 45 segundos de 
 
 As primeiras noites começam com poucas criaturas. Limite, tamanho e frequência das ondas crescem gradualmente conforme os dias e a dificuldade; monstros procuram pontos separados. Ao cair, o jogador desperta ferido perto da base com pouca vida e energia. A pressão dos invasores e a dificuldade determinam o saque de recursos comuns e o vandalismo: cercas e plantações são mais expostas; no impossível, os estragos podem ser severos. Ferro, cristal, ferramentas e equipamentos são preservados. O relatório aparece na tela e, se o salvamento automático estiver ligado, a consequência não é aplicada novamente ao recarregar.
 
-As músicas de menu, dia, noite e cerco são composições próprias do projeto, com piano e violão amostrados e transições suaves. O tema do lobby é diferente da música durante a exploração; preferências já salvas continuam valendo. Passos mudam conforme o chão, ferramentas e itens usam sons de materiais, monstros e animais próximos têm variações e posição estéreo, e o mar, os riachos e as fogueiras ficam mais audíveis à medida que o jogador se aproxima. O vento e o canto de pássaros também acompanham a exploração. Os controles de música, volumes, criaturas, vento e ambiente permanecem nas configurações. As fontes, licenças e aproximações de espécies estão em [créditos do áudio](public/audio/CREDITOS.md).
+As músicas de menu, dia, noite e cerco são composições próprias do projeto, com piano e violão amostrados e transições suaves. O tema do lobby é diferente da música durante a exploração; preferências já salvas continuam valendo. Machado, picareta e espada têm movimentos sonoros diferentes, e os impactos mudam entre madeira, pedra, metal e cristal. Passos mudam conforme o chão, monstros e animais próximos têm variações e posição estéreo, e o mar, os riachos e as fogueiras ficam mais audíveis à medida que o jogador se aproxima. O vento e o canto de pássaros também acompanham a exploração. Os controles de música, volumes, criaturas, vento e ambiente permanecem nas configurações. As fontes, licenças e aproximações de espécies estão em [créditos do áudio](public/audio/CREDITOS.md).
 
 ## Biomas, fogueira e exploração
 
@@ -141,6 +141,8 @@ A dificuldade e o aliado Tito alteram o preço efetivo; a oficina mostra os valo
 
 ## Armas
 
+A mochila começa sem recursos: madeira, pedra e outros materiais só aparecem nos espaços após serem coletados e somem da grade quando acabam. As ferramentas iniciais entregues por Rian permanecem equipadas, e os saves existentes mantêm seus itens.
+
 Na **Mochila & equipamento**, escolha **Espada** ou **Arco** para o espaço 3. O arco ataca à distância, atinge criaturas e animais, não causa fogo amigo e compartilha as melhorias da espada; não consome um item de munição. A escolha é salva junto do progresso e saves anteriores começam com a espada. Ambas as armas funcionam mesmo sem as artes opcionais.
 
 ## Verificações
@@ -157,6 +159,7 @@ Para os testes visuais/de navegação, instale também o navegador do Playwright
 ```bash
 npm run test:browser
 APP_URL=http://localhost:3000 npm run test:audio-browser # MP3 reais, gesto, volume e fluxo do jogo
+APP_URL=http://localhost:3000 npm run test:inventory-browser # mochila vazia, coleta e save
 npm run test:craftpix-browser  # usa atlas sintéticos, sem exigir os ZIPs
 npm run test:referencias-browser # referências sintéticas, flechas e saves
 npm run test:referencias-ui      # visitas, controles e telas pequenas

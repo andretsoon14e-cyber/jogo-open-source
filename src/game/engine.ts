@@ -1855,7 +1855,9 @@ export class Engine {
     this.attackT = 0.22;
     this.swingTool = this.heldTool;
     this.stamina = Math.max(0, this.stamina - 4);
-    this.sfx.swing();
+    // The selected tool determines the swing sound, even when harvesting
+    // temporarily shows the appropriate tool for the resource being gathered.
+    this.sfx.swing(this.swingBow ? "bow" : this.heldTool);
     if (this.swingBow) {
       const dx = Math.cos(this.pdir), dy = Math.sin(this.pdir);
       this.projectiles.push({ kind: "player", x: this.px + dx * 24, y: this.py + dy * 24, vx: dx * 520, vy: dy * 520, t: 0.9, dmg: 7 + this.tools.sword * 4 });

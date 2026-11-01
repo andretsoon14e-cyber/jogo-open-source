@@ -62,17 +62,22 @@ function Costs({ cost, inv, craftPix }: { cost: Partial<Record<ResKey, number>>;
 }
 
 function InventoryGrid({ snap, craftPix, compact = false, onEat }: { snap: Snapshot; craftPix: boolean; compact?: boolean; onEat?: () => void }) {
+  // The six resource types exist in the save, but an icon represents something
+  // actually owned, not an empty counter. Keep the same slots and layout.
+  const items = resourceNames.filter((key) => snap.inv[key] > 0);
+  const slots: (ResKey | null)[] = [...items, ...Array(resourceNames.length - items.length).fill(null)];
   return <div>
-    <div className={`grid gap-1.5 ${compact ? "grid-cols-3" : "grid-cols-3 sm:grid-cols-6"}`}>
-      {resourceNames.map((key) => <div key={key} className="journal-slot flex flex-col items-center justify-center relative p-2" title={RES_LABEL[key]}>
+    <div role="list" aria-label="Recursos na mochila" className={`grid gap-1.5 ${compact ? "grid-cols-3" : "grid-cols-3 sm:grid-cols-6"}`}>
+      {slots.map((key, i) => key ? <div key={key} role="listitem" aria-label={`${RES_LABEL[key]}: ${snap.inv[key]}`} data-resource={key} className="journal-slot flex flex-col items-center justify-center relative p-2" title={RES_LABEL[key]}>
         <SpriteThumb name={`it_${key}`} size={compact ? 34 : 44} craftPix={craftPix} />
         <span className="absolute top-1 right-1.5 font-display text-sm font-bold text-[#4f3325]">{snap.inv[key]}</span>
         {!compact && <span className="text-[9px] mt-1 opacity-60">{RES_LABEL[key]}</span>}
-      </div>)}
+      </div> : <div key={`empty-${i}`} aria-hidden="true" className="journal-slot" />)}
     </div>
+    {!items.length && <p className="mt-2 text-xs text-[#896742]">Mochila vazia. Os itens aparecem ao serem coletados.</p>}
     {!compact && <div className="mt-3 flex justify-between items-center text-xs">
       <span className="text-[#896742]">Os recursos são coletados automaticamente.</span>
-      {onEat && <button className="journal-button small" disabled={!snap.inv.food || snap.hp >= snap.maxHp} onClick={onEat}>Comer fruta · +{snap.equipment.charm ? 30 : 22} vida</button>}
+      {onEat && snap.inv.food > 0 && <button className="journal-button small" disabled={snap.hp >= snap.maxHp} onClick={onEat}>Comer fruta · +{snap.equipment.charm ? 30 : 22} vida</button>}
     </div>}
   </div>;
 }

@@ -40,8 +40,8 @@ try {
     if (music) {
       game.sfx.ensure(); music.play("day"); music.resume();
       const deadline = performance.now() + 10000;
-      while ((!game.sfx.samplesReady || !music.active) && performance.now() < deadline) await new Promise((r) => setTimeout(r, 50));
-      if (!game.sfx.samplesReady || !music.active) throw new Error("O benchmark não conseguiu carregar o banco de efeitos ou a música.");
+      while ((!game.sfx.samplesReady || !game.sfx.toolSamplesReady || !music.active) && performance.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+      if (!game.sfx.samplesReady || !game.sfx.toolSamplesReady || !music.active) throw new Error("O benchmark não conseguiu carregar os bancos de efeitos ou a música.");
     }
     game.skipCutscene(); game.escort.active = false;
     game.updateSpawns = () => {};

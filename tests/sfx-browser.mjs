@@ -45,7 +45,7 @@ try {
   const before = await page.evaluate(() => window.audioStateBeforeGesture);
   assert.equal(before, "suspended", "áudio deve aguardar o primeiro gesto do jogador");
   await page.mouse.click(50, 50);
-  await page.waitForFunction(() => window.game.sfx.ctx?.state === "running" && window.game.sfx.samplesReady && window.player.active?.track === "lobby", null, { timeout: 30000 });
+  await page.waitForFunction(() => window.game.sfx.ctx?.state === "running" && window.game.sfx.samplesReady && window.game.sfx.toolSamplesReady && window.player.active?.track === "lobby", null, { timeout: 30000 });
   const cues = JSON.parse(await readFile("src/game/audio-cues.generated.json", "utf8"));
   const spriteCheck = await page.evaluate((manifest) => {
     const sprite = window.game.sfx.sprite, data = sprite.getChannelData(0), sr = sprite.sampleRate;
@@ -60,6 +60,50 @@ try {
   }, cues);
   assert.ok(spriteCheck.duration > 50 && spriteCheck.duration < 60, `duração do sprite inválida ${spriteCheck.duration}`);
   assert.deepEqual(spriteCheck.invalid, [], "todas as fatias reais devem decodificar com sinal");
+  const toolCues = JSON.parse(await readFile("src/game/tool-audio-cues.generated.json", "utf8"));
+  const toolSprite = await page.evaluate((manifest) => {
+    const sprite = window.game.sfx.toolSprite, data = sprite.getChannelData(0), sr = sprite.sampleRate;
+    const invalid = [];
+    for (const [name, [start, duration]] of Object.entries(manifest)) {
+      let peak = 0;
+      const from = Math.round(start * sr), end = Math.round((start + duration) * sr), to = Math.min(data.length, end);
+      for (let i = from; i < to; i += 5) peak = Math.max(peak, Math.abs(data[i]));
+      if (end > data.length || to <= from || peak < 0.003 || peak > 1.05) invalid.push([name, peak]);
+    }
+    return { duration: sprite.duration, invalid };
+  }, toolCues);
+  assert.ok(toolSprite.duration > 2 && toolSprite.duration < 6, `banco de ferramentas inválido: ${toolSprite.duration}`);
+  assert.deepEqual(toolSprite.invalid, [], "todos os novos sons de ferramenta devem decodificar com sinal");
+
+  // Use actual keyboard events on the same tree: automatic harvesting must
+  // not mask the selected tool's sound or emit three identical swishes.
+  await page.evaluate(() => {
+    const game = window.game, sfx = game.sfx, ctx = sfx.ctx;
+    game.skipCutscene(); game.escort.active = false;
+    game.px = 1000; game.py = 1000; game.pdir = 0; game.monsters = []; game.animals = [];
+    const tree = { type: "tree", x: 1034, y: 1000, hp: 100, maxHp: 100, wob: 0, respawn: 0 };
+    game.nearbyNodes = () => [tree];
+    window.__toolStarts = [];
+    const create = ctx.createBufferSource.bind(ctx);
+    window.__restoreCreateSource = () => { ctx.createBufferSource = create; };
+    ctx.createBufferSource = () => {
+      const src = create(), start = src.start.bind(src);
+      src.start = (...args) => { if (src.buffer === sfx.toolSprite) window.__toolStarts.push(args[1]); return start(...args); };
+      return src;
+    };
+  });
+  for (const key of ["1", "2", "3"]) {
+    await page.keyboard.press(key);
+    await page.evaluate(() => { window.game.attackCd = 0; });
+    await page.keyboard.press("j");
+    await page.waitForTimeout(450);
+  }
+  const attackOffsets = await page.evaluate(() => { window.__restoreCreateSource(); return window.__toolStarts; });
+  const offsetsFor = (prefix) => Object.entries(toolCues).filter(([name]) => name.startsWith(prefix)).map(([, cue]) => cue[0]);
+  const swingOffsets = attackOffsets.filter((offset) => ["axeSwing", "pickSwing", "swordSwing"].some((prefix) => offsetsFor(prefix).includes(offset)));
+  assert.equal(swingOffsets.length, 3, "cada golpe emite um único balanço");
+  for (const [i, prefix] of ["axeSwing", "pickSwing", "swordSwing"].entries()) assert.ok(offsetsFor(prefix).includes(swingOffsets[i]), `${prefix} não foi usado no jogo`);
+  assert.equal(attackOffsets.filter((offset) => offsetsFor("axeHit").includes(offset)).length, 3, "os três golpes na árvore preservam o impacto de madeira");
 
   const sounds = await page.evaluate(async () => {
     const sfx = window.game.sfx, ctx = sfx.ctx, analyser = ctx.createAnalyser();
@@ -70,7 +114,8 @@ try {
     const peakOver = async (ms) => { let max = 0; for (let t = 0; t < ms; t += 35) { await wait(35); max = Math.max(max, rms()); } return max; };
     const result = {};
     for (const [name, play] of [
-      ["machado", () => sfx.chop()], ["picareta", () => sfx.mine("rock")],
+      ["balanço machado", () => sfx.swing("axe")], ["balanço picareta", () => sfx.swing("pick")], ["balanço espada", () => sfx.swing("sword")],
+      ["machado", () => sfx.chop()], ["picareta", () => sfx.mine("rock")], ["metal", () => sfx.mine("ore")],
       ["cristal", () => sfx.mine("crystal")], ["item", () => sfx.pickup("iron")],
       ["passo", () => sfx.footstep("grass", false)], ["criatura", () => sfx.creature("hulk", 1, 0.4)],
       ["morte", () => sfx.monsterDeath("hulk", 1)], ["esqueleto", () => sfx.creature("skeleton", 1)],
@@ -99,7 +144,7 @@ try {
     sfx.destroy(); analyser.disconnect();
     return result;
   });
-  for (const name of ["machado", "picareta", "cristal", "item", "passo", "criatura", "morte", "esqueleto", "slime", "ganso", "cabra", "pássaro", "baú", "vento", "riacho", "mar", "fogo"]) {
+  for (const name of ["balanço machado", "balanço picareta", "balanço espada", "machado", "picareta", "metal", "cristal", "item", "passo", "criatura", "morte", "esqueleto", "slime", "ganso", "cabra", "pássaro", "baú", "vento", "riacho", "mar", "fogo"]) {
     assert.ok(sounds[name] > 0.00001, `${name} não produziu áudio: ${sounds[name]}`);
     assert.ok(!sounds[`${name}-vazou`], `${name} não parou depois de desligar`);
   }
@@ -137,7 +182,7 @@ try {
   for (const name of ["mudo", "desligada", "parada"]) assert.ok(music[name] < 0.00001, `música ${name} ainda audível: ${music[name]}`);
   assert.ok(music.retomada > 0.00001 && music.reativada > 0.00001, "música deve voltar após mudar volume ou religar");
   assert.deepEqual(errors, []); assert.deepEqual(failedAudio, []);
-  console.log(`OK: gesto real; ${Object.keys(cues).length} amostras decodificadas, impactos, animais, criaturas, passos, mar, água, fogo, vento e quatro músicas com fade/mudo.`);
+  console.log(`OK: gesto real; ${Object.keys(cues).length} efeitos e ${Object.keys(toolCues).length} amostras de ferramentas decodificados; impactos, animais, ambientes e quatro músicas com fade/mudo.`);
 
   // Opcional: percorre a interface real do Next para testar ida e volta ao menu.
   if (process.env.APP_URL) {

@@ -1,4 +1,5 @@
 import cueData from "./audio-cues.generated.json";
+import toolCueData from "./tool-audio-cues.generated.json";
 
 /** Efeitos gravados CC0, reunidos em um único sprite para reduzir requisições.
  * As fontes e transformações estão em public/audio/CREDITOS.md. */
@@ -22,7 +23,16 @@ export const AUDIO_GROUPS = {
   deathDeep: ["ogre-6", "ogre-8", "duck-roar4"],
   deathOther: ["duck-die1", "duck-die2", "duck-die3"],
 } as const;
-type Group = keyof typeof AUDIO_GROUPS;
+/** A separate, small bank keeps the original effects unmodified. */
+export const TOOL_AUDIO_GROUPS = {
+  axeSwing: ["axeSwing1", "axeSwing2"], pickSwing: ["pickSwing1", "pickSwing2"],
+  swordSwing: ["swordSwing1", "swordSwing2"], axeHit: ["axeHit1", "axeHit2"],
+  pickStone: ["pickStone1", "pickStone2"], pickMetal: ["pickMetal1"], pickCrystal: ["pickCrystal1"],
+} as const;
+const GROUPS = { ...AUDIO_GROUPS, ...TOOL_AUDIO_GROUPS } as const;
+const TOOL_CUES: Record<string, readonly number[]> = toolCueData;
+type Group = keyof typeof GROUPS;
+export type ToolSound = "axe" | "pick" | "sword" | "bow";
 export type AmbientKind = "wind" | "sea" | "water" | "fire";
 export type FootSurface = "grass" | "dirt" | "snow" | "bridge" | "rock";
 type Ambient = { source: AudioBufferSourceNode; gain: GainNode; timer: ReturnType<typeof setTimeout> | null };
@@ -45,6 +55,8 @@ export class Sfx {
   private _vol = 0.35;
   private sprite: AudioBuffer | null = null;
   private spriteLoading: Promise<void> | null = null;
+  private toolSprite: AudioBuffer | null = null;
+  private toolSpriteLoading: Promise<void> | null = null;
   private abort = new AbortController();
   private closed = false;
   private voices = new Set<AudioBufferSourceNode>();
@@ -66,6 +78,7 @@ export class Sfx {
     if (!this._vol) this.silenceAmbience();
   }
   get samplesReady() { return !!this.sprite; }
+  get toolSamplesReady() { return !!this.toolSprite; }
 
   /** Called directly from pointer/keyboard/gamepad gestures to unlock browsers. */
   ensure() {
@@ -88,17 +101,23 @@ export class Sfx {
         if (!this.closed && this.ctx === ctx && buffer) this.sprite = buffer;
       }).finally(() => { this.spriteLoading = null; });
     }
+    if (!this.toolSprite && !this.toolSpriteLoading) {
+      this.toolSpriteLoading = decode(ctx, "/audio/tool-effects.mp3", this.abort.signal).then((buffer) => {
+        if (!this.closed && this.ctx === ctx && buffer) this.toolSprite = buffer;
+      }).finally(() => { this.toolSpriteLoading = null; });
+    }
   }
 
-  private play(group: Group, volume: number, pan = 0, rate = 1, cooldown = 0.09): boolean {
-    const ctx = this.ctx, out = this.output, sprite = this.sprite;
+  private play(group: Group, volume: number, pan = 0, rate = 1, cooldown = 0.09, delay = 0): boolean {
+    const tool = group in TOOL_AUDIO_GROUPS;
+    const ctx = this.ctx, out = this.output, sprite = tool ? this.toolSprite : this.sprite;
     if (!ctx || ctx.state !== "running" || !out || !sprite || this._vol <= 0 || volume <= 0 || this.voices.size >= 16) return false;
     const now = ctx.currentTime;
     if (now < (this.nextAt.get(group) ?? 0)) return false;
-    const choices = AUDIO_GROUPS[group];
+    const choices = GROUPS[group];
     let index = Math.floor(Math.random() * choices.length);
     if (choices.length > 1 && index === this.lastChoice.get(group)) index = (index + 1) % choices.length;
-    const cue = CUES[choices[index]];
+    const cue = (tool ? TOOL_CUES : CUES)[choices[index]];
     if (!cue || cue[0] + cue[1] > sprite.duration + 0.02) return false;
     this.lastChoice.set(group, index);
     this.nextAt.set(group, now + cooldown);
@@ -116,7 +135,7 @@ export class Sfx {
     source.onended = () => {
       this.voices.delete(source); source.disconnect(); gain.disconnect(); panner?.disconnect();
     };
-    source.start(now, cue[0], cue[1]);
+    source.start(now + delay, cue[0], cue[1]);
     return true;
   }
 
@@ -228,12 +247,20 @@ export class Sfx {
   fire(proximity: number) { this.setAmbient("fire", clamp(proximity) * 0.32); }
   silenceAmbience() { for (const kind of ["wind", "sea", "water", "fire"] as const) this.setAmbient(kind, 0); }
 
-  chop() { this.play("chop", 0.62, 0, 1, 0.1); }
+  // A brief lead-in lets the selected tool be heard before the material hit.
+  chop() { this.play(this.toolSprite ? "axeHit" : "chop", 0.58, 0, 1, 0.1, 0.06); }
   mine(material: "rock" | "ore" | "crystal" = "rock") {
-    this.play(material === "ore" ? "metal" : material === "crystal" ? "crystal" : "stone", 0.55, 0, 1, 0.1);
+    const group: Group = this.toolSprite
+      ? material === "ore" ? "pickMetal" : material === "crystal" ? "pickCrystal" : "pickStone"
+      : material === "ore" ? "metal" : material === "crystal" ? "crystal" : "stone";
+    this.play(group, 0.55, 0, 1, 0.1, 0.06);
   }
   foliage() { this.play("rustle", 0.36, 0, 1, 0.1); }
-  swing() { this.play("swing", 0.3, 0, 1, 0.1); }
+  swing(tool?: ToolSound) {
+    if (!tool || tool === "bow") { this.play("swing", 0.3, 0, 1, 0.1); return; }
+    const group: Group = !this.toolSprite ? "swing" : tool === "axe" ? "axeSwing" : tool === "pick" ? "pickSwing" : "swordSwing";
+    this.play(group, 0.38, 0, tool === "axe" ? 0.85 : tool === "pick" ? 0.97 : 1.12, 0.1);
+  }
   hit() { this.play("hit", 0.55, 0, 1, 0.1); }
   hurt() { this.play("hurt", 0.58, 0, 0.95, 0.3); }
   structureBreak() { this.play("break", 0.55, 0, 0.86, 0.3); }
@@ -264,6 +291,6 @@ export class Sfx {
     for (const voice of this.voices) { try { voice.stop(); } catch { /* já terminou */ } }
     this.voices.clear();
     if (this.ctx && this.ctx.state !== "closed") void this.ctx.close().catch(() => {});
-    this.ctx = null; this.output = null; this.sprite = null; this.noiseBuffer = null;
+    this.ctx = null; this.output = null; this.sprite = null; this.toolSprite = null; this.noiseBuffer = null;
   }
 }

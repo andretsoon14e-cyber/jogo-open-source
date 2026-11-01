@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import sfxModule from "../src/game/sfx.ts";
 import musicModule from "../src/game/music.ts";
 
-const { Sfx, AUDIO_GROUPS } = sfxModule;
+const { Sfx, AUDIO_GROUPS, TOOL_AUDIO_GROUPS } = sfxModule;
 const { MusicManager } = musicModule;
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 const param = () => ({
@@ -55,10 +55,12 @@ async function makeSfx() {
   const sfx = new Sfx(); sfx.ensure();
   await tick(); await tick();
   assert.equal(sfx.samplesReady, true);
+  assert.equal(sfx.toolSamplesReady, true);
   return sfx;
 }
 
 const cues = JSON.parse(readFileSync("src/game/audio-cues.generated.json", "utf8"));
+const toolCues = JSON.parse(readFileSync("src/game/tool-audio-cues.generated.json", "utf8"));
 test("banco de áudio tem todas as fatias usadas, não sobrepostas, e arquivos locais", () => {
   const used = new Set(Object.values(AUDIO_GROUPS).flat());
   assert.deepEqual([...used].sort(), Object.keys(cues).sort(), "todas as amostras são usadas e nenhuma está ausente");
@@ -70,7 +72,16 @@ test("banco de áudio tem todas as fatias usadas, não sobrepostas, e arquivos l
     end = start + duration;
   }
   assert.ok(end < 60, "sprite curto para decodificar sem pesar");
-  for (const file of ["effects", "ambient/wind", "ambient/water", "ambient/sea", "ambient/fire", "music/lobby", "music/day", "music/night", "music/siege"]) {
+  const toolUsed = new Set(Object.values(TOOL_AUDIO_GROUPS).flat());
+  assert.deepEqual([...toolUsed].sort(), Object.keys(toolCues).sort(), "todos os sons de ferramenta existem e são usados");
+  end = 0;
+  for (const [key, [start, duration]] of Object.entries(toolCues).sort((a, b) => a[1][0] - b[1][0])) {
+    assert.ok(Number.isFinite(start) && Number.isFinite(duration) && duration > 0, key);
+    assert.ok(start >= end - 0.00001, `${key} sobrepõe a anterior`);
+    end = start + duration;
+  }
+  assert.ok(end < 6, "banco adicional de ferramentas continua pequeno");
+  for (const file of ["effects", "tool-effects", "ambient/wind", "ambient/water", "ambient/sea", "ambient/fire", "music/lobby", "music/day", "music/night", "music/siege"]) {
     assert.ok(existsSync(`public/audio/${file}.mp3`), `ausente: ${file}`);
   }
 });
@@ -105,19 +116,43 @@ test("sons amostrados de criaturas têm distância, estéreo, variação e limit
   sfx.destroy(); assert.equal(ctx.state, "closed"); assert.equal(sfx.ctx, null);
 });
 
-test("impactos variam por material e o banco limita acúmulo e repetição", async (t) => {
+test("machado, picareta e espada usam balanços próprios; impactos variam por material", async (t) => {
   audioEnvironment(t);
   const sfx = await makeSfx(), ctx = sfx.ctx;
+  for (const tool of ["axe", "pick", "sword"]) { sfx.swing(tool); ctx.currentTime += 1; }
+  for (const [i, group] of ["axeSwing", "pickSwing", "swordSwing"].entries()) {
+    assert.equal(ctx.sources[i].buffer, sfx.toolSprite, "cada ferramenta usa o banco novo");
+    assert.ok(TOOL_AUDIO_GROUPS[group].some((name) => toolCues[name][0] === ctx.sources[i].started[1]), group);
+  }
+  assert.equal(new Set(ctx.sources.slice(0, 3).map((src) => src.started[1])).size, 3, "três movimentos têm amostras diferentes");
+  const base = ctx.sources.length;
   for (const material of ["rock", "ore", "crystal"]) { sfx.mine(material); ctx.currentTime += 1; }
-  for (const [i, group] of ["stone", "metal", "crystal"].entries()) {
-    assert.ok(AUDIO_GROUPS[group].some((name) => cues[name][0] === ctx.sources[i].started[1]), group);
+  for (const [i, group] of ["pickStone", "pickMetal", "pickCrystal"].entries()) {
+    assert.ok(TOOL_AUDIO_GROUPS[group].some((name) => toolCues[name][0] === ctx.sources[base + i].started[1]), group);
   }
   ctx.currentTime += 1; sfx.chop(); const first = ctx.sources.at(-1).started[1];
+  assert.equal(ctx.sources.at(-1).started[0], ctx.currentTime + 0.06, "impacto começa depois do balanço");
   ctx.currentTime += 1; sfx.chop(); const second = ctx.sources.at(-1).started[1];
-  assert.notEqual(first, second, "a mesma amostra não repete imediatamente");
+  assert.ok(TOOL_AUDIO_GROUPS.axeHit.some((name) => toolCues[name][0] === first));
+  assert.notEqual(first, second, "a mesma amostra de machado não repete imediatamente");
   for (let i = 0; i < 100; i++) { ctx.currentTime += 1; sfx.hit(); }
   assert.ok(ctx.sources.length <= 16, "máximo global de fontes simultâneas");
   sfx.destroy();
+});
+
+test("falha ou atraso do banco de ferramentas mantém fallback e não toca depois de destruir", async (t) => {
+  let releaseTool;
+  audioEnvironment(t, (url) => url.endsWith("tool-effects.mp3")
+    ? new Promise((resolve) => { releaseTool = resolve; })
+    : Promise.resolve({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) }));
+  const sfx = new Sfx(); sfx.ensure(); await tick(); await tick();
+  assert.equal(sfx.samplesReady, true); assert.equal(sfx.toolSamplesReady, false);
+  sfx.swing("axe"); sfx.ctx.currentTime += 1; sfx.chop(); sfx.ctx.currentTime += 1; sfx.mine("rock");
+  assert.equal(sfx.ctx.sources.length, 3, "efeitos anteriores continuam disponíveis enquanto carrega");
+  assert.ok(sfx.ctx.sources.every((src) => src.buffer === sfx.sprite));
+  sfx.destroy();
+  releaseTool({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) });
+  await tick(); await tick(); assert.equal(sfx.toolSamplesReady, false, "resultado tardio não ressuscita o banco");
 });
 
 test("ambientes carregam uma vez, obedecem distância e desligam sem vazar loops", async (t) => {

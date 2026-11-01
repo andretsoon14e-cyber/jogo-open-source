@@ -10,6 +10,7 @@
     "test": "tsx --test tests/*.test.mjs",
     "test:browser": "node tests/browser-smoke.mjs",
     "test:audio-browser": "node tests/sfx-browser.mjs",
+    "test:inventory-browser": "node tests/inventory-browser.mjs",
     "test:benchmark": "node tests/render-benchmark.mjs",
     "db:push": "drizzle-kit push",
     "test:db": "tsx tests/database.integration.mjs",
