@@ -86,7 +86,7 @@ try {
   await windSounds.click();
   assert.equal(await windSounds.getAttribute("aria-pressed"), "false");
   await windSounds.click();
-  const ambientSounds = config.getByRole("button", { name: /Riachos e fogueiras/ });
+  const ambientSounds = config.getByRole("button", { name: /Mar, riachos e fogueiras/ });
   await ambientSounds.click();
   assert.equal(await ambientSounds.getAttribute("aria-pressed"), "false");
   await ambientSounds.click();

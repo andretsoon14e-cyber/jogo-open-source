@@ -31,7 +31,7 @@ O multiplayer usa salas com código e sincronização básica dos jogadores; nã
 
 ## Desempenho e efeitos
 
-O padrão para novos jogadores é **FPS sem limite**. Quem já tinha um limite salvo mantém sua escolha: em **Configurações → Quantidade de FPS**, selecione `∞` para liberar quadros acima de 120. A taxa real depende do monitor, navegador e aparelho. O modo gráfico **Leve** reduz a resolução interna, usa iluminação mais simples e exibe menos folhas. O balanço das árvores, os sons das criaturas, o vento, os sons de riachos/fogueiras e as artes opcionais podem ser desligados separadamente nas configurações. Os sons são sintetizados pelo navegador, não são gravações; respeitam o volume de efeitos e a proximidade. Se estiverem mudos, confirme o volume e toque/clique na interface ou pressione uma tecla: navegadores podem bloquear áudio até um gesto do jogador. Partículas da fogueira e da introdução usam o tempo decorrido, não a quantidade de quadros; trechos de cerca em resolução 1× são reutilizados em cache.
+O padrão para novos jogadores é **FPS sem limite**. Quem já tinha um limite salvo mantém sua escolha: em **Configurações → Quantidade de FPS**, selecione `∞` para liberar quadros acima de 120. A taxa real depende do monitor, navegador e aparelho. O modo gráfico **Leve** reduz a resolução interna, usa iluminação mais simples e exibe menos folhas. O balanço das árvores, os sons das criaturas, o vento, os sons de mar/riachos/fogueiras e as artes opcionais podem ser desligados separadamente nas configurações. Os efeitos combinam gravações e amostras, respeitando o volume e a proximidade; o banco e os ambientes são carregados sob demanda. Se estiverem mudos, confirme o volume e toque/clique na interface ou pressione uma tecla: navegadores podem bloquear áudio até um gesto do jogador. Partículas da fogueira e da introdução usam o tempo decorrido, não a quantidade de quadros; trechos de cerca em resolução 1× são reutilizados em cache.
 
 [Veja as capturas, animações e amostras de áudio das melhorias](docs/previas-2026-10-30/).
 
@@ -119,7 +119,7 @@ Com uma pedreira, o minerador designado produz **2 ferros a cada 45 segundos de 
 
 As primeiras noites começam com poucas criaturas. Limite, tamanho e frequência das ondas crescem gradualmente conforme os dias e a dificuldade; monstros procuram pontos separados. Ao cair, o jogador desperta ferido perto da base com pouca vida e energia. A pressão dos invasores e a dificuldade determinam o saque de recursos comuns e o vandalismo: cercas e plantações são mais expostas; no impossível, os estragos podem ser severos. Ferro, cristal, ferramentas e equipamentos são preservados. O relatório aparece na tela e, se o salvamento automático estiver ligado, a consequência não é aplicada novamente ao recarregar.
 
-As músicas de menu, dia, noite e cerco são melodias originais sintetizadas localmente. O padrão de música é mais baixo; preferências já salvas continuam valendo. Pássaros aparecem no ambiente diurno, vento e água dependem da proximidade/opções, e criaturas e impactos usam efeitos curtos. Os controles de música, volume, criaturas e ambiente permanecem nas configurações.
+As músicas de menu, dia, noite e cerco são composições próprias do projeto, com piano e violão amostrados e transições suaves. O tema do lobby é diferente da música durante a exploração; preferências já salvas continuam valendo. Passos mudam conforme o chão, ferramentas e itens usam sons de materiais, monstros e animais próximos têm variações e posição estéreo, e o mar, os riachos e as fogueiras ficam mais audíveis à medida que o jogador se aproxima. O vento e o canto de pássaros também acompanham a exploração. Os controles de música, volumes, criaturas, vento e ambiente permanecem nas configurações. As fontes, licenças e aproximações de espécies estão em [créditos do áudio](public/audio/CREDITOS.md).
 
 ## Biomas, fogueira e exploração
 
@@ -156,12 +156,12 @@ Para os testes visuais/de navegação, instale também o navegador do Playwright
 
 ```bash
 npm run test:browser
-npm run test:audio-browser     # gesto real, sinal dos efeitos e volume zero
+APP_URL=http://localhost:3000 npm run test:audio-browser # MP3 reais, gesto, volume e fluxo do jogo
 npm run test:craftpix-browser  # usa atlas sintéticos, sem exigir os ZIPs
 npm run test:referencias-browser # referências sintéticas, flechas e saves
 npm run test:referencias-ui      # visitas, controles e telas pequenas
 npm run test:benchmark
-BENCH_CRAFTPIX=1 BENCH_REFERENCIAS=1 npm run test:benchmark # servidor aberto e artes importadas
+BENCH_CRAFTPIX=1 BENCH_REFERENCIAS=1 BENCH_AUDIO=1 npm run test:benchmark # servidor, artes e áudio
 ```
 
 `APP_URL` pode apontar os testes para outro endereço. Opcionalmente, `CHROMIUM_EXECUTABLE_PATH` permite usar um Chromium já instalado. Para verificar também o aviso de multiplayer sem banco, execute o teste de navegação com `EXPECT_NO_DATABASE=1` no ambiente; use `WITHOUT_CRAFTPIX=1 WITHOUT_REFERENCIAS=1` para testar o jogo sem as artes ou `EXPECT_CRAFTPIX=1` para validar a instalação presente. O benchmark mede intervalos, tempo de CPU e pico de partículas em floresta, ruínas, neve, combate e cercos; os resultados dependem do ambiente e não garantem uma taxa de FPS em outros aparelhos.

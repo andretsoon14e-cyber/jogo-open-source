@@ -856,15 +856,15 @@ function SettingsModal({ settings, onChange, onClose, audioOn }: { settings: Gam
         <section className="border-t border-slate-800 py-2">
           <h4 className="text-[11px] uppercase tracking-widest text-amber-500 mb-1">Áudio</h4>
           <Toggle label="Música" desc={audioOn ? "Trilha ambiente ativa" : "Toque para ativar o áudio"} on={settings.music} onChange={(v) => onChange({ music: v })} />
-          <label className="block text-xs text-slate-200 mt-2">Volume da música</label>
-          <input type="range" min={0} max={1} step={0.05} value={settings.musicVol}
+          <label htmlFor="music-volume" className="block text-xs text-slate-200 mt-2">Volume da música</label>
+          <input id="music-volume" type="range" min={0} max={1} step={0.05} value={settings.musicVol}
             onChange={(e) => onChange({ musicVol: Number(e.target.value) })} className="w-full accent-amber-500" />
-          <label className="block text-xs text-slate-200 mt-2">Volume dos efeitos</label>
-          <input type="range" min={0} max={1} step={0.05} value={settings.sfxVol}
+          <label htmlFor="effects-volume" className="block text-xs text-slate-200 mt-2">Volume dos efeitos</label>
+          <input id="effects-volume" type="range" min={0} max={1} step={0.05} value={settings.sfxVol}
             onChange={(e) => onChange({ sfxVol: Number(e.target.value) })} className="w-full accent-amber-500" />
           <Toggle label="Sons das criaturas" desc="Chamados de animais e monstros próximos" on={settings.creatureSounds} onChange={(v) => onChange({ creatureSounds: v })} />
           <Toggle label="Som do vento" desc="Rajadas durante a exploração" on={settings.windSounds} onChange={(v) => onChange({ windSounds: v })} />
-          <Toggle label="Riachos e fogueiras" desc="Água e fogo audíveis quando você se aproxima" on={settings.ambientSounds} onChange={(v) => onChange({ ambientSounds: v })} />
+          <Toggle label="Mar, riachos e fogueiras" desc="Água e fogo audíveis quando você se aproxima" on={settings.ambientSounds} onChange={(v) => onChange({ ambientSounds: v })} />
           <Toggle label="Voz do tema no lobby" desc="Narra o tema do jogo no menu" on={settings.voice} onChange={(v) => onChange({ voice: v })} />
         </section>
 

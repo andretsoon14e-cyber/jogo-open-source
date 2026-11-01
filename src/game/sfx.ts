@@ -1,225 +1,269 @@
-/* Procedural sound effects: no downloads and no unbounded audio loops. */
+import cueData from "./audio-cues.generated.json";
+
+/** Efeitos gravados CC0, reunidos em um único sprite para reduzir requisições.
+ * As fontes e transformações estão em public/audio/CREDITOS.md. */
+const CUES: Record<string, readonly number[]> = cueData;
+export const AUDIO_GROUPS = {
+  chop: ["chop1", "chop2", "chop3"], stone: ["stone1", "stone2", "stone3"],
+  metal: ["metal1", "metal2"], crystal: ["crystal1", "crystal2"], rustle: ["rustle1", "rustle2"],
+  swing: ["swing1", "swing2"], hit: ["hit1", "hit2", "hit3"], hurt: ["hurt1", "hurt2"],
+  cloth: ["cloth1", "cloth2"], coin: ["coin1", "coin2"], gem: ["gem1", "gem2"],
+  build: ["build1", "build2"], break: ["break1", "break2"], chest: ["chest1", "chest2"],
+  equip: ["equip1", "equip2"], ui: ["ui1", "ui2"], quest: ["quest1", "quest2"],
+  eat: ["eat1", "eat2"], death: ["death"],
+  grass: ["grass1", "grass2", "grass3"], dirt: ["dirt1", "dirt2", "dirt3"],
+  snow: ["snow1", "snow2"], bridge: ["bridge1", "bridge2"], rock: ["rock1", "rock2"],
+  goat: ["goat1", "goat2", "goat3"], goose: ["goose1", "goose2", "goose3"], bird: ["bird1", "bird2", "bird3"],
+  bones: ["bones1", "bones2", "bones3"], slime: ["slime1", "slime2"],
+  deep: ["ogre-1", "ogre-4", "ogre-7", "duck-monster10"],
+  small: ["duck-monster8", "duck-monster11", "duck-monster15", "ogre-2"],
+  spectral: ["duck-monster12", "duck-monster13", "duck-monster14", "duck-monster16"],
+  undead: ["ogre-3", "ogre-5", "ogre-9", "ogre-10", "duck-monster9"],
+  deathDeep: ["ogre-6", "ogre-8", "duck-roar4"],
+  deathOther: ["duck-die1", "duck-die2", "duck-die3"],
+} as const;
+type Group = keyof typeof AUDIO_GROUPS;
+export type AmbientKind = "wind" | "sea" | "water" | "fire";
+export type FootSurface = "grass" | "dirt" | "snow" | "bridge" | "rock";
+type Ambient = { source: AudioBufferSourceNode; gain: GainNode; timer: ReturnType<typeof setTimeout> | null };
+const clamp = (n: number, lo = 0, hi = 1) => Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : lo;
+
+async function decode(ctx: AudioContext, url: string, signal: AbortSignal): Promise<AudioBuffer | null> {
+  try {
+    const res = await fetch(url, { signal });
+    if (!res.ok) return null;
+    return await ctx.decodeAudioData(await res.arrayBuffer());
+  } catch {
+    // Áudio é opcional: rede, decodificador ou reprodução podem ser bloqueados.
+    return null;
+  }
+}
+
 export class Sfx {
   ctx: AudioContext | null = null;
-  vol = 0.35;
+  private output: GainNode | null = null;
+  private _vol = 0.35;
+  private sprite: AudioBuffer | null = null;
+  private spriteLoading: Promise<void> | null = null;
+  private abort = new AbortController();
+  private closed = false;
+  private voices = new Set<AudioBufferSourceNode>();
+  private lastChoice = new Map<Group, number>();
+  private nextAt = new Map<string, number>();
   private noiseBuffer: AudioBuffer | null = null;
-  private nextCreatureAt = 0;
-  private nextAnimalAt = 0;
-  private nextWindAt = 0;
-  private nextWaterAt = 0;
-  private nextFireAt = 0;
-  private nextBirdAt = 0;
-  private nextHitAt = 0;
+  private ambientBuffers = new Map<AmbientKind, AudioBuffer>();
+  private ambientLoading = new Map<AmbientKind, Promise<void>>();
+  private ambientRetryAt = new Map<AmbientKind, number>();
+  private ambientTargets = new Map<AmbientKind, number>();
+  private ambientNodes = new Map<AmbientKind, Ambient>();
 
-  ensure() {
-    if (!this.ctx && typeof window !== "undefined") {
-      try {
-        const AudioCtor = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        if (AudioCtor) this.ctx = new AudioCtor();
-      } catch { /* audio is optional */ }
+  get vol() { return this._vol; }
+  set vol(value: number) {
+    this._vol = clamp(value);
+    if (this.output && this.ctx && this.ctx.state !== "closed") {
+      this.output.gain.setTargetAtTime(this._vol, this.ctx.currentTime, 0.025);
     }
-    if (this.ctx && this.ctx.state === "suspended") this.ctx.resume().catch(() => {});
+    if (!this._vol) this.silenceAmbience();
+  }
+  get samplesReady() { return !!this.sprite; }
+
+  /** Called directly from pointer/keyboard/gamepad gestures to unlock browsers. */
+  ensure() {
+    if (this.closed || typeof window === "undefined") return;
+    if (!this.ctx) {
+      try {
+        const Ctor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (!Ctor) return;
+        const ctx = new Ctor();
+        this.ctx = ctx;
+        this.output = ctx.createGain();
+        this.output.gain.value = this._vol;
+        this.output.connect(ctx.destination);
+      } catch { return; }
+    }
+    const ctx = this.ctx;
+    if (ctx.state === "suspended" || (ctx.state as string) === "interrupted") void ctx.resume().catch(() => {});
+    if (!this.sprite && !this.spriteLoading) {
+      this.spriteLoading = decode(ctx, "/audio/effects.mp3", this.abort.signal).then((buffer) => {
+        if (!this.closed && this.ctx === ctx && buffer) this.sprite = buffer;
+      }).finally(() => { this.spriteLoading = null; });
+    }
   }
 
-  private noiseSource(ctx: AudioContext): AudioBufferSourceNode {
+  private play(group: Group, volume: number, pan = 0, rate = 1, cooldown = 0.09): boolean {
+    const ctx = this.ctx, out = this.output, sprite = this.sprite;
+    if (!ctx || ctx.state !== "running" || !out || !sprite || this._vol <= 0 || volume <= 0 || this.voices.size >= 16) return false;
+    const now = ctx.currentTime;
+    if (now < (this.nextAt.get(group) ?? 0)) return false;
+    const choices = AUDIO_GROUPS[group];
+    let index = Math.floor(Math.random() * choices.length);
+    if (choices.length > 1 && index === this.lastChoice.get(group)) index = (index + 1) % choices.length;
+    const cue = CUES[choices[index]];
+    if (!cue || cue[0] + cue[1] > sprite.duration + 0.02) return false;
+    this.lastChoice.set(group, index);
+    this.nextAt.set(group, now + cooldown);
+    const source = ctx.createBufferSource(), gain = ctx.createGain();
+    source.buffer = sprite;
+    source.playbackRate.value = clamp(rate * (0.96 + Math.random() * 0.08), 0.55, 1.6);
+    gain.gain.value = clamp(volume, 0, 1);
+    source.connect(gain);
+    let panner: StereoPannerNode | null = null;
+    if (Math.abs(pan) > 0.02 && typeof ctx.createStereoPanner === "function") {
+      panner = ctx.createStereoPanner(); panner.pan.value = clamp(pan, -0.85, 0.85);
+      gain.connect(panner); panner.connect(out);
+    } else gain.connect(out);
+    this.voices.add(source);
+    source.onended = () => {
+      this.voices.delete(source); source.disconnect(); gain.disconnect(); panner?.disconnect();
+    };
+    source.start(now, cue[0], cue[1]);
+    return true;
+  }
+
+  /** Quiet synthetic fallback for the few moments before the sprite loads. */
+  tone(f: number, dur: number, type: OscillatorType, vol: number, slide = 0) {
+    const ctx = this.ctx, out = this.output;
+    if (!ctx || ctx.state !== "running" || !out || this._vol <= 0 || vol <= 0) return;
+    const now = ctx.currentTime, osc = ctx.createOscillator(), gain = ctx.createGain();
+    osc.type = type; osc.frequency.setValueAtTime(f, now);
+    if (slide) osc.frequency.exponentialRampToValueAtTime(Math.max(30, f + slide), now + dur);
+    gain.gain.setValueAtTime(vol, now); gain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+    osc.connect(gain); gain.connect(out); osc.start(now); osc.stop(now + dur + 0.02);
+  }
+
+  /** Short fallback used by the plane crash; the buffer is shared, never per frame. */
+  noise(dur: number, vol: number) {
+    const ctx = this.ctx, out = this.output;
+    if (!ctx || ctx.state !== "running" || !out || this._vol <= 0 || vol <= 0) return;
     if (!this.noiseBuffer) {
-      // Share a short buffer across sounds instead of allocating one per hit.
       this.noiseBuffer = ctx.createBuffer(1, Math.ceil(ctx.sampleRate), ctx.sampleRate);
       const data = this.noiseBuffer.getChannelData(0);
       for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
     }
-    const source = ctx.createBufferSource();
-    source.buffer = this.noiseBuffer;
-    return source;
+    const source = ctx.createBufferSource(), filter = ctx.createBiquadFilter(), gain = ctx.createGain(), now = ctx.currentTime;
+    source.buffer = this.noiseBuffer; filter.type = "lowpass"; filter.frequency.value = 900;
+    gain.gain.setValueAtTime(clamp(vol) * 0.5, now); gain.gain.linearRampToValueAtTime(0, now + dur);
+    source.connect(filter); filter.connect(gain); gain.connect(out); source.start(now, 0, Math.min(dur, 1));
   }
 
-  tone(f: number, dur: number, type: OscillatorType, vol: number, slide = 0) {
-    if (!this.ctx || this.ctx.state !== "running" || this.vol <= 0 || vol <= 0) return;
-    const t = this.ctx.currentTime;
-    const o = this.ctx.createOscillator(), g = this.ctx.createGain();
-    o.type = type; o.frequency.setValueAtTime(f, t);
-    if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, f + slide), t + dur);
-    g.gain.setValueAtTime(vol * this.vol, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    o.connect(g); g.connect(this.ctx.destination);
-    o.start(t); o.stop(t + dur + 0.02);
+  creature(type: string, proximity: number, pan = 0) {
+    const ctx = this.ctx, strength = clamp(proximity);
+    if (!ctx || ctx.state !== "running" || this._vol <= 0 || strength < 0.05 || ctx.currentTime < (this.nextAt.get("creature") ?? 0)) return;
+    const deep = ["brute", "hulk", "demon", "orc"].includes(type);
+    const spectral = ["stalker", "crawler", "spitter", "lich", "vampire"].includes(type);
+    const small = ["bat", "imp"].includes(type);
+    const group: Group = type === "skeleton" ? "bones" : type === "slime" ? "slime" : deep ? "deep" : spectral ? "spectral" : small ? "small" : "undead";
+    const speed = deep ? 0.77 : type === "zombie" ? 0.82 : small ? 1.22 : spectral ? 1.08 : 0.94;
+    if (this.play(group, strength * 0.62, pan, speed)) this.nextAt.set("creature", ctx.currentTime + 1.6 + Math.random() * 0.7);
   }
 
-  noise(dur: number, vol: number) {
-    if (!this.ctx || this.ctx.state !== "running" || this.vol <= 0 || vol <= 0) return;
-    const t = this.ctx.currentTime;
-    const source = this.noiseSource(this.ctx);
-    const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(vol * this.vol, t);
-    gain.gain.linearRampToValueAtTime(0, t + dur);
-    source.connect(gain); gain.connect(this.ctx.destination);
-    source.start(t, 0, Math.min(dur, 1));
+  monsterDeath(type: string, proximity: number, pan = 0) {
+    const strength = clamp(proximity);
+    if (strength < 0.05) return;
+    const deep = ["brute", "hulk", "demon", "orc"].includes(type);
+    const group: Group = type === "skeleton" ? "bones" : type === "slime" ? "slime" : deep ? "deathDeep" : "deathOther";
+    this.play(group, 0.67 * strength, pan, deep ? 0.82 : 1.08, 0.45);
   }
 
-  private filteredNoise(dur: number, vol: number, frequency: number) {
-    const ctx = this.ctx;
-    if (!ctx || ctx.state !== "running" || this.vol <= 0 || vol <= 0) return;
-    const t = ctx.currentTime, source = this.noiseSource(ctx), filter = ctx.createBiquadFilter(), gain = ctx.createGain();
-    filter.type = "bandpass"; filter.frequency.value = frequency; filter.Q.value = 0.6;
-    gain.gain.setValueAtTime(this.vol * vol, t);
-    gain.gain.linearRampToValueAtTime(0, t + dur);
-    source.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
-    source.start(t, 0, Math.min(dur, 1));
-  }
-
-  /** Short positional warning; the cooldown prevents hordes from piling up audio nodes. */
-  creature(type: string, proximity: number) {
-    const ctx = this.ctx;
-    const strength = Math.max(0, Math.min(1, proximity));
-    if (!ctx || ctx.state !== "running" || this.vol <= 0 || strength < 0.04 || ctx.currentTime < this.nextCreatureAt) return;
-    const t = ctx.currentTime;
-    this.nextCreatureAt = t + 1.6;
-    const deep = type === "brute" || type === "hulk" || type === "demon" || type === "orc";
-    const spectral = type === "bat" || type === "stalker" || type === "crawler" || type === "spitter" || type === "lich" || type === "vampire";
-    const duration = spectral ? 0.52 : 0.38;
-    const pitch = deep ? 86 : spectral ? 270 : 150;
-    const oscillator = ctx.createOscillator();
-    oscillator.type = spectral ? "triangle" : "sawtooth";
-    oscillator.frequency.setValueAtTime(pitch, t);
-    oscillator.frequency.exponentialRampToValueAtTime(pitch * (spectral ? 1.35 : 0.55), t + duration);
-
-    // A soft low-frequency wobble and filtered hiss give a growl/whisper
-    // without large sound files or an oscillator per monster per frame.
-    const wobble = ctx.createOscillator(), depth = ctx.createGain();
-    wobble.type = "sine"; wobble.frequency.value = deep ? 19 : spectral ? 8 : 25;
-    depth.gain.value = spectral ? 17 : 26;
-    wobble.connect(depth); depth.connect(oscillator.frequency);
-    const filter = ctx.createBiquadFilter();
-    filter.type = "lowpass"; filter.frequency.value = deep ? 430 : spectral ? 1100 : 650;
-    const gain = ctx.createGain();
-    const level = this.vol * strength;
-    gain.gain.setValueAtTime(0.0001, t);
-    gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, level * (spectral ? 0.28 : 0.34)), t + 0.035);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
-    oscillator.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
-    oscillator.start(t); oscillator.stop(t + duration + 0.01);
-    wobble.start(t); wobble.stop(t + duration + 0.01);
-
-    const hiss = this.noiseSource(ctx);
-    const hissFilter = ctx.createBiquadFilter();
-    hissFilter.type = "bandpass"; hissFilter.frequency.value = spectral ? 1500 : 520; hissFilter.Q.value = 0.7;
-    const hissGain = ctx.createGain();
-    hissGain.gain.setValueAtTime(level * 0.14, t);
-    hissGain.gain.linearRampToValueAtTime(0, t + duration);
-    hiss.connect(hissFilter); hissFilter.connect(hissGain); hissGain.connect(ctx.destination);
-    hiss.start(t, 0, duration);
-  }
-
-  /** An occasional soft gust. It reuses the noise buffer, finishes on its
-   * own, and never creates nodes while muted or the browser is suspended. */
-  wind() {
-    const ctx = this.ctx;
-    if (!ctx || ctx.state !== "running" || this.vol <= 0 || ctx.currentTime < this.nextWindAt) return;
-    const t = ctx.currentTime;
-    this.nextWindAt = t + 3 + Math.random() * 2;
-    const source = this.noiseSource(ctx);
-    const filter = ctx.createBiquadFilter();
-    filter.type = "bandpass"; filter.frequency.value = 420; filter.Q.value = 0.45;
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0, t);
-    gain.gain.linearRampToValueAtTime(this.vol * 0.24, t + 0.4);
-    gain.gain.linearRampToValueAtTime(0, t + 0.98);
-    source.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
-    source.start(t, 0, 1);
-  }
-
-  /** Soft birdsong during the day, synthesized in two short phrases. */
-  bird() {
-    const ctx = this.ctx;
-    if (!ctx || ctx.state !== "running" || this.vol <= 0 || ctx.currentTime < this.nextBirdAt) return;
-    const t = ctx.currentTime; this.nextBirdAt = t + 10 + Math.random() * 8;
-    const root = 1250 + Math.random() * 280;
-    for (let i = 0; i < 2; i++) {
-      const at = t + i * 0.16, osc = ctx.createOscillator(), gain = ctx.createGain();
-      osc.type = "sine"; osc.frequency.setValueAtTime(root * (i ? 1.12 : 1), at);
-      osc.frequency.exponentialRampToValueAtTime(root * (i ? 1.3 : 1.16), at + 0.12);
-      gain.gain.setValueAtTime(0.0001, at);
-      gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, this.vol * 0.12), at + 0.025);
-      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.13);
-      osc.connect(gain); gain.connect(ctx.destination); osc.start(at); osc.stop(at + 0.15);
+  animal(kind: "rabbit" | "goose" | "goat", proximity: number, pan = 0) {
+    const ctx = this.ctx, strength = clamp(proximity);
+    if (!ctx || ctx.state !== "running" || this._vol <= 0 || strength < 0.05 || ctx.currentTime < (this.nextAt.get("animal") ?? 0)) return;
+    // Coelhos são discretos: usa farfalhar de vegetação, não um grito artificial.
+    const group: Group = kind === "rabbit" ? "rustle" : kind;
+    if (this.play(group, strength * (kind === "rabbit" ? 0.28 : 0.42), pan, kind === "goose" ? 0.9 : 1, 0.3)) {
+      this.nextAt.set("animal", ctx.currentTime + 9 + Math.random() * 7);
     }
   }
-
-  /** Brief, distinct animal calls, louder nearby and throttled across flocks. */
-  animal(kind: "rabbit" | "goose" | "goat", proximity: number) {
-    const ctx = this.ctx, strength = Math.max(0, Math.min(1, proximity));
-    if (!ctx || ctx.state !== "running" || this.vol <= 0 || strength < 0.05 || ctx.currentTime < this.nextAnimalAt) return;
-    const t = ctx.currentTime;
-    this.nextAnimalAt = t + 3.5 + Math.random() * 2;
-    const pitch = kind === "goose" ? 290 : kind === "goat" ? 190 : 720;
-    const duration = kind === "goose" ? 0.32 : kind === "goat" ? 0.42 : 0.18;
-    const oscillator = ctx.createOscillator(), gain = ctx.createGain(), filter = ctx.createBiquadFilter();
-    oscillator.type = kind === "rabbit" ? "sine" : kind === "goat" ? "triangle" : "sawtooth";
-    oscillator.frequency.setValueAtTime(pitch, t);
-    oscillator.frequency.exponentialRampToValueAtTime(pitch * (kind === "rabbit" ? 1.3 : 0.78), t + duration);
-    filter.type = "lowpass"; filter.frequency.value = kind === "goose" ? 1050 : 1600;
-    gain.gain.setValueAtTime(0.0001, t);
-    gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, this.vol * strength * 0.42), t + 0.025);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
-    oscillator.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
-    oscillator.start(t); oscillator.stop(t + duration + 0.01);
-  }
-
-  /** Water and fire reuse a one-second noise buffer and stop on their own. */
-  water(proximity: number) {
-    const ctx = this.ctx, strength = Math.max(0, Math.min(1, proximity));
-    if (!ctx || ctx.state !== "running" || this.vol <= 0 || strength < 0.05 || ctx.currentTime < this.nextWaterAt) return;
-    const t = ctx.currentTime; this.nextWaterAt = t + 0.95;
-    const source = this.noiseSource(ctx), filter = ctx.createBiquadFilter(), gain = ctx.createGain();
-    filter.type = "bandpass"; filter.frequency.value = 750; filter.Q.value = 0.5;
-    gain.gain.setValueAtTime(0, t);
-    gain.gain.linearRampToValueAtTime(this.vol * strength * 0.24, t + 0.2);
-    gain.gain.linearRampToValueAtTime(0, t + 0.98);
-    source.connect(filter); filter.connect(gain); gain.connect(ctx.destination); source.start(t, 0, 1);
-  }
-
-  fire(proximity: number) {
-    const ctx = this.ctx, strength = Math.max(0, Math.min(1, proximity));
-    if (!ctx || ctx.state !== "running" || this.vol <= 0 || strength < 0.05 || ctx.currentTime < this.nextFireAt) return;
-    const t = ctx.currentTime; this.nextFireAt = t + 1.3;
-    const source = this.noiseSource(ctx), filter = ctx.createBiquadFilter(), gain = ctx.createGain();
-    filter.type = "bandpass"; filter.frequency.value = 1300; filter.Q.value = 0.7;
-    gain.gain.setValueAtTime(this.vol * strength * 0.15, t);
-    gain.gain.linearRampToValueAtTime(0, t + 0.42);
-    source.connect(filter); filter.connect(gain); gain.connect(ctx.destination); source.start(t, 0, 0.42);
-  }
-
-  chop() { this.tone(180, 0.09, "square", 0.5, -60); this.noise(0.06, 0.3); }
-  mine() { this.tone(520, 0.05, "square", 0.35, -200); this.noise(0.08, 0.45); }
-  swing() { this.filteredNoise(0.08, 0.14, 1100); }
-  hit() {
+  bird() {
     const ctx = this.ctx;
-    if (!ctx || ctx.state !== "running" || this.vol <= 0 || ctx.currentTime < this.nextHitAt) return;
-    this.nextHitAt = ctx.currentTime + 0.09;
-    this.tone(145, 0.11, "sine", 0.27, -75);
-    this.filteredNoise(0.09, 0.24, 750);
+    if (!ctx || ctx.state !== "running" || this._vol <= 0 || ctx.currentTime < (this.nextAt.get("bird-call") ?? 0)) return;
+    if (this.play("bird", 0.23, (Math.random() - 0.5) * 0.7, 1, 0.3)) this.nextAt.set("bird-call", ctx.currentTime + 13 + Math.random() * 10);
   }
-  hurt() { this.tone(170, 0.22, "triangle", 0.28, -95); this.filteredNoise(0.12, 0.12, 480); }
-  monsterDeath(type: string, proximity: number) {
-    const strength = Math.max(0, Math.min(1, proximity));
-    if (strength <= 0.05) return;
-    const deep = type === "brute" || type === "hulk" || type === "demon" || type === "orc";
-    this.tone(deep ? 105 : 190, 0.28, "triangle", 0.24 * strength, deep ? -55 : -100);
-    this.filteredNoise(0.18, 0.19 * strength, deep ? 360 : 620);
+
+  /** Os quatro ambientes são carregados sob demanda, com ganho suavizado.
+   * Um timer encerra o loop após sair de perto/desativar o controle. */
+  setAmbient(kind: AmbientKind, amount: number) {
+    const ctx = this.ctx, strength = this._vol > 0 ? clamp(amount) : 0;
+    this.ambientTargets.set(kind, strength);
+    const active = this.ambientNodes.get(kind);
+    if (active && ctx && ctx.state !== "closed") {
+      active.gain.gain.setTargetAtTime(strength, ctx.currentTime, strength ? 0.35 : 0.2);
+      if (strength > 0 && active.timer) { clearTimeout(active.timer); active.timer = null; }
+      if (!strength && !active.timer) {
+        active.timer = setTimeout(() => {
+          if ((this.ambientTargets.get(kind) ?? 0) > 0) return;
+          if (this.ambientNodes.get(kind) === active) this.ambientNodes.delete(kind);
+          try { active.source.stop(); } catch { /* já terminou */ }
+          active.source.disconnect(); active.gain.disconnect();
+        }, 1200);
+      }
+      return;
+    }
+    if (!strength || !ctx || ctx.state !== "running" || !this.output || this.closed) return;
+    const buffer = this.ambientBuffers.get(kind);
+    if (!buffer) {
+      if (!this.ambientLoading.has(kind) && Date.now() >= (this.ambientRetryAt.get(kind) ?? 0)) {
+        const loading = decode(ctx, `/audio/ambient/${kind}.mp3`, this.abort.signal).then((audio) => {
+          if (this.closed || this.ctx !== ctx) return;
+          if (audio) {
+            this.ambientBuffers.set(kind, audio);
+            this.setAmbient(kind, this.ambientTargets.get(kind) ?? 0);
+          } else this.ambientRetryAt.set(kind, Date.now() + 30000);
+        }).finally(() => { this.ambientLoading.delete(kind); });
+        this.ambientLoading.set(kind, loading);
+      }
+      return;
+    }
+    const source = ctx.createBufferSource(), gain = ctx.createGain();
+    source.buffer = buffer; source.loop = true;
+    gain.gain.setValueAtTime(0, ctx.currentTime);
+    gain.gain.setTargetAtTime(strength, ctx.currentTime, 0.45);
+    source.connect(gain); gain.connect(this.output);
+    const node: Ambient = { source, gain, timer: null };
+    this.ambientNodes.set(kind, node);
+    source.start(ctx.currentTime, Math.random() * Math.max(0, buffer.duration - 0.1));
   }
-  structureBreak() { this.tone(100, 0.18, "sine", 0.25, -55); this.filteredNoise(0.18, 0.3, 500); }
-  pickup() { this.tone(660, 0.07, "sine", 0.4, 220); this.tone(990, 0.09, "sine", 0.25, 120); }
-  build() { this.tone(330, 0.12, "triangle", 0.5, 80); this.tone(440, 0.18, "triangle", 0.35, 110); }
-  eat() { this.tone(300, 0.08, "sine", 0.4, 60); this.tone(380, 0.1, "sine", 0.3, 60); }
-  roll() { this.noise(0.12, 0.22); }
-  die() { this.tone(300, 0.6, "sawtooth", 0.6, -260); }
-  quest() { this.tone(523, 0.12, "sine", 0.45); this.tone(659, 0.12, "sine", 0.45); this.tone(784, 0.25, "sine", 0.45); }
-  night() { this.tone(110, 0.8, "sawtooth", 0.25, -40); }
-  ui() { this.tone(500, 0.05, "sine", 0.3, 100); }
+  wind() { this.setAmbient("wind", 0.32); }
+  water(proximity: number, kind: "water" | "sea" = "water") { this.setAmbient(kind, clamp(proximity) * (kind === "sea" ? 0.52 : 0.62)); }
+  fire(proximity: number) { this.setAmbient("fire", clamp(proximity) * 0.32); }
+  silenceAmbience() { for (const kind of ["wind", "sea", "water", "fire"] as const) this.setAmbient(kind, 0); }
+
+  chop() { this.play("chop", 0.62, 0, 1, 0.1); }
+  mine(material: "rock" | "ore" | "crystal" = "rock") {
+    this.play(material === "ore" ? "metal" : material === "crystal" ? "crystal" : "stone", 0.55, 0, 1, 0.1);
+  }
+  foliage() { this.play("rustle", 0.36, 0, 1, 0.1); }
+  swing() { this.play("swing", 0.3, 0, 1, 0.1); }
+  hit() { this.play("hit", 0.55, 0, 1, 0.1); }
+  hurt() { this.play("hurt", 0.58, 0, 0.95, 0.3); }
+  structureBreak() { this.play("break", 0.55, 0, 0.86, 0.3); }
+  pickup(resource: "wood" | "stone" | "fiber" | "food" | "iron" | "crystal" = "fiber") {
+    const group: Group = resource === "iron" ? "coin" : resource === "crystal" ? "gem" : resource === "stone" ? "stone" : resource === "wood" ? "chop" : "cloth";
+    this.play(group, 0.22, 0, resource === "wood" ? 1.28 : 1.05, 0.12);
+  }
+  footstep(surface: FootSurface, running: boolean) { this.play(surface, running ? 0.19 : 0.14, 0, running ? 1.08 : 1, running ? 0.24 : 0.34); }
+  build() { this.play("build", 0.42, 0, 1, 0.16); }
+  chest() { this.play("chest", 0.42, 0, 1, 0.2); }
+  equip() { this.play("equip", 0.3, 0, 1, 0.12); }
+  eat() { this.play("eat", 0.34, 0, 1, 0.2); }
+  roll() { this.play("swing", 0.23, 0, 0.86, 0.2); }
+  die() { this.play("death", 0.4, 0, 0.85, 0.5); }
+  quest() { this.play("quest", 0.28, 0, 1, 0.2); }
+  night() { this.play("death", 0.22, 0, 0.65, 0.8); }
+  ui() { this.play("ui", 0.22, 0, 1, 0.06); }
 
   destroy() {
-    if (this.ctx && this.ctx.state !== "closed") this.ctx.close().catch(() => {});
-    this.ctx = null;
-    this.noiseBuffer = null;
+    if (this.closed) return;
+    this.closed = true; this.abort.abort();
+    for (const node of this.ambientNodes.values()) {
+      if (node.timer) clearTimeout(node.timer);
+      try { node.source.stop(); } catch { /* já terminou */ }
+      node.source.disconnect(); node.gain.disconnect();
+    }
+    this.ambientNodes.clear(); this.ambientTargets.clear(); this.ambientBuffers.clear();
+    for (const voice of this.voices) { try { voice.stop(); } catch { /* já terminou */ } }
+    this.voices.clear();
+    if (this.ctx && this.ctx.state !== "closed") void this.ctx.close().catch(() => {});
+    this.ctx = null; this.output = null; this.sprite = null; this.noiseBuffer = null;
   }
 }

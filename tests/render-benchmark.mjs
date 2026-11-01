@@ -7,8 +7,9 @@ import { join } from "node:path";
 const bundlePath = join(tmpdir(), "ultima-luz-engine-benchmark.js");
 const withCraftPix = process.env.BENCH_CRAFTPIX === "1";
 const withReferences = process.env.BENCH_REFERENCIAS === "1";
+const withAudio = process.env.BENCH_AUDIO === "1";
 const withArt = withCraftPix || withReferences;
-await build({ entryPoints: [withArt ? "tests/browser-entry.ts" : "src/game/engine.ts"], bundle: true, platform: "browser", format: "iife", globalName: "UltimaLuzBenchmark", outfile: bundlePath, tsconfig: "tsconfig.json" });
+await build({ entryPoints: [withArt || withAudio ? "tests/browser-entry.ts" : "src/game/engine.ts"], bundle: true, platform: "browser", format: "iife", globalName: "UltimaLuzBenchmark", outfile: bundlePath, tsconfig: "tsconfig.json" });
 const browser = await chromium.launch({
   headless: true,
   // Benchmark only: let headless Chromium run above its virtual refresh rate.
@@ -18,13 +19,13 @@ const browser = await chromium.launch({
 try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
   const shell = '<html><body style="margin:0"><canvas style="width:1280px;height:720px"></canvas></body></html>';
-  if (withArt) {
+  if (withArt || withAudio) {
     const origin = new URL(process.env.APP_URL ?? "http://127.0.0.1:3000").origin;
     await page.route(`${origin}/__benchmark`, (route) => route.fulfill({ status: 200, contentType: "text/html", body: shell }));
     await page.goto(`${origin}/__benchmark`);
   } else await page.setContent(shell);
   await page.addScriptTag({ path: bundlePath });
-  const result = await page.evaluate(async ({ useCraftPix, useReferences }) => {
+  const result = await page.evaluate(async ({ useCraftPix, useReferences, useAudio }) => {
     const useArt = useCraftPix || useReferences;
     if (useCraftPix) {
       const status = await window.UltimaLuzBenchmark.loadCraftPix();
@@ -34,7 +35,14 @@ try {
       await window.UltimaLuzBenchmark.loadReferenceArt();
       if (!window.UltimaLuzBenchmark.hasReferenceArcher() || !window.UltimaLuzBenchmark.hasReferenceScene("market")) throw new Error("Referências não encontradas; importe-as e inicie o servidor antes do benchmark.");
     }
-    const game = new window.UltimaLuzBenchmark.Engine({ canvas: document.querySelector("canvas"), mode: "single", difficulty: "dificil", playerName: "Benchmark", seed: 77, continueSave: false, onUi: () => {}, settings: { craftPix: useArt } });
+    const music = useAudio ? new window.UltimaLuzBenchmark.MusicManager() : null;
+    const game = new window.UltimaLuzBenchmark.Engine({ canvas: document.querySelector("canvas"), mode: "single", difficulty: "dificil", playerName: "Benchmark", seed: 77, continueSave: false, onUi: () => {}, settings: { craftPix: useArt, voice: false }, music });
+    if (music) {
+      game.sfx.ensure(); music.play("day"); music.resume();
+      const deadline = performance.now() + 10000;
+      while ((!game.sfx.samplesReady || !music.active) && performance.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+      if (!game.sfx.samplesReady || !music.active) throw new Error("O benchmark não conseguiu carregar o banco de efeitos ou a música.");
+    }
     game.skipCutscene(); game.escort.active = false;
     game.updateSpawns = () => {};
     const scenes = [
@@ -95,6 +103,8 @@ try {
         const dt = lastFrame ? Math.min(0.1, (t - lastFrame) / 1000) : 1 / 120;
         lastFrame = t;
         game.frame(dt);
+        // Exercise ordinary short effects as well as the ambient/music loops.
+        if (useAudio && i % 45 === 0) { game.sfx.chop(); game.sfx.footstep("grass", true); }
         peakParticles = Math.max(peakParticles, game.particles.length);
         if (i >= 30) {
           frameTimes.push(performance.now() - before);
@@ -114,9 +124,10 @@ try {
       });
     }
     game.state = "gameover"; game.destroy();
+    if (music) { music.stop(); await music.ctx?.close(); }
     return records;
-  }, { useCraftPix: withCraftPix, useReferences: withReferences });
+  }, { useCraftPix: withCraftPix, useReferences: withReferences, useAudio: withAudio });
   console.table(result);
   assert.ok(result.every((r) => Number.isFinite(r.intervaloMedioMs) && r.intervaloMedioMs > 0), "benchmark inválido");
-  console.log(`Intervalos entre quadros no Chromium headless deste ambiente (${withArt ? "artes importadas" : "arte procedural"}), com limite virtual desativado. Não garantem FPS em outros aparelhos ou telas.`);
+  console.log(`Intervalos entre quadros no Chromium headless deste ambiente (${withArt ? "artes importadas" : "arte procedural"}, ${withAudio ? "áudio ativo" : "sem áudio"}), com limite virtual desativado. Não garantem FPS em outros aparelhos ou telas.`);
 } finally { await browser.close(); }

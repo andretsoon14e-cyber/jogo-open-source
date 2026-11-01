@@ -403,6 +403,9 @@ export class Engine {
 
   // world
   tiles = new Uint8Array(W * H);
+  // Remember the original coastline before carving rivers. This is audio-only
+  // metadata; saved worlds and the generated terrain stay unchanged.
+  private oceanTiles = new Uint8Array(W * H);
   nodes: RNode[] = [];
   nodeBuckets = new Map<number, RNode[]>();
   depletedNodes = new Set<RNode>();
@@ -519,6 +522,8 @@ export class Engine {
   cutParticleAcc = 0;
   prodToastT = 0;
   windCheckT = 0;
+  footstepT = 0;
+  private ambienceSilenced = true;
   fireContactT = 0;
 
   // minimap
@@ -598,7 +603,9 @@ export class Engine {
         let t: number = T_GRASS;
         if (d > 1) t = T_WATER;
         else if (d > 0.93) t = T_SAND;
-        this.tiles[y * W + x] = t;
+        const index = y * W + x;
+        this.tiles[index] = t;
+        this.oceanTiles[index] = t === T_WATER ? 1 : 0;
       }
     }
     // rocky north (cave biome)
@@ -1699,6 +1706,11 @@ export class Engine {
     this.music?.setVolume(next.musicVol);
     this.music?.setVoice(next.voice);
     this.sfx.vol = Math.max(0, Math.min(1, next.sfxVol)) * 0.5;
+    if (!next.windSounds) this.sfx.setAmbient("wind", 0);
+    if (!next.ambientSounds) {
+      this.sfx.setAmbient("sea", 0); this.sfx.setAmbient("water", 0); this.sfx.setAmbient("fire", 0);
+    }
+    this.windCheckT = 0;
   }
 
   applyQuality() {
@@ -1711,6 +1723,9 @@ export class Engine {
     const p = pads && pads[0];
     if (!p) { this.padConnected = false; return { mx: 0, my: 0 }; }
     this.padConnected = true;
+    if (p.buttons.some((button, i) => button.pressed && !this.lastPadButtons[i])) {
+      this.sfx.ensure(); this.music?.resume();
+    }
     if (this.wakeT > 0) { this.lastPadButtons = p.buttons.map((button) => button.pressed); return { mx: 0, my: 0 }; }
     const dead = (v: number) => (Math.abs(v) < 0.18 ? 0 : v);
     const mx = dead(p.axes[0] ?? 0), my = dead(p.axes[1] ?? 0);
@@ -1721,7 +1736,6 @@ export class Engine {
     }
     const was = (i: number) => !!this.lastPadButtons[i];
     const pressed = (i: number) => btn(i) && !was(i);
-    if (p.buttons.some((button, i) => button.pressed && !was(i))) this.sfx.ensure();
     if (this.state === "cutscene") {
       if (pressed(0) || pressed(2)) this.advanceDialogue();
       if (pressed(9)) this.skipCutscene();
@@ -1777,6 +1791,7 @@ export class Engine {
     this.sfx.ui();
   }
   setTool(t: ToolKey) {
+    if (this.heldTool !== t) this.sfx.equip();
     this.heldTool = t;
     this.toast(t === "sword" && this.combatWeapon === "bow" ? "🏹 Arco na mão" : `${TOOL_ICON[t]} ${TOOL_LABEL[t]} na mão`);
   }
@@ -1785,7 +1800,7 @@ export class Engine {
     this.combatWeapon = weapon;
     this.heldTool = "sword";
     this.toast(weapon === "bow" ? "🏹 Arco equipado" : "⚔️ Espada equipada");
-    this.sfx.ui();
+    this.sfx.equip();
     this.emitSnapshot();
     this.saveGame();
   }
@@ -1924,7 +1939,9 @@ export class Engine {
     };
     this.spawnParticles(n.x, n.y - 10, colors[n.type], 8, 150);
     this.shake = Math.min(6, this.shake + 2.5);
-    if (tool === "axe") this.sfx.chop(); else this.sfx.mine();
+    if (n.type === "bush" || n.type === "berry") this.sfx.foliage();
+    else if (tool === "axe") this.sfx.chop();
+    else this.sfx.mine(n.type === "ore" ? "ore" : n.type === "crystal" ? "crystal" : "rock");
 
     if (n.hp <= 0) {
       n.hp = 0;
@@ -1959,7 +1976,7 @@ export class Engine {
     this.addScore(25);
     this.spawnParticles(m.x, m.y, "#b13ae0", 22, 260);
     this.spawnParticles(m.x, m.y, "#30102d", 12, 160);
-    if (this.settings.creatureSounds) this.sfx.monsterDeath(m.type, 1 - Math.sqrt(dist2(m.x, m.y, this.px, this.py)) / 600);
+    if (this.settings.creatureSounds) this.sfx.monsterDeath(m.type, 1 - Math.sqrt(dist2(m.x, m.y, this.px, this.py)) / 600, (m.x - this.px) / 480);
     else this.sfx.hit();
     // loot
     const r = Math.random();
@@ -3270,7 +3287,7 @@ export class Engine {
           }
           if (dp < aggro || m.siege) {
             m.state = "chase";
-            if (this.settings.creatureSounds && dp < 560) this.sfx.creature(m.type, 1 - dp / 600);
+            if (this.settings.creatureSounds && dp < 560) this.sfx.creature(m.type, 1 - dp / 600, (m.x - this.px) / 480);
           }
           break;
         }
@@ -3313,7 +3330,7 @@ export class Engine {
             m.state = "windup";
             m.t = m.type === "hulk" ? 0.6 : m.type === "brute" ? 0.5 : m.type === "imp" ? 0.3 : 0.38;
             m.vx *= 0.15; m.vy *= 0.15;
-            if (this.settings.creatureSounds && dp < 560) this.sfx.creature(m.type, 1 - dp / 600);
+            if (this.settings.creatureSounds && dp < 560) this.sfx.creature(m.type, 1 - dp / 600, (m.x - this.px) / 480);
           }
           if (!m.siege && dp > 1000) m.state = "idle";
           break;
@@ -3651,7 +3668,7 @@ export class Engine {
       }
     }
     this.spawnParticles(ch.x, ch.y - 10, "#ffe28a", 24, 220);
-    this.sfx.quest();
+    this.sfx.chest();
     this.addScore(60);
     this.toast(`📦 ${ch.label} aberto!`);
   }
@@ -3741,7 +3758,7 @@ export class Engine {
         if (d.res === "wood" || d.res === "stone") this.gatheredWoodStone += d.n;
         if (d.res === "iron") this.questP[3] = Math.min(QUESTS[3].target, this.questP[3] + d.n);
         this.spawnParticles(this.px, this.py - 8, "#fff7c0", 4, 80);
-        this.sfx.pickup();
+        this.sfx.pickup(d.res);
         this.drops.splice(i, 1);
         this.checkQuests();
         continue;
@@ -3859,6 +3876,12 @@ export class Engine {
 
   frame(dt: number) {
     this.updateMusicTrack();
+    const canHearWorld = this.state === "playing" && !this.softPause;
+    if (!canHearWorld && !this.ambienceSilenced) {
+      this.sfx.silenceAmbience(); this.ambienceSilenced = true;
+    } else if (canHearWorld && this.ambienceSilenced) {
+      this.windCheckT = 0; this.ambienceSilenced = false;
+    }
     // The reference room covers the world. In single-player it is paused, so
     // avoid rendering the hidden canvas while visiting the preview.
     if (this.activePanel === "reference" && this.softPause) return;
@@ -3904,7 +3927,7 @@ export class Engine {
     if (!this.music) return;
     let want: "lobby" | "day" | "night" | "siege" | "none" = "none";
     if (this.state === "cutscene") want = "night";
-    else if (this.state === "victory") want = "lobby";
+    else if (this.state === "victory") want = "day";
     else if (this.state === "playing" || this.state === "paused") {
       want = this.isNight() ? (this.underAttackNow() ? "siege" : "night") : "day";
     } else want = "night";
@@ -3914,6 +3937,7 @@ export class Engine {
   /** Sample nearby ambience at most once per second, never per sprite/frame. */
   updateAmbience() {
     if (this.settings.windSounds) this.sfx.wind();
+    else this.sfx.setAmbient("wind", 0);
     if (this.settings.creatureSounds) {
       if (!this.isNight()) this.sfx.bird();
       let nearest: Animal | null = null, best = 320 * 320;
@@ -3921,23 +3945,29 @@ export class Engine {
         const d = dist2(animal.x, animal.y, this.px, this.py);
         if (d < best) { best = d; nearest = animal; }
       }
-      if (nearest) this.sfx.animal(nearest.kind, 1 - Math.sqrt(best) / 320);
+      if (nearest) this.sfx.animal(nearest.kind, 1 - Math.sqrt(best) / 320, (nearest.x - this.px) / 320);
     }
     if (this.settings.ambientSounds) {
       const tx = Math.floor(this.px / TILE), ty = Math.floor(this.py / TILE);
-      let best = 192 * 192;
+      let sea = 192 * 192, stream = 192 * 192;
       for (let dy = -6; dy <= 6; dy++) for (let dx = -6; dx <= 6; dx++) {
-        const x = tx + dx, y = ty + dy;
-        if (x < 0 || y < 0 || x >= W || y >= H || this.tiles[y * W + x] !== T_WATER) continue;
+        const x = tx + dx, y = ty + dy, index = y * W + x;
+        if (x < 0 || y < 0 || x >= W || y >= H || this.tiles[index] !== T_WATER) continue;
         const d = dist2((x + 0.5) * TILE, (y + 0.5) * TILE, this.px, this.py);
-        if (d < best) best = d;
+        if (this.oceanTiles[index]) sea = Math.min(sea, d);
+        else stream = Math.min(stream, d);
       }
-      this.sfx.water(1 - Math.sqrt(best) / 192);
+      // Original ocean and subsequently carved streams use separate distance
+      // fields, so both can blend naturally where a river meets the coast.
+      this.sfx.water(1 - Math.sqrt(sea) / 192, "sea");
+      this.sfx.water(1 - Math.sqrt(stream) / 192, "water");
       let fire = 220 * 220;
       for (const structure of this.structures) if (structure.type === "campfire") {
         fire = Math.min(fire, dist2(structure.x, structure.y, this.px, this.py));
       }
       this.sfx.fire(1 - Math.sqrt(fire) / 220);
+    } else {
+      this.sfx.setAmbient("sea", 0); this.sfx.setAmbient("water", 0); this.sfx.setAmbient("fire", 0);
     }
   }
 
@@ -4031,12 +4061,25 @@ export class Engine {
       }
       return true;
     };
+    const oldX = this.px, oldY = this.py;
     const nx = this.px + this.pvx * dt;
     const ny = this.py + this.pvy * dt;
     if (tryMove(nx, this.py)) this.px = nx; else this.pvx = 0;
     if (tryMove(this.px, ny)) this.py = ny; else this.pvy = 0;
     this.px = clamp(this.px, TILE, WPX - TILE);
     this.py = clamp(this.py, TILE, HPX - TILE);
+    // Steps follow actual movement (not held input against a wall or a jump).
+    if (this.moving && !jumping && dist2(oldX, oldY, this.px, this.py) > 0.01) {
+      this.footstepT -= dt;
+      if (this.footstepT <= 0) {
+        const tile = this.tileAt(this.px, this.py);
+        const surface = tile === T_BRIDGE ? "bridge" : tile === T_SNOW || tile === T_SNOW_PATH || tile === T_ICE ? "snow"
+          : tile === T_ROCK || tile === T_CAVE || tile === T_RUIN || tile === T_MINERAL ? "rock"
+            : tile === T_SAND || tile === T_PATH ? "dirt" : "grass";
+        this.sfx.footstep(surface, this.running_);
+        this.footstepT = this.running_ ? 0.27 : 0.38;
+      }
+    } else this.footstepT = 0;
 
     // timers
     this.attackCd = Math.max(0, this.attackCd - dt);
