@@ -12,6 +12,7 @@ import { Sfx } from "@/game/sfx";
 import { GameSettings, DEFAULT_SETTINGS } from "@/game/settings";
 import { FrameLimiter } from "@/game/frame-limiter";
 import { SITES, GLACIER, MINERAL_BASIN, EQUIPMENT, type EquipmentKey } from "@/game/world-content";
+import { anchoredRect, rectanglesOverlap, resourceArtBounds, tileAreaIndex, type WorldRect } from "@/game/world-layout";
 
 export type Difficulty = "dificil" | "muito-dificil" | "impossivel";
 export type Mode = "single" | "multi";
@@ -160,23 +161,23 @@ const REFERENCE_SCALE: Record<ReferenceObject, number> = {
   barricade_1: 0.75, barricade_2: 0.75, barricade_3: 0.75, barricade_4: 0.75,
   training_fence: 1, training_mat: 1, training_canopy: 1, training_dummy: 1, training_rack: 1,
 };
-// A wider village keeps generous gaps between the larger houses and the trail.
-const VILLAGE_HOUSES = [[-620, -260], [-620, 150], [-470, 520], [-70, 540], [330, 520]] as const;
-const VILLAGE_HOUSE_SCALE = 1.35;
-/** Small outlying settlements lie well beyond even the largest base ring. */
-interface Hamlet { id: string; name: string; x: number; y: number; }
-const HAMLET_DEFS: readonly Hamlet[] = [
+// Old land foundations are retained for seed/save compatibility, but no longer
+// decide where visible houses sit. New positions are planned after all roads.
+const LEGACY_VILLAGE_HOUSES = [[-620, -260], [-620, 150], [-470, 520], [-70, 540], [330, 520]] as const;
+const LEGACY_HAMLET_HOUSES = [[-215, -75], [215, -75]] as const;
+const VILLAGE_HOUSE_SCALE = 1.8;
+const HAMLET_HOUSE_SCALE = 1.35;
+// Scale the world art uniformly; combat ranges and stats are unchanged.
+const MONSTER_ART_SCALE = 0.75;
+interface VillageHouse { x: number; y: number; index: number; scale: number; }
+interface Hamlet { id: string; name: string; x: number; y: number; houses: VillageHouse[]; }
+const HAMLET_DEFS: readonly Omit<Hamlet, "houses">[] = [
   { id: "pinheiros", name: "Aldeia dos Pinheiros", x: 49 * TILE, y: 45 * TILE },
   { id: "campinas", name: "Vila das Campinas", x: 33 * TILE, y: 150 * TILE },
   { id: "riacho", name: "Vila do Riacho", x: 119 * TILE, y: 151 * TILE },
   { id: "fronteira", name: "Vila da Fronteira", x: 160 * TILE, y: 117 * TILE },
 ];
-const HAMLET_HOUSES = [[-215, -75], [215, -75]] as const;
-const hamletHouses = (hamlet: Hamlet) => HAMLET_HOUSES.map(([dx, dy]) => ({ x: hamlet.x + dx, y: hamlet.y + dy }));
-const insideHouseArt = (x: number, y: number, hx: number, hy: number) =>
-  Math.abs(x - hx) < 185 && y > hy - 350 && y < hy + 155;
-const insideHamletPlaza = (x: number, y: number, village: Hamlet) =>
-  Math.abs(x - village.x) < 310 && y > village.y - 150 && y < village.y + 280;
+const houseBounds = (house: VillageHouse, padding = 0) => anchoredRect(house.x, house.y, 220 * house.scale, 250 * house.scale, padding);
 const HOUSE_ART: ReferenceObject[] = ["house", "house_half_timber", "house_wood_a", "house_wood_b", "house_stone"];
 const BARRICADE_ART: ReferenceObject[] = ["barricade_1", "barricade_2", "barricade_3", "barricade_4"];
 function houseArt(index: number): ReferenceObject | null {
@@ -189,12 +190,22 @@ function placedHouseArt(x: number, y: number) {
   // Stable across reloads, and does not consume the world-generation RNG.
   return houseArt(Math.abs(Math.floor(x / 16) * 3 + Math.floor(y / 16)) % HOUSE_ART.length);
 }
-// Solid footprints cover the tent and houses, with room to approach their
-// entrances. The escort's route stays clear; players already inside can exit.
-const STATIC_BUILDINGS: { name: ReferenceObject; x: number; y: number; halfWidth: number; depth: number }[] = [
-  { name: "chapel", x: VILLAGE.x + 145, y: VILLAGE.y - 200, halfWidth: 112, depth: 26 },
-  { name: "market", x: VILLAGE.x + 220, y: VILLAGE.y + 35, halfWidth: 82, depth: 23 },
+// Fixed buildings are placed off the roads and remain independently solid.
+interface VillageBuilding { name: "chapel" | "market"; x: number; y: number; halfWidth: number; depth: number; width: number; height: number; }
+const VILLAGE_BUILDING_DEFS = [
+  { name: "chapel" as const, dx: -340, dy: -110, halfWidth: 112, depth: 26, width: 300, height: 367.5 },
+  { name: "market" as const, dx: 360, dy: 170, halfWidth: 82, depth: 23, width: 250, height: 220 },
 ];
+// Nearest-first grid offsets are shared by all seeds, with stable tie-breaking.
+let villageOffsets: { x: number; y: number; d2: number }[] | null = null;
+function layoutOffsets() {
+  if (!villageOffsets) {
+    villageOffsets = [];
+    for (let y = -80; y <= 80; y++) for (let x = -80; x <= 80; x++) villageOffsets.push({ x: x * TILE, y: y * TILE, d2: x * x + y * y });
+    villageOffsets.sort((a, b) => a.d2 - b.d2 || a.y - b.y || a.x - b.x);
+  }
+  return villageOffsets;
+}
 // The compact starting ring keeps the tent inside it; legacy saves keep its
 // previous position and perimeter so no existing base is rearranged.
 const CAMP_COMPACT = { x: BASE.x - 125, y: BASE.y + 40 };
@@ -250,6 +261,7 @@ interface Monster {
   t: number; atkCd: number; flash: number; home: { x: number; y: number };
   dir: number;
   siege: boolean;
+  detourSide?: -1 | 1;
   skin: string;
   rare?: boolean;
   defeated?: boolean;
@@ -330,7 +342,7 @@ const FENCE_DEF: Record<FenceStyle, { name: string; desc: string; hp: number; co
 
 /* ---------------- helpers ---------------- */
 const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
-/** Purely visual arc for the existing 0.26s dodge; physics stays unchanged. */
+/** Purely visual arc for the stationary 0.26s jump. */
 export function dodgeJumpHeight(remaining: number): number {
   if (remaining <= 0 || remaining >= 0.26) return 0;
   return Math.sin(Math.PI * (1 - remaining / 0.26)) * 20;
@@ -435,6 +447,12 @@ export class Engine {
   wakeT = 0;
   recoveryNoticeT = 0;
   worldProps: WorldProp[] = [];
+  villageHouses: VillageHouse[] = [];
+  villageBuildings: VillageBuilding[] = [];
+  private roads: ReturnType<typeof tileAreaIndex> | null = null;
+  private nodeExclusions: ReturnType<typeof tileAreaIndex> | null = null;
+  private savedNodeExclusions: ReturnType<typeof tileAreaIndex> | null = null;
+
   seenCreatures = new Set<string>();
   creatureKills: Record<string, number> = {};
   discoveredSites = new Set<string>();
@@ -565,6 +583,7 @@ export class Engine {
 
   /* ---------------- world gen ---------------- */
   genWorld(seed: number) {
+    this.savedNodeExclusions = null;
     const rng = mulberry32(seed);
     const cx = W / 2, cy = H / 2;
     // island ellipse + noise edge
@@ -704,10 +723,12 @@ export class Engine {
     this.expandWorld();
     this.addBiomeDetails(seed);
     this.distributeBiomes(seed);
-    this.prepareExpandedVillage();
+    this.prepareLegacyVillageFoundations();
     this.prepareHamlets();
+    this.planVillageBuildings();
     this.spaceDeposits();
     this.spaceTrees();
+    this.spaceSmallPlants();
     this.rebuildNodeBuckets();
     this.buildMinimap();
     this.terrain = new Terrain(this.tiles, W, H, TILE);
@@ -962,7 +983,7 @@ export class Engine {
   /** Lay only short paths to existing roads and reserve two spaced houses per
    * village. Never reorder/delete old resource nodes or touch the base ring. */
   private prepareHamlets() {
-    this.hamlets = HAMLET_DEFS.map((village) => ({ ...village }));
+    this.hamlets = HAMLET_DEFS.map((village) => ({ ...village, houses: [] }));
     for (const village of this.hamlets) {
       const tx = Math.floor(village.x / TILE), ty = Math.floor(village.y / TILE);
       let best = Infinity, target: { x: number; y: number } | null = null;
@@ -980,7 +1001,8 @@ export class Engine {
         if (this.tiles[i] === T_WATER) this.tiles[i] = T_GRASS;
         if (Math.abs(x - tx) <= 2 && Math.abs(y - ty) <= 2 && this.tiles[i] !== T_RUIN && this.tiles[i] !== T_NECRO) this.tiles[i] = T_PATH;
       }
-      for (const house of hamletHouses(village)) {
+      for (const [dx, dy] of LEGACY_HAMLET_HOUSES) {
+        const house = { x: village.x + dx, y: village.y + dy };
         for (let y = Math.floor((house.y - 345) / TILE); y <= Math.ceil((house.y + 50) / TILE); y++) {
           for (let x = Math.floor((house.x - 160) / TILE); x <= Math.ceil((house.x + 160) / TILE); x++) {
             if (x > 0 && y > 0 && x < W - 1 && y < H - 1 && this.tiles[y * W + x] === T_WATER) this.tiles[y * W + x] = T_GRASS;
@@ -1003,24 +1025,12 @@ export class Engine {
         }
       }
     }
-    this.nodes.forEach((node, index) => {
-      const village = this.hamlets.find((h) => hamletHouses(h).some((house) => insideHouseArt(node.x, node.y, house.x, house.y)) || insideHamletPlaza(node.x, node.y, h));
-      if (!village) return;
-      for (let attempt = 0; attempt < 100; attempt++) {
-        const angle = (index + attempt) * 2.39996, radius = 500 + (index % 11) * 58 + (attempt % 4) * 30;
-        const x = village.x + Math.cos(angle) * radius, y = village.y + Math.sin(angle) * radius;
-        if (this.tileAt(x, y) !== T_WATER && dist2(x, y, BASE.x, BASE.y) > 1000 ** 2 &&
-            !SITES.some((site) => dist2(x, y, site.x, site.y) < 165 ** 2) &&
-            !VILLAGE_HOUSES.some(([dx, dy]) => insideHouseArt(x, y, VILLAGE.x + dx, VILLAGE.y + dy)) &&
-            !this.hamlets.some((h) => hamletHouses(h).some((house) => insideHouseArt(x, y, house.x, house.y)) || insideHamletPlaza(x, y, h))) { node.x = x; node.y = y; break; }
-      }
-    });
   }
 
-  /** Make room for the larger houses after generation, without changing RNG
-   * consumption or deleting/reordering resource nodes referenced by saves. */
-  private prepareExpandedVillage() {
-    for (const [dx, dy] of VILLAGE_HOUSES) {
+  /** Keep pre-existing dry foundations without consuming RNG or altering
+   * resource indices. The visible buildings are placed separately below. */
+  private prepareLegacyVillageFoundations() {
+    for (const [dx, dy] of LEGACY_VILLAGE_HOUSES) {
       const hx = VILLAGE.x + dx, hy = VILLAGE.y + dy;
       for (let y = Math.floor((hy - 350) / TILE); y <= Math.ceil((hy + 55) / TILE); y++) {
         for (let x = Math.floor((hx - 165) / TILE); x <= Math.ceil((hx + 165) / TILE); x++) {
@@ -1028,22 +1038,156 @@ export class Engine {
         }
       }
     }
-    this.nodes.forEach((node, index) => {
-      const overlaps = VILLAGE_HOUSES.some(([dx, dy]) => insideHouseArt(node.x, node.y, VILLAGE.x + dx, VILLAGE.y + dy));
-      if (!overlaps) return;
-      for (let attempt = 0; attempt < 12; attempt++) {
-        const angle = (index + attempt) * 2.39996, radius = 850 + (index % 4) * 36;
-        const x = VILLAGE.x + Math.cos(angle) * radius, y = VILLAGE.y + Math.sin(angle) * radius;
-        if (this.tileAt(x, y) !== T_WATER) { node.x = x; node.y = y; break; }
+  }
+
+  /** Find dry sites off every finished path. All sprite variants use the same
+   * conservative rectangles, so asynchronous/disabled art cannot change the
+   * layout or leave an invisible obstacle in the road. No RNG is consumed. */
+  private planVillageBuildings() {
+    this.roads = tileAreaIndex(this.tiles, W, H, TILE, (tile) => tile === T_PATH || tile === T_BRIDGE || tile === T_SNOW_PATH);
+    const water = tileAreaIndex(this.tiles, W, H, TILE, (tile) => tile === T_WATER);
+    const occupied: WorldRect[] = [];
+    const plazas = [VILLAGE, ...this.hamlets].map((v) => ({ left: v.x - 112, right: v.x + 112, top: v.y - 100, bottom: v.y + 110 }));
+    // A dry footprint alone may be on an isolated islet. Require an entrance
+    // in the base's connected land/bridge component before placing anything.
+    const connected = new Uint8Array(W * H), roadNetwork = new Uint8Array(W * H), queue = new Int32Array(W * H);
+    const directions = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
+    const start = Math.floor(BASE.y / TILE) * W + Math.floor(BASE.x / TILE);
+    const flood = (result: Uint8Array, roadOnly: boolean) => {
+      let head = 0, tail = 0; result[start] = 1; queue[tail++] = start;
+      while (head < tail) {
+        const i = queue[head++], x = i % W, y = Math.floor(i / W);
+        for (const [dx, dy] of directions) {
+          const nx = x + dx, ny = y + dy, next = ny * W + nx;
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H || result[next]) continue;
+          const tile = this.tiles[next];
+          if (tile === T_WATER || (roadOnly && tile !== T_PATH && tile !== T_BRIDGE && tile !== T_SNOW_PATH)) continue;
+          result[next] = 1; queue[tail++] = next;
+        }
       }
-    });
+    };
+    flood(connected, false); flood(roadNetwork, true);
+    const solidTiles = new Uint8Array(W * H), seen = new Uint32Array(W * H);
+    let searchId = 0;
+    const inSolid = (tx: number, ty: number, x: number, y: number, halfWidth: number, depth: number) => {
+      const px = tx * TILE + TILE / 2, py = ty * TILE + TILE / 2;
+      return Math.abs(px - x) < halfWidth && py > y - depth && py < y + 8;
+    };
+    const markSolid = (x: number, y: number, halfWidth: number, depth: number) => {
+      for (let ty = Math.max(0, Math.floor((y - depth) / TILE)); ty <= Math.min(H - 1, Math.floor((y + 8) / TILE)); ty++)
+        for (let tx = Math.max(0, Math.floor((x - halfWidth) / TILE)); tx <= Math.min(W - 1, Math.floor((x + halfWidth) / TILE)); tx++)
+          if (inSolid(tx, ty, x, y, halfWidth, depth)) solidTiles[ty * W + tx] = 1;
+    };
+    const entryReachesRoad = (x: number, y: number, halfWidth: number, depth: number) => {
+      const ex = Math.floor(x / TILE), ey = Math.floor((y + 24) / TILE);
+      if (ex < 0 || ex >= W || ey < 0 || ey >= H || !connected[ey * W + ex]) return false;
+      let head = 0, tail = 0; const id = ++searchId, entry = ey * W + ex;
+      seen[entry] = id; queue[tail++] = entry;
+      while (head < tail) {
+        const i = queue[head++], tx = i % W, ty = Math.floor(i / W);
+        if (roadNetwork[i]) return true;
+        for (const [dx, dy] of directions) {
+          const nx = tx + dx, ny = ty + dy, next = ny * W + nx;
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H || seen[next] === id || solidTiles[next] || this.tiles[next] === T_WATER || inSolid(nx, ny, x, y, halfWidth, depth)) continue;
+          seen[next] = id; queue[tail++] = next;
+        }
+      }
+      return false;
+    };
+    const distanceToRect = (x: number, y: number, r: WorldRect) => dist2(x, y, clamp(x, r.left, r.right), clamp(y, r.top, r.bottom));
+    const place = (preferredX: number, preferredY: number, width: number, height: number, home: { x: number; y: number }, maxDistance: number, halfWidth: number, depth: number) => {
+      // Usually the first, all-dry pass succeeds. A larger all-dry search is
+      // safer than filling a stream or moving an existing player-built base.
+      for (const limit of [maxDistance, 2000, 3000]) for (const offset of layoutOffsets()) {
+        const x = preferredX + offset.x, y = preferredY + offset.y;
+        if (dist2(x, y, home.x, home.y) > limit * limit) continue;
+        const rect = anchoredRect(x, y, width, height, 12);
+        const entryX = Math.floor(x / TILE), entryY = Math.floor((y + 24) / TILE);
+        if (entryX < 0 || entryX >= W || entryY < 0 || entryY >= H || !connected[entryY * W + entryX]) continue;
+        if (this.roads!.count(rect) || water.count(rect)) continue;
+        if (plazas.some((p) => rectanglesOverlap(rect, p, 12)) || occupied.some((b) => rectanglesOverlap(rect, b, 50))) continue;
+        if (distanceToRect(BASE.x, BASE.y, rect) < 1000 ** 2 || distanceToRect(CRASH.x, CRASH.y, rect) < 220 ** 2) continue;
+        if (SITES.some((site) => distanceToRect(site.x, site.y, rect) < 160 ** 2)) continue;
+        if (!entryReachesRoad(x, y, halfWidth, depth)) continue;
+        occupied.push(rect); markSolid(x, y, halfWidth, depth); return { x, y };
+      }
+      return null;
+    };
+
+    this.villageBuildings = [];
+    for (const def of VILLAGE_BUILDING_DEFS) {
+      const point = place(VILLAGE.x + def.dx, VILLAGE.y + def.dy, def.width, def.height, VILLAGE, 1000, def.halfWidth, def.depth);
+      const prop = this.worldProps.find((p) => p.sprite === `reference_${def.name}`);
+      if (!point) { if (prop) this.worldProps = this.worldProps.filter((p) => p !== prop); continue; }
+      const building: VillageBuilding = { name: def.name, ...point, halfWidth: def.halfWidth, depth: def.depth, width: def.width, height: def.height };
+      this.villageBuildings.push(building);
+      if (prop) Object.assign(prop, point);
+    }
+    this.villageHouses = [];
+    const homes = [[-680, -400], [-130, 1160], [850, 650], [900, 120], [-780, 130]] as const;
+    for (const [index, [dx, dy]] of homes.entries()) {
+      const point = place(VILLAGE.x + dx, VILLAGE.y + dy, 220 * VILLAGE_HOUSE_SCALE, 250 * VILLAGE_HOUSE_SCALE, VILLAGE, 1600, 100 * VILLAGE_HOUSE_SCALE, 250 * VILLAGE_HOUSE_SCALE / 1.35);
+      if (point) this.villageHouses.push({ ...point, index, scale: VILLAGE_HOUSE_SCALE });
+    }
+    for (const [villageIndex, hamlet] of this.hamlets.entries()) {
+      hamlet.houses = [];
+      for (const [houseIndex, dx] of [-380, 380].entries()) {
+        const point = place(hamlet.x + dx, hamlet.y - 110, 220 * HAMLET_HOUSE_SCALE, 250 * HAMLET_HOUSE_SCALE, hamlet, 900, 100 * HAMLET_HOUSE_SCALE, 250 * HAMLET_HOUSE_SCALE / 1.35);
+        if (point) hamlet.houses.push({ ...point, index: villageIndex + houseIndex + 1, scale: HAMLET_HOUSE_SCALE });
+      }
+    }
+
+    // One mask reserves both road tiles and visible building/plaza areas. A
+    // query uses the full tree/deposit/plant art rectangle, not just its trunk.
+    const excluded = new Uint8Array(W * H);
+    for (let i = 0; i < excluded.length; i++) {
+      const tile = this.tiles[i];
+      if (tile === T_PATH || tile === T_BRIDGE || tile === T_SNOW_PATH) excluded[i] = 1;
+    }
+    const mark = (rect: WorldRect) => {
+      const x0 = Math.max(0, Math.floor(rect.left / TILE)), x1 = Math.min(W - 1, Math.ceil(rect.right / TILE));
+      const y0 = Math.max(0, Math.floor(rect.top / TILE)), y1 = Math.min(H - 1, Math.ceil(rect.bottom / TILE));
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) excluded[y * W + x] = 1;
+    };
+    for (const rect of occupied) mark({ left: rect.left - 16, right: rect.right + 16, top: rect.top - 16, bottom: rect.bottom + 16 });
+    for (const h of this.hamlets) mark({ left: h.x - 310, right: h.x + 310, top: h.y - 150, bottom: h.y + 280 });
+    for (const camp of [CAMP_COMPACT, CAMP_LEGACY]) mark({ left: camp.x - 95, right: camp.x + 95, top: camp.y - 170, bottom: camp.y + 20 });
+    this.nodeExclusions = tileAreaIndex(excluded, W, H, TILE, (tile) => tile === 1);
+  }
+
+  private resourceAreaBlocked(type: string, x: number, y: number) {
+    const bounds = resourceArtBounds(type, x, y);
+    return !!(this.nodeExclusions?.count(bounds) || this.savedNodeExclusions?.count(bounds));
+  }
+
+  /** A new deterministic layout can move a tree onto an old player build.
+   * Reserve saved builds first, then reposition only as needed in the same
+   * node order, so saved health/stumps still apply to the same indices. */
+  private protectSavedStructuresFromNodes() {
+    if (!this.structures.length) return;
+    const excluded = new Uint8Array(W * H);
+    const mark = (rect: WorldRect) => {
+      const x0 = Math.max(0, Math.floor(rect.left / TILE)), x1 = Math.min(W - 1, Math.ceil(rect.right / TILE));
+      const y0 = Math.max(0, Math.floor(rect.top / TILE)), y1 = Math.min(H - 1, Math.ceil(rect.bottom / TILE));
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) excluded[y * W + x] = 1;
+    };
+    for (const st of this.structures) {
+      if (st.type === "wall" || st.type === "gate") mark({ left: st.x - 60, right: st.x + 60, top: st.y - 60, bottom: st.y + 60 });
+      else if (st.type === "training") mark({ left: st.x - 110, right: st.x + 110, top: st.y - 90, bottom: st.y + 90 });
+      else mark(anchoredRect(st.x, st.y + (st.type === "house" ? 60 : 35), st.type === "house" ? 300 : 150, st.type === "house" ? 320 : 230));
+    }
+    const builds = tileAreaIndex(excluded, W, H, TILE, (tile) => tile === 1);
+    if (!this.nodes.some((node) => builds.count(resourceArtBounds(node.type, node.x, node.y)))) return;
+    for (const chest of this.chests) mark({ left: chest.x - 35, right: chest.x + 35, top: chest.y - 55, bottom: chest.y + 15 });
+    this.savedNodeExclusions = tileAreaIndex(excluded, W, H, TILE, (tile) => tile === 1);
+    this.spaceDeposits(); this.spaceTrees(); this.spaceSmallPlants();
+    this.rebuildNodeBuckets();
   }
 
   /** Spread harvestable rocks and minerals after paths and village clearings.
    * Reposition rather than delete: saved node indices and health stay intact. */
   private spaceDeposits() {
     const cell = 96, occupied = new Map<string, RNode[]>();
-    const houses = this.hamlets.flatMap(hamletHouses);
     const key = (x: number, y: number) => `${Math.floor(x / cell)},${Math.floor(y / cell)}`;
     const clear = (x: number, y: number, terrain: number, spacing: number) => {
       if (x < TILE || y < TILE || x >= WPX - TILE || y >= HPX - TILE) return false;
@@ -1052,13 +1196,12 @@ export class Engine {
       // generating new nodes or consuming random numbers.
       const mineralFringe = terrain === T_MINERAL && (tile === T_ROCK || tile === T_GRASS || tile === T_AUTUMN) &&
         ((x - MINERAL_BASIN.x) / MINERAL_BASIN.rx) ** 2 + ((y - MINERAL_BASIN.y) / MINERAL_BASIN.ry) ** 2 < 3.2;
-      const onRoad = terrain === T_PATH || terrain === T_BRIDGE || terrain === T_SNOW_PATH;
-      if (onRoad ? ![T_GRASS, T_AUTUMN, T_BLOSSOM, T_ROCK, T_SNOW, T_DARK].includes(tile) : tile !== terrain && !mineralFringe) return false;
+      const onRoad = terrain === T_WATER || terrain === T_PATH || terrain === T_BRIDGE || terrain === T_SNOW_PATH;
+      if (tile === T_WATER || (!onRoad && tile !== terrain && !mineralFringe)) return false;
+      if (this.resourceAreaBlocked("rock", x, y)) return false;
       if ([WAKE, RIAN_START, { x: CRASH.x + 110, y: CRASH.y - 60 }, { x: BASE.x + 100, y: BASE.y - 40 },
         { x: VILLAGE.x + 70, y: VILLAGE.y + 30 }, { x: MINERAL_BASIN.x + 70, y: MINERAL_BASIN.y + 50 }].some((p) => dist2(x, y, p.x, p.y) < 90 ** 2)) return false;
       if (SITES.some((site) => dist2(x, y, site.x, site.y) < 150 ** 2)) return false;
-      if (VILLAGE_HOUSES.some(([dx, dy]) => insideHouseArt(x, y, VILLAGE.x + dx, VILLAGE.y + dy))) return false;
-      if (this.hamlets.some((h) => insideHamletPlaza(x, y, h)) || houses.some((house) => insideHouseArt(x, y, house.x, house.y))) return false;
       const cx = Math.floor(x / cell), cy = Math.floor(y / cell);
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
         if ((occupied.get(`${cx + dx},${cy + dy}`) ?? []).some((other) => dist2(x, y, other.x, other.y) < spacing ** 2)) return false;
@@ -1078,6 +1221,11 @@ export class Engine {
           }
           if (placed) break;
         }
+        if (!placed) for (let attempt = 0; attempt < 4096; attempt++) {
+          const angle = index * 1.1 + attempt * 2.399963, radius = 32 + Math.floor(attempt / 8) * 19;
+          const x = x0 + Math.cos(angle) * radius, y = y0 + Math.sin(angle) * radius;
+          if (clear(x, y, T_WATER, 50)) { node.x = x; node.y = y; break; }
+        }
       }
       const k = key(node.x, node.y), bucket = occupied.get(k) ?? [];
       bucket.push(node); occupied.set(k, bucket);
@@ -1088,26 +1236,24 @@ export class Engine {
    * changing their save indices. Candidates stay on matching/neighboring
    * terrain, away from roads, buildings and starting chests. */
   private spaceTrees() {
-    const cell = 104, minimum = 100, occupied = new Map<string, RNode[]>();
-    const houses = this.hamlets.flatMap(hamletHouses);
+    const cell = 104, occupied = new Map<string, RNode[]>();
     const deposits = new Map<string, RNode[]>();
     for (const node of this.nodes) if (node.type === "rock" || node.type === "ore" || node.type === "crystal") {
       const key = `${Math.floor(node.x / cell)},${Math.floor(node.y / cell)}`, bucket = deposits.get(key) ?? [];
       bucket.push(node); deposits.set(key, bucket);
     }
     const treeCell = (x: number, y: number) => `${Math.floor(x / cell)},${Math.floor(y / cell)}`;
-    const clear = (x: number, y: number, terrain: number, spacing = minimum) => {
+    const clear = (x: number, y: number, terrain: number, spacing: number) => {
       if (x < TILE || y < TILE || x >= WPX - TILE || y >= HPX - TILE) return false;
-      const tile = this.tileAt(x, y), onRoad = terrain === T_PATH || terrain === T_BRIDGE || terrain === T_SNOW_PATH;
+      const tile = this.tileAt(x, y), onRoad = terrain === T_WATER || terrain === T_PATH || terrain === T_BRIDGE || terrain === T_SNOW_PATH;
       const relatedTerrain = (terrain === T_ICE && tile === T_SNOW) ||
         (terrain === T_RUIN && [T_GRASS, T_AUTUMN, T_BLOSSOM].includes(tile)) ||
         (terrain === T_NECRO && [T_DARK, T_GRASS].includes(tile)) ||
         (terrain === T_MINERAL && [T_ROCK, T_GRASS, T_AUTUMN].includes(tile));
-      if (onRoad ? ![T_GRASS, T_AUTUMN, T_BLOSSOM, T_SNOW, T_DARK, T_ROCK].includes(tile) : tile !== terrain && !relatedTerrain) return false;
+      if (tile === T_WATER || (!onRoad && tile !== terrain && !relatedTerrain)) return false;
+      if (this.resourceAreaBlocked("tree", x, y)) return false;
       if ([WAKE, RIAN_START, { x: CRASH.x + 110, y: CRASH.y - 60 }, { x: BASE.x + 100, y: BASE.y - 40 },
         { x: VILLAGE.x + 70, y: VILLAGE.y + 30 }].some((p) => dist2(x, y, p.x, p.y) < 55 ** 2)) return false;
-      if (VILLAGE_HOUSES.some(([dx, dy]) => insideHouseArt(x, y, VILLAGE.x + dx, VILLAGE.y + dy))) return false;
-      if (this.hamlets.some((h) => insideHamletPlaza(x, y, h)) || houses.some((house) => insideHouseArt(x, y, house.x, house.y))) return false;
       if (dist2(x, y, VILLAGE.x - 215, VILLAGE.y + 45) < 125 ** 2) return false;
       if ([CAMP_COMPACT, CAMP_LEGACY].some((p) => Math.abs(x - p.x) < 95 && y > p.y - 170 && y < p.y + 20)) return false;
       const cx = Math.floor(x / cell), cy = Math.floor(y / cell);
@@ -1120,7 +1266,8 @@ export class Engine {
     this.nodes.forEach((node, index) => {
       if (node.type !== "tree" && node.type !== "pine") return;
       const terrain = this.tileAt(node.x, node.y), x0 = node.x, y0 = node.y;
-      if (!clear(x0, y0, terrain)) {
+      const minimum = 88 + (index % 4) * 4;
+      if (!clear(x0, y0, terrain, minimum)) {
         let placed = false;
         // Thin strips of a biome may not have room for the ideal spacing.
         // Gradually relax it instead of leaving two trunks on top of each other.
@@ -1132,9 +1279,39 @@ export class Engine {
           }
           if (placed) break;
         }
+        if (!placed) for (let attempt = 0; attempt < 4096; attempt++) {
+          const angle = index * 1.1 + attempt * 2.399963, radius = 32 + Math.floor(attempt / 8) * 19;
+          const x = x0 + Math.cos(angle) * radius, y = y0 + Math.sin(angle) * radius;
+          if (clear(x, y, T_WATER, 50)) { node.x = x; node.y = y; break; }
+        }
       }
       const key = treeCell(node.x, node.y), bucket = occupied.get(key) ?? [];
       bucket.push(node); occupied.set(key, bucket);
+    });
+  }
+
+  /** Small bushes and berries also leave trails and building entrances clear.
+   * Their index and health remain unchanged, just like trees and deposits. */
+  private spaceSmallPlants() {
+    this.nodes.forEach((node, index) => {
+      if (node.type !== "bush" && node.type !== "berry") return;
+      const x0 = node.x, y0 = node.y, terrain = this.tileAt(x0, y0);
+      const clear = (x: number, y: number, matchBiome: boolean) => {
+        const tile = this.tileAt(x, y);
+        if (tile === T_WATER || this.resourceAreaBlocked(node.type, x, y)) return false;
+        const onRoad = terrain === T_WATER || terrain === T_PATH || terrain === T_BRIDGE || terrain === T_SNOW_PATH;
+        return !matchBiome || onRoad || tile === terrain;
+      };
+      if (clear(x0, y0, true)) return;
+      for (const matchBiome of [true, false]) {
+        let placed = false;
+        for (let attempt = 0; attempt < 2048; attempt++) {
+          const angle = index * 1.1 + attempt * 2.399963, radius = 24 + Math.floor(attempt / 8) * 19;
+          const x = x0 + Math.cos(angle) * radius, y = y0 + Math.sin(angle) * radius;
+          if (clear(x, y, matchBiome)) { node.x = x; node.y = y; placed = true; break; }
+        }
+        if (placed) break;
+      }
     });
   }
 
@@ -1183,6 +1360,31 @@ export class Engine {
       { x: CAVE.x + 40, y: CAVE.y + CAVE.r * 0.6, opened: false, loot: { iron: 10, crystal: 2 }, label: "Baú da caverna" },
       { x: 150 * TILE, y: 102 * TILE, opened: false, loot: { iron: 6, food: 3, fiber: 10 }, label: "Baú sombrio" },
     ];
+    // Chests keep their saved indices/loot, but sit beside paths and stay
+    // visible outside foliage/buildings. The base chest stays at its old
+    // position so it cannot conflict with an existing player's base.
+    const buildings = [
+      ...this.villageHouses.map((house) => houseBounds(house)),
+      ...this.hamlets.flatMap((h) => h.houses.map((house) => houseBounds(house))),
+      ...this.villageBuildings.map((b) => anchoredRect(b.x, b.y, b.width, b.height)),
+    ];
+    const chestClear = (x: number, y: number) => {
+      const rect = anchoredRect(x, y + 4, 52, 34, 6);
+      return this.tileAt(x, y) !== T_WATER && !this.roads!.count(rect) &&
+        !buildings.some((b) => rectanglesOverlap(rect, b, 12)) &&
+        !this.nodes.some((node) => node.hp > 0 && Math.abs(node.x - x) < 130 && Math.abs(node.y - y) < 200 && rectanglesOverlap(rect, resourceArtBounds(node.type, node.x, node.y), 8));
+    };
+    const moveOffPath = (chest: Chest) => {
+      if (chestClear(chest.x, chest.y)) return;
+      const startX = chest.x, startY = chest.y;
+      let found = false;
+      for (let ring = 1; ring <= 32 && !found; ring++) for (let dy = -ring; dy <= ring && !found; dy++) for (let dx = -ring; dx <= ring; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;
+        const x = startX + dx * 16, y = startY + dy * 16;
+        if (chestClear(x, y)) { chest.x = x; chest.y = y; found = true; break; }
+      }
+    };
+    for (let i = 0; i < this.chests.length; i++) if (i !== 1) moveOffPath(this.chests[i]);
     // Append, never insert: saved chest-open flags use the original indices.
     const extras: Chest[] = [
       { x: MINERAL_BASIN.x + 70, y: MINERAL_BASIN.y + 50, opened: false, loot: { iron: 12, crystal: 5 }, label: "Tesouro dos cristais", rare: true },
@@ -1190,20 +1392,7 @@ export class Engine {
       { x: 144 * TILE + 90, y: 108 * TILE + 75, opened: false, loot: { crystal: 3, iron: 8, fiber: 6 }, label: "Tesouro das ruínas", rare: true },
       { x: 44 * TILE, y: 90 * TILE, opened: false, loot: { fiber: 12, food: 7, crystal: 2 }, label: "Tesouro da floresta", rare: true },
     ];
-    for (const chest of extras) {
-      const clear = (x: number, y: number) => this.tileAt(x, y) !== T_WATER &&
-        !this.nodes.some((n) => n.hp > 0 && dist2(x, y, n.x, n.y) < 36 ** 2);
-      if (!clear(chest.x, chest.y)) {
-        const tx = Math.floor(chest.x / TILE), ty = Math.floor(chest.y / TILE);
-        let placed = false;
-        for (let r = 1; r <= 10 && !placed; r++) for (let dy = -r; dy <= r && !placed; dy++) for (let dx = -r; dx <= r; dx++) {
-          if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
-          const x = (tx + dx + 0.5) * TILE, y = (ty + dy + 0.5) * TILE;
-          if (clear(x, y)) { chest.x = x; chest.y = y; placed = true; break; }
-        }
-      }
-      this.chests.push(chest);
-    }
+    for (const chest of extras) { moveOffPath(chest); this.chests.push(chest); }
   }
 
   spawnVillagers() {
@@ -1784,6 +1973,8 @@ export class Engine {
   tryRoll() {
     if (this.rollCd > 0 || this.stamina < 15) return;
     this.rollT = 0.26; this.rollCd = 0.85; this.invulnT = 0.32;
+    // A jump is vertical, even if the player had momentum beforehand.
+    this.pvx = 0; this.pvy = 0;
     this.stamina -= 15;
     this.sfx.roll();
     this.spawnParticles(this.px, this.py + 10, "#d8cfa8", 8, 120);
@@ -2174,23 +2365,22 @@ export class Engine {
     return !!chest && Math.abs(x - chest.x) < 34 && y > chest.y - 42 && y < chest.y + 9;
   }
 
-  /** Ground footprints of fixed reference buildings are static structures,
-   * not enemies. If the art is absent, no invisible obstacles are created. */
+  /** Ground footprints remain solid even when the optional house art is off;
+   * optional chapel/market/camp footprints exist only while their art is loaded. */
   referenceStructureAt(x: number, y: number): boolean {
-    const houseSolid = (hx: number, hy: number, width: number, depth: number) => Math.abs(x - hx) < width && y > hy - depth && y < hy + 8;
-    if (dist2(x, y, VILLAGE.x, VILLAGE.y) < 1100 ** 2 && VILLAGE_HOUSES.some(([hx, hy], index) => {
-      const art = this.settings.craftPix ? houseArt(index) : null;
-      return houseSolid(VILLAGE.x + hx, VILLAGE.y + hy, 135, art === "house" ? 250 : 190);
-    })) return true;
-    for (const hamlet of this.hamlets) {
-      if (dist2(x, y, hamlet.x, hamlet.y) > 650 ** 2) continue;
-      if (hamletHouses(hamlet).some((h) => houseSolid(h.x, h.y, 116, 180))) return true;
-    }
+    const houseSolid = (house: VillageHouse) => {
+      // Reject distant points before asking which optional atlas is loaded.
+      if (Math.abs(x - house.x) >= 100 * house.scale || y >= house.y + 8 || y <= house.y - 250 * house.scale / 1.35) return false;
+      const art = this.settings.craftPix ? houseArt(house.index) : null;
+      const depth = (art === "house" ? 250 : 190) * house.scale / 1.35;
+      return y > house.y - depth;
+    };
+    if (this.villageHouses.some(houseSolid)) return true;
+    for (const hamlet of this.hamlets) if (hamlet.houses.some(houseSolid)) return true;
     if (!this.settings.craftPix) return false;
-    if (dist2(x, y, VILLAGE.x, VILLAGE.y) > 1000 ** 2 && dist2(x, y, BASE.x, BASE.y) > 450 ** 2) return false;
-    if (STATIC_BUILDINGS.some((b) => hasReferenceObject(b.name) && Math.abs(x - b.x) < b.halfWidth && y > b.y - b.depth && y < b.y + 8)) return true;
+    if (this.villageBuildings.some((b) => Math.abs(x - b.x) < b.halfWidth && y > b.y - b.depth && y < b.y + 8 && hasReferenceObject(b.name))) return true;
     const camp = this.legacyTerritory ? CAMP_LEGACY : CAMP_COMPACT;
-    return hasReferenceObject("camp") && Math.abs(x - camp.x) < 78 && y > camp.y - 155 && y < camp.y + 8;
+    return Math.abs(x - camp.x) < 78 && y > camp.y - 155 && y < camp.y + 8 && hasReferenceObject("camp");
   }
 
   placedStructureContains(s: Structure, x: number, y: number, radius = 24): boolean {
@@ -2581,10 +2771,17 @@ export class Engine {
         return { type: s.type, x: s.x, y: s.y, prodT: 0, hp: Math.min(s.hp ?? mhp, mhp), maxHp: mhp, open: !!s.open, rotation, fenceStyle,
           ...(s.type === "spike_trap" || s.type === "barricade" ? { tier } : {}) };
       });
-      // If an old save built here, prefer the saved construction over a new
-      // outlying village. No user structure is moved, hidden or destroyed.
+      // A generated building never hides or replaces an old player build.
+      const savedRect = (st: Structure) => anchoredRect(st.x, st.y + 20, st.type === "house" ? 240 : 130, st.type === "house" ? 260 : 150);
+      const conflicts = (rect: WorldRect) => this.structures.some((st) => rectanglesOverlap(rect, savedRect(st)));
+      this.villageHouses = this.villageHouses.filter((house) => !conflicts(houseBounds(house)));
+      const hidden = new Set(this.villageBuildings.filter((b) => conflicts(anchoredRect(b.x, b.y, b.width, b.height))).map((b) => b.name));
+      if (hidden.size) {
+        this.villageBuildings = this.villageBuildings.filter((b) => !hidden.has(b.name));
+        this.worldProps = this.worldProps.filter((p) => ![...hidden].some((name) => p.sprite === `reference_${name}`));
+      }
       const excluded = new Set(this.hamlets.filter((h) => this.structures.some((st) =>
-        hamletHouses(h).some((house) => Math.abs(st.x - house.x) < 205 && st.y > house.y - 380 && st.y < house.y + 100) || dist2(st.x, st.y, h.x, h.y) < 150 ** 2
+        h.houses.some((house) => rectanglesOverlap(houseBounds(house), savedRect(st))) || dist2(st.x, st.y, h.x, h.y) < 150 ** 2
       )).map((h) => h.id));
       if (excluded.size) {
         this.hamlets = this.hamlets.filter((h) => !excluded.has(h.id));
@@ -2606,6 +2803,7 @@ export class Engine {
         }
       }
       if (savedFoundation) { this.terrain?.invalidateAll(); this.buildMinimap(); }
+      this.protectSavedStructuresFromNodes();
       this.questP = d.questP; this.questDone = d.questDone;
       this.visited = new Set(d.visited);
       this.gatheredWoodStone = this.questP[0];
@@ -2934,6 +3132,9 @@ export class Engine {
   monsterSpawnClear(x: number, y: number, type: MonType) {
     if (this.tileAt(x, y) === T_WATER || this.referenceStructureAt(x, y) || this.blockedByWall(x, y)) return false;
     const radius = this.monsterCfg(type).r;
+    // Do not materialize inside a trunk; subsequent movement can freely pass
+    // underneath a canopy instead of getting trapped in the forest.
+    if (this.nearbyNodes(x, y).some((n) => n.hp > 0 && (n.type === "tree" || n.type === "pine") && dist2(x, y, n.x, n.y) < (radius + 24) ** 2)) return false;
     return this.monsters.every((m) => m.hp <= 0 || dist2(x, y, m.x, m.y) >= Math.max(42, radius + m.r + 16) ** 2);
   }
 
@@ -3075,17 +3276,32 @@ export class Engine {
         }
         case "chase": {
           let a = Math.atan2(ty - m.y, tx - m.x);
-          // A creature that sees water or a fixed building ahead can take a
-          // short side-step instead of endlessly running into it. Fences remain
-          // valid siege targets and are not bypassed by this local steering.
-          const look = (angle: number) => {
-            const x = m.x + Math.cos(angle) * (m.r + 24), y = m.y + Math.sin(angle) * (m.r + 24);
-            return this.tileAt(x, y) !== T_WATER && !this.referenceStructureAt(x, y);
+          // Follow a consistent side of water/buildings until the direct line
+          // is clear. Brief side-steps alone oscillated against large walls.
+          // Trees deliberately do not obstruct monsters: only player-built
+          // defenses remain siege targets, never trees or canopies.
+          const look = (angle: number, far: boolean) => {
+            const steps = far ? [m.r + 20, m.r + 50, m.r + 80, m.r + 110] : [m.r + 24];
+            for (const distance of steps) {
+              const x = m.x + Math.cos(angle) * distance, y = m.y + Math.sin(angle) * distance;
+              if (this.tileAt(x, y) === T_WATER || this.referenceStructureAt(x, y)) return false;
+            }
+            return true;
           };
-          if (!look(a)) {
-            const side = (Math.floor(m.home.x + m.home.y) & 1) ? 1 : -1;
-            for (const turn of [side * 0.65, -side * 0.65, side * 1.2, -side * 1.2, side * 1.57, -side * 1.57]) {
-              if (look(a + turn)) { a += turn; break; }
+          if (this.referenceStructureAt(m.x, m.y)) m.detourSide = undefined;
+          else {
+            if (m.detourSide && look(a, true)) m.detourSide = undefined;
+            if (!m.detourSide && !look(a, false)) m.detourSide = (Math.floor(m.home.x + m.home.y) & 1) ? 1 : -1;
+            if (m.detourSide) {
+              const side = m.detourSide;
+              let found = false;
+              for (const direction of [side, -side] as const) {
+                for (const turn of [1.7, 2, 2.35, 1.35]) {
+                  if (!look(a + direction * turn, false)) continue;
+                  a += direction * turn; m.detourSide = direction as -1 | 1; found = true; break;
+                }
+                if (found) break;
+              }
             }
           }
           m.dir = a;
@@ -3754,19 +3970,16 @@ export class Engine {
     my += pad.my + this.touchMove.y;
     const ml = Math.hypot(mx, my);
     if (ml > 1) { mx /= ml; my /= ml; }
-    this.moving = ml > 0.1;
+    const jumping = this.rollT > 0;
+    this.moving = ml > 0.1 && !jumping;
     const wantRun = this.keys.has("shift") || !!pad.run || this.touchBtn.run;
     this.running_ = wantRun && this.moving && this.stamina > 2;
 
     const baseSpeed = 196;
-    let speed = this.running_ ? baseSpeed * 1.42 : baseSpeed;
-    if (this.rollT > 0) speed = 540;
-
-    if (this.rollT > 0) {
-      this.rollT -= dt;
-      const a = this.pdir;
-      this.pvx += (Math.cos(a) * speed - this.pvx) * Math.min(1, dt * 14);
-      this.pvy += (Math.sin(a) * speed - this.pvy) * Math.min(1, dt * 14);
+    const speed = this.running_ ? baseSpeed * 1.42 : baseSpeed;
+    if (jumping) {
+      this.rollT = this.rollT <= dt + 1e-9 ? 0 : this.rollT - dt;
+      this.pvx = 0; this.pvy = 0;
     } else if (this.moving) {
       this.pdir = Math.atan2(my, mx);
       this.aimTarget = null;
@@ -3791,14 +4004,30 @@ export class Engine {
     if (this.running_) this.stamina = Math.max(0, this.stamina - 13 * dt);
     else this.stamina = Math.min(100, this.stamina + (this.moving ? 8 : 17) * dt);
 
-    // collision with water / structures / big nodes
+    // Only the narrow trunk (not the canopy) is solid. Resolve each axis
+    // independently for smooth sliding, and let old saves escape an overlap.
+    const nearby = this.nearbyNodes(this.px, this.py);
     const tryMove = (nx: number, ny: number) => {
       if (this.tileAt(nx, ny) === T_WATER) return false;
-      // Allow older saves already inside a new footprint to walk out.
       if (this.referenceStructureAt(nx, ny) && !this.referenceStructureAt(this.px, this.py)) return false;
       if (this.baseChestContains(nx, ny) && !this.baseChestContains(this.px, this.py)) return false;
-      for (const s of this.structures) {
-        if ((s.type === "wall" || s.type === "barricade" || s.type === "house" || s.type === "tower" || s.type === "forge") && this.placedStructureContains(s, nx, ny) && !this.placedStructureContains(s, this.px, this.py)) return false;
+      for (const st of this.structures) {
+        if ((st.type === "wall" || st.type === "barricade" || st.type === "house" || st.type === "tower" || st.type === "forge") && this.placedStructureContains(st, nx, ny) && !this.placedStructureContains(st, this.px, this.py)) return false;
+      }
+      const dx = nx - this.px, dy = ny - this.py, step2 = dx * dx + dy * dy;
+      for (const node of nearby) {
+        if (node.hp <= 0 || node.type === "bush" || node.type === "berry") continue;
+        const radius = node.type === "tree" || node.type === "pine" ? 10 : 14;
+        const previous = dist2(this.px, this.py, node.x, node.y);
+        const next = dist2(nx, ny, node.x, node.y);
+        if (previous < radius * radius) {
+          if (next + 0.001 < previous) return false;
+          continue;
+        }
+        // Test the entire step rather than just its endpoint: fast running or
+        // a long frame cannot tunnel through the small collision circle.
+        const along = step2 ? clamp(((node.x - this.px) * dx + (node.y - this.py) * dy) / step2, 0, 1) : 0;
+        if (dist2(this.px + dx * along, this.py + dy * along, node.x, node.y) < radius * radius) return false;
       }
       return true;
     };
@@ -3806,25 +4035,6 @@ export class Engine {
     const ny = this.py + this.pvy * dt;
     if (tryMove(nx, this.py)) this.px = nx; else this.pvx = 0;
     if (tryMove(this.px, ny)) this.py = ny; else this.pvy = 0;
-    const dryX = this.px, dryY = this.py;
-    // soft push from trees/rocks in the nearby sectors only
-    for (const n of this.nearbyNodes(this.px, this.py)) {
-      if (n.hp <= 0) continue;
-      if (n.type === "bush" || n.type === "berry") continue;
-      const d2 = dist2(n.x, n.y, this.px, this.py);
-      const r = 18;
-      if (d2 < r * r && d2 > 0.01) {
-        const d = Math.sqrt(d2);
-        const push = (r - d) / d;
-        this.px += (this.px - n.x) * push * 0.6;
-        this.py += (this.py - n.y) * push * 0.6;
-      }
-    }
-    // Trees must not push the player through water, a building or the chest.
-    if (this.tileAt(this.px, this.py) === T_WATER ||
-        (this.referenceStructureAt(this.px, this.py) && !this.referenceStructureAt(dryX, dryY)) ||
-        (this.baseChestContains(this.px, this.py) && !this.baseChestContains(dryX, dryY)) ||
-        this.structures.some((s) => s.type === "barricade" && this.placedStructureContains(s, this.px, this.py) && !this.placedStructureContains(s, dryX, dryY))) { this.px = dryX; this.py = dryY; }
     this.px = clamp(this.px, TILE, WPX - TILE);
     this.py = clamp(this.py, TILE, HPX - TILE);
 
@@ -3955,7 +4165,7 @@ export class Engine {
         if (movingInto(this.px, this.py, 27)) return false;
         if (this.villagers.some((other) => other !== v && movingInto(other.x, other.y, 30))) return false;
         if (this.chests.some((chest) => movingInto(chest.x, chest.y, 28))) return false;
-        return !this.nearbyNodes(x, y).some((node) => node.hp > 0 && node.type !== "bush" && node.type !== "berry" && movingInto(node.x, node.y, 24));
+        return !this.nearbyNodes(x, y).some((node) => node.hp > 0 && node.type !== "bush" && node.type !== "berry" && movingInto(node.x, node.y, node.type === "tree" || node.type === "pine" ? 13 : 18));
       };
       const nx = oldX + v.vx * dt, ny = oldY + v.vy * dt;
       if (valid(nx, ny)) { v.x = nx; v.y = ny; }
@@ -4079,10 +4289,10 @@ export class Engine {
       } : null,
       escort: this.escort.active,
       controlHints: this.settings.controls === "touch"
-        ? ["Joystick mover", "⚔️ atacar", "✋ interagir", "🗺️ mapa"]
+        ? ["Joystick mover", "⚔️ atacar", "Pular", "✋ interagir", "🗺️ mapa"]
         : this.settings.controls === "gamepad"
-          ? ["Analógico mover", "A atacar", "X interagir", "Y construir", "LB/RB arma", "Start pausa"]
-          : ["WASD mover", "J atacar", "E interagir", "B construir", "M mapa", "1/2/3 arma", "Espaço rolar", "Shift correr", "F comer", "ESC pausa"],
+          ? ["Analógico mover", "A atacar", "B pular", "X interagir", "Y construir", "LB/RB arma", "Start pausa"]
+          : ["WASD mover", "J atacar", "E interagir", "B construir", "M mapa", "1/2/3 arma", "Espaço pular", "Shift correr", "F comer", "ESC pausa"],
     };
     this.opts.onUi({ type: "snapshot", snap });
   }
@@ -4133,7 +4343,7 @@ export class Engine {
     const camL = this.camX - 80, camR = this.camX + this.viewW + 80, camT = this.camY - 230, camB = this.camY + this.viewH + 80;
     const inView = (x: number, y: number) => x > camL && x < camR && y > camT && y < camB;
     // A tall roof can remain visible even when its anchor is below the screen.
-    const inViewBuilding = (x: number, y: number) => x > camL - 100 && x < camR + 100 && y > camT && y < camB + 340;
+    const inViewBuilding = (x: number, y: number) => x > camL - 150 && x < camR + 150 && y > camT && y < camB + 470;
 
     for (let by = Math.floor(camT / 128); by <= Math.floor(camB / 128); by++) {
       for (let bx = Math.floor(camL / 128); bx <= Math.floor(camR / 128); bx++) {
@@ -4218,16 +4428,23 @@ export class Engine {
         } });
       } else items.push({ y: prop.y, fn: () => drawSprite(c, prop.sprite, prop.x + ox, prop.y + oy) });
     }
-    const addHouse = (x: number, y: number, index: number, main: boolean) => {
+    const addHouse = (house: VillageHouse) => {
+      const { x, y, index, scale } = house;
       if (!inViewBuilding(x, y)) return;
-      const name = this.settings.craftPix ? houseArt(index) : null;
-      if (name) items.push({ y, fn: () => drawReferenceObject(c, name, x + ox, y + oy, main ? VILLAGE_HOUSE_SCALE : REFERENCE_SCALE[name]) });
-      else if (this.settings.craftPix && hasCraftVillage()) items.push({ y, fn: () => drawCraftVillageHouse(c, index, x + ox, y + oy) });
-      else items.push({ y, fn: () => drawSprite(c, "hut", x + ox, y + oy, { scale: main ? 8 : 7 }) });
+      items.push({ y, fn: () => {
+        const behind = (px: number, py: number) => Math.abs(px - x) < 110 * scale && py < y && py > y - 250 * scale;
+        const occluded = behind(this.px, this.py) || this.monsters.some((m) => m.hp > 0 && behind(m.x, m.y));
+        const name = this.settings.craftPix ? houseArt(index) : null;
+        if (occluded) { c.save(); c.globalAlpha *= 0.45; }
+        if (name) drawReferenceObject(c, name, x + ox, y + oy, scale);
+        else if (this.settings.craftPix && hasCraftVillage()) drawCraftVillageHouse(c, index, x + ox, y + oy, scale / 1.5);
+        else drawSprite(c, "hut", x + ox, y + oy, { scale: scale === VILLAGE_HOUSE_SCALE ? 12 : 9 });
+        if (occluded) c.restore();
+      } });
     };
-    for (const [index, [hx, hy]] of VILLAGE_HOUSES.entries()) addHouse(VILLAGE.x + hx, VILLAGE.y + hy, index, true);
-    for (const [index, hamlet] of this.hamlets.entries()) {
-      for (const [houseIndex, house] of hamletHouses(hamlet).entries()) addHouse(house.x, house.y, index + houseIndex + 1, false);
+    for (const house of this.villageHouses) addHouse(house);
+    for (const hamlet of this.hamlets) {
+      for (const house of hamlet.houses) addHouse(house);
       if (inView(hamlet.x, hamlet.y + 10)) items.push({ y: hamlet.y + 10, fn: () => drawSign(c, hamlet.x + ox, hamlet.y + oy, "VILA", "#ffe0a3") });
     }
     if (inView(BASE.x, BASE.y)) items.push({ y: BASE.y, fn: () => drawFlag(c, BASE.x + ox, BASE.y + oy, tnow) });
@@ -4455,8 +4672,11 @@ export class Engine {
     if (n.type === "tree" || n.type === "pine") {
       const name = n.skin ?? (n.type === "tree" ? (dark ? "tree_dark" : "tree") : dark ? "pine_dark" : "pine");
       this.drawShadow(x, y + 4, 23);
-      const behind = Math.abs(this.px - n.x) < 42 && this.py < n.y && this.py > n.y - 110;
-      const options = { flip: (Math.floor(n.x) & 1) === 1, alpha: behind ? 0.45 : 1 };
+      const behind = (px: number, py: number) => Math.abs(px - n.x) < 54 && py < n.y + 4 && py > n.y - 135;
+      // A hidden enemy can look stuck even when it is moving. Fade a canopy
+      // for both the player and living monsters while they pass behind it.
+      const occluded = behind(this.px, this.py) || this.monsters.some((m) => m.hp > 0 && behind(m.x, m.y));
+      const options = { flip: (Math.floor(n.x) & 1) === 1, alpha: occluded ? 0.45 : 1 };
       const breeze = this.settings.treeMotion ? Math.sin(tnow * 0.9 + n.x * 0.01 + n.y * 0.005) * 0.035 : 0;
       const bend = breeze + wob * 0.012;
       // Only replace plants with a matching supplied design; preserve snowy,
@@ -4885,6 +5105,7 @@ export class Engine {
     }
     c.save();
     c.translate(x, y + 4);
+    c.scale(MONSTER_ART_SCALE, MONSTER_ART_SCALE);
     if (!imported) {
       if (windup) c.scale(1.18, 0.84);
       else if (m.state === "attack") c.scale(0.92, 1.15);
@@ -4923,7 +5144,7 @@ export class Engine {
     }
     if (m.hp < m.maxHp || m.rare) {
       const sz = spriteSize(sprite);
-      const top = y - (imported ? 102 : preview ? 92 : sz.h) - 8 + bob;
+      const top = y - (imported ? 102 : preview ? 92 : sz.h) * MONSTER_ART_SCALE - 8 + bob * MONSTER_ART_SCALE;
       if (m.rare) this.drawName("RARO ✦", x, top - 5, "#ffe59b");
       if (m.hp < m.maxHp) {
         c.fillStyle = "rgba(0,0,0,0.55)"; c.fillRect(x - 16, top, 32, 4);

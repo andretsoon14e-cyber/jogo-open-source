@@ -35,12 +35,12 @@ export interface CreatureEntry {
 }
 export const BESTIARY: CreatureEntry[] = [
   { sprite: "goblin", name: "Saqueador Verde", habitat: "Trilhas e acampamentos", hp: 14, damage: 10, speed: "Muito rápido", attack: "Estocada em matilha", tip: "Não deixe que cerquem você. Um golpe de espada interrompe a estocada.", category: "Bandos" },
-  { sprite: "orc", name: "Orc Guerreiro", habitat: "Florestas e cavernas", hp: 90, damage: 20, speed: "Médio", attack: "Golpe de espada", tip: "Observe a preparação do ataque e role para o lado antes de contra-atacar.", category: "Povos da ilha" },
+  { sprite: "orc", name: "Orc Guerreiro", habitat: "Florestas e cavernas", hp: 90, damage: 20, speed: "Médio", attack: "Golpe de espada", tip: "Observe a preparação do ataque e salte no momento certo antes de contra-atacar.", category: "Povos da ilha" },
   { sprite: "zombie", name: "Zumbi Perdido", habitat: "Criptas e necrópoles", hp: 50, damage: 12, speed: "Lento", attack: "Golpe cambaleante", tip: "Afaste-se enquanto ele prepara o golpe e ataque pelos lados.", category: "Mortos-vivos" },
   { sprite: "skeleton", name: "Esqueleto Guerreiro", habitat: "Criptas e ruínas", hp: 55, damage: 15, speed: "Médio", attack: "Golpe de lâmina", tip: "Observe a preparação e use a distância da espada.", category: "Mortos-vivos" },
   { sprite: "vampire", name: "Vampiro Noturno", habitat: "Necrópole e floresta sombria", hp: 92, damage: 20, speed: "Rápido", attack: "Investida", tip: "Ele se aproxima depressa; guarde energia para desviar.", category: "Mortos-vivos" },
   { sprite: "lich", name: "Lich da Necrópole", habitat: "Necrópole e criptas", hp: 105, damage: 18, speed: "Lento", attack: "Orbe necromântico", tip: "Aproxime-se entre os disparos e use obstáculos como cobertura.", category: "Mortos-vivos" },
-  { sprite: "demonbat", name: "Morcego Infernal", habitat: "Torre dos Ecos e noites", hp: 19, damage: 9, speed: "Veloz", attack: "Mergulho rasante", tip: "Observe as asas. Role de lado quando o mergulho começar.", category: "Voadores" },
+  { sprite: "demonbat", name: "Morcego Infernal", habitat: "Torre dos Ecos e noites", hp: 19, damage: 9, speed: "Veloz", attack: "Mergulho rasante", tip: "Observe as asas. Salte quando o mergulho começar.", category: "Voadores" },
   { sprite: "iceslime", name: "Gota Glacial", habitat: "Lagos congelados", hp: 36, damage: 12, speed: "Lento", attack: "Salto gelado", tip: "O corpo comprime antes de saltar. Ataque durante a recuperação.", category: "Elementais" },
   { sprite: "ghost", name: "Alma Errante", habitat: "Floresta Sombria", hp: 30, damage: 10, speed: "Médio", attack: "Toque espectral", tip: "Fique perto de uma fogueira para conseguir ver a aproximação.", category: "Espíritos" },
   { sprite: "wraith", name: "Vigia do Crepúsculo", habitat: "Ruínas e escuridão", hp: 52, damage: 16, speed: "Rápido", attack: "Investida das sombras", tip: "Os olhos brilham antes de atacar. Não gaste toda a energia correndo.", category: "Espíritos" },
@@ -48,8 +48,8 @@ export const BESTIARY: CreatureEntry[] = [
   { sprite: "treant", name: "Raiz Furiosa", habitat: "Bosques ancestrais", hp: 135, damage: 26, speed: "Lento", attack: "Golpe de raízes", tip: "É forte contra construções. Repare a cerca enquanto Rian distrai o monstro.", category: "Colossos" },
   { sprite: "golem", name: "Sentinela de Pedra", habitat: "Encostas do norte", hp: 135, damage: 26, speed: "Lento", attack: "Punho rochoso", tip: "A preparação é longa. Aproveite para acertar e recuar.", category: "Colossos" },
   { sprite: "crystalgolem", name: "Colosso de Cristal", habitat: "Círculo dos Ancestrais", hp: 300, damage: 42, speed: "Muito lento", attack: "Ruptura glacial", tip: "Leve espada melhorada, comida e um companheiro. Não enfrente preso num canto.", category: "Colossos" },
-  { sprite: "emberdemon", name: "Arauto das Brasas", habitat: "Cripta de Marfim · noite", hp: 105, damage: 24, speed: "Rápido", attack: "Garras em chamas", tip: "Pune quem corre em linha reta. Alterne rolagens e ataques curtos.", category: "Demônios" },
-  { sprite: "lizardman", name: "Guerreiro Escamado", habitat: "Templo Escamado e margens dos rios", hp: 72, damage: 18, speed: "Rápido", attack: "Lança e golpe de cauda", tip: "Ele bloqueia pela frente. Role para o lado e ataque quando a lança passar.", category: "Povos da ilha" },
+  { sprite: "emberdemon", name: "Arauto das Brasas", habitat: "Cripta de Marfim · noite", hp: 105, damage: 24, speed: "Rápido", attack: "Garras em chamas", tip: "Pune quem corre em linha reta. Alterne saltos e ataques curtos.", category: "Demônios" },
+  { sprite: "lizardman", name: "Guerreiro Escamado", habitat: "Templo Escamado e margens dos rios", hp: 72, damage: 18, speed: "Rápido", attack: "Lança e golpe de cauda", tip: "Ele bloqueia pela frente. Salte para evitar o golpe e ataque quando a lança passar.", category: "Povos da ilha" },
 ];
 
 export type EquipmentKey = "harness" | "coat" | "charm";

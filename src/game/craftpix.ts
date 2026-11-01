@@ -121,10 +121,10 @@ export function hasCraftTower(): boolean { return towerReady; }
 
 /** Fallback buildings from the optional village and tower packs. The original
  * examples remain separate from the player's reference-house variants. */
-export function drawCraftVillageHouse(ctx: CanvasRenderingContext2D, index: number, x: number, y: number): boolean {
+export function drawCraftVillageHouse(ctx: CanvasRenderingContext2D, index: number, x: number, y: number, scale = 1): boolean {
   if (!buildings || !villageReady) return false;
   const cell = ((index % 4) + 4) % 4;
-  ctx.drawImage(buildings, cell * 160, 0, 160, 160, x - 160, y - 320, 320, 320);
+  ctx.drawImage(buildings, cell * 160, 0, 160, 160, x - 160 * scale, y - 320 * scale, 320 * scale, 320 * scale);
   return true;
 }
 export function drawCraftTower(ctx: CanvasRenderingContext2D, x: number, y: number): boolean {

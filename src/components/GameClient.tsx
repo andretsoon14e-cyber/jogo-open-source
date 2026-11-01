@@ -653,7 +653,7 @@ export default function GameClient() {
             <TouchBtn icon="sword" label="Arma" small onDown={() => engineRef.current?.cycleTool(1)} />
             <TouchBtn icon="bag" label="Construir" small onDown={() => engineRef.current?.openPanel("build")} />
             <TouchBtn icon="food" label="Comer" small onDown={() => engineRef.current?.touchAction("eat")} />
-            <TouchBtn icon="dash" label="Rolar" onDown={() => engineRef.current?.touchAction("roll")} />
+            <TouchBtn icon="dash" label="Pular" onDown={() => engineRef.current?.touchAction("roll")} />
             <TouchBtn icon="hand" label="Usar" onDown={() => engineRef.current?.touchAction("interact")} />
             <TouchBtn icon="run" label="Correr" toggle active={runOn} onDown={() => { const v = !runOn; setRunOn(v); engineRef.current?.setTouchRun(v); }} />
             <TouchBtn icon="sword" label="Atacar" big onDown={() => engineRef.current?.touchAction("attack")} />

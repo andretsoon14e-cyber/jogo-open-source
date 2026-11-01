@@ -89,13 +89,15 @@ Sem as imagens ou com a opção **Artes CraftPix e referências** desativada, as
 
 ## Vilarejos, criaturas e salto
 
-A vila principal ganhou casas maiores e mais afastadas. Há quatro vilarejos menores ligados às trilhas: **Aldeia dos Pinheiros**, **Vila das Campinas**, **Vila do Riacho** e **Vila da Fronteira**. Cada um tem duas casas sólidas e moradores que circulam nas proximidades. Os bosques de outono e cerejeiras dão variedade a outras regiões, e pedras e depósitos foram espaçados sem remover recursos nem alterar sua ordem nos saves. Se uma construção de um save antigo ocupar o espaço de um vilarejo novo, esse vilarejo não aparece naquele save; a construção permanece no lugar.
+As casas da vila principal foram ampliadas e afastadas; as casas dos quatro vilarejos menores também cresceram. Elas, a capela e a feira são posicionadas em terra e fora da área visível das trilhas, com espaço entre as construções e acesso à rede de caminhos. Copas, arbustos, pedras e depósitos também são afastados dos caminhos e das fachadas; os baús de exploração ficam ao lado das trilhas, enquanto o baú da base conserva sua posição para proteger saves. O traçado é determinístico e independente das artes opcionais. Os bosques de outono e cerejeiras continuam espalhados por outras regiões.
+
+Os recursos são reposicionados sem serem removidos ou reordenados, mantendo vida e tocos dos saves. As construções feitas pelo jogador não são movidas nem ampliadas: se um save antigo conflitar com uma nova casa ou prédio fixo da vila, a construção salva tem prioridade; um vilarejo menor conflitante deixa de aparecer naquele save. Os quatro vilarejos são **Aldeia dos Pinheiros**, **Vila das Campinas**, **Vila do Riacho** e **Vila da Fronteira**, com moradores nas proximidades.
 
 As imagens opcionais `88` a `91` acrescentam quatro visitantes identificados, com uma pequena fala. As prévias mostram uma única pose frontal: por isso eles ficam parados, sem direção ou animação inventada. Moradores comuns continuam desarmados e com suas caminhadas; os especialistas recrutáveis continuam dependendo dos resgates e do treino. Caso uma imagem esteja ausente ou as artes estejam desativadas, o visitante usa o visual simples anterior.
 
 A imagem `92` permite usar prévias recortadas de goblins, orcs, fantasmas, homens-lagarto, zumbis, demônios, vampiros, liches, esqueletos e morcegos, também no bestiário. Elas são poses estáticas que o jogo pode deslocar, espelhar e destacar durante o combate, não sprites direcionais animados. Orcs, zumbis, esqueletos, vampiros e liches têm alternativas locais sem essas artes; as novas famílias surgem nos biomas apropriados, com estatísticas e ataques próprios. O lich ataca à distância. O registro de criaturas já avistadas ou derrotadas continua válido. Os recortes das prévias são aproximações e podem ter imperfeições.
 
-A esquiva agora mostra um arco de salto com sombra no chão e leve inclinação, sem girar o personagem inteiro. O movimento, a invulnerabilidade, o gasto de energia e a recarga continuam iguais.
+O salto acontece no lugar, mesmo com uma direção pressionada, e a caminhada volta ao pousar. O arco, a sombra, os 15 pontos de energia, a recarga e a breve invulnerabilidade foram mantidos. Use Espaço, B no controle ou **Pular** na tela de toque. Os monstros aparecem 25% menores em todas as alternativas de arte, sem alteração de vida, dano, velocidade ou alcance.
 
 ## Arena, base e movimentação
 
@@ -103,7 +105,7 @@ As imagens `85` e `86` permitem importar os componentes da **Arena de treino**: 
 
 Novas partidas começam com um perímetro menor e ganham anéis maiores pelas expansões. Saves anteriores mantêm a barraca, o raio e os encaixes do primeiro anel originais. Depois da escolta, Rian fica na base por padrão; em **Pessoas → Rian**, escolha **Acompanhar** para chamá-lo ou **Ficar na base** para dispensá-lo.
 
-Árvores são espaçadas sem mudar seus índices nos saves. Quando cortadas, deixam um toco que pode ser quebrado com o machado para render mais três madeiras. Moradores caminham entre pontos da vila; animais alternam deslocamento, pausas e fuga. Monstros antecipam ataques e tentam contornar água e edifícios próximos, mas ainda não utilizam navegação completa pelo mapa. O avião e a explosão da introdução são desenhados no jogo, sem copiar a imagem de avião com marca d'água.
+Árvores têm distribuição irregular e colisão menor, concentrada no tronco; é possível deslizar ao redor e sair se um save antigo começar dentro dele. Copas ficam translúcidas quando escondem o jogador ou monstros. Quando cortadas, deixam um toco que pode ser quebrado com o machado para render mais três madeiras. Moradores caminham entre pontos da vila; animais alternam deslocamento, pausas e fuga. Monstros passam pelas árvores e persistem no desvio de água e edifícios, mas ainda usam navegação local, não um percurso completo pelo mapa. O avião e a explosão da introdução são desenhados no jogo, sem copiar a imagem de avião com marca d'água.
 
 ## Resgates, treinamento e profissões
 

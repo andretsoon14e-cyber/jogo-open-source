@@ -135,6 +135,13 @@ try {
       Math.random = random;
       game.spawnMonster(game.px + 25, game.py, "orc");
       const orc = game.monsters.at(-1);
+      let orcScale = null;
+      ctx.drawImage = (...args) => {
+        if (args[0] instanceof HTMLImageElement && args[0].src.includes("/orc-")) orcScale = Math.abs(ctx.getTransform().a);
+        originalDrawImage(...args);
+      };
+      orc.dir = 0; orc.state = "idle"; game.drawMonster(orc, -game.camX, -game.camY, 2);
+      ctx.drawImage = originalDrawImage;
       for (const direction of [0, Math.PI, -Math.PI / 2, Math.PI / 2, Math.atan2(-1, -1)]) {
         orc.dir = direction; orc.state = "attack"; orc.t = 0.08; orc.flash = 0.1;
         game.drawMonster(orc, -game.camX, -game.camY, 2);
@@ -154,7 +161,7 @@ try {
         sameAnchor: plantDraws[0][1] - plantDraws[1][1] === (plantDraws[1][0].width - plantDraws[0][0].width) / 2,
       } : null;
       game.destroy();
-      return { status, avatarChanged: importedAvatar !== fallbackAvatar, rianDifferent, heroDraws, attackOverlays, drewPlant, buildings, kills, plantCache, spawningWithArt, spawningWithoutArt, damageApplied };
+      return { status, avatarChanged: importedAvatar !== fallbackAvatar, rianDifferent, heroDraws, attackOverlays, drewPlant, buildings, kills, orcScale, plantCache, spawningWithArt, spawningWithoutArt, damageApplied };
     });
     const expected = scenario === "missing" ? { hero: false, orcs: false, plants: false }
       : scenario === "broken-hero" ? { hero: false, orcs: true, plants: true }
@@ -175,6 +182,7 @@ try {
     assert.equal(result.drewPlant, expected.plants, `${scenario}: fallback das plantas`);
     assert.deepEqual(result.buildings, { house: scenario !== "missing", tower: scenario !== "missing", village: scenario !== "missing", readyTower: scenario !== "missing" }, `${scenario}: prédios opcionais`);
     assert.equal(result.kills, 1, `${scenario}: registro e abate do orc`);
+    assert.equal(result.orcScale, expected.orcs ? 0.75 : null, `${scenario}: orc opcional também é reduzido`);
     assert.equal(result.damageApplied, true, `${scenario}: o ataque do orc deve causar dano`);
     assert.equal(result.spawningWithArt, "orc", `${scenario}: surgimento com arte`);
     assert.equal(result.spawningWithoutArt, "orc", `${scenario}: o fallback também permite orcs sem arte`);

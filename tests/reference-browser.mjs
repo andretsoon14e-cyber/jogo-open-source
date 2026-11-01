@@ -43,7 +43,7 @@ try {
       const canvas = document.querySelector("canvas"), ctx = canvas.getContext("2d");
       const calls = [];
       const original = ctx.drawImage.bind(ctx);
-      ctx.drawImage = (...args) => { if (args[0] instanceof HTMLImageElement && args[0].src.includes("/referencias/")) calls.push({ src: new URL(args[0].src).pathname, args: args.slice(1) }); original(...args); };
+      ctx.drawImage = (...args) => { if (args[0] instanceof HTMLImageElement && args[0].src.includes("/referencias/")) calls.push({ src: new URL(args[0].src).pathname, args: args.slice(1), scaleX: Math.abs(ctx.getTransform().a) }); original(...args); };
       const newPreviews = {
         figure0: api.drawReferenceFigure(ctx, 0, 60, 100), figure1: api.drawReferenceFigure(ctx, 1, 60, 100),
         figure3: api.drawReferenceFigure(ctx, 3, 60, 100), figure4: api.drawReferenceFigure(ctx, 4, 60, 100),
@@ -105,12 +105,19 @@ try {
       const figureDraws = residentSources.filter((name) => name === "figures.png").length;
       game.monsters = []; game.spawnMonster(game.px + 100, game.py, "zombie");
       calls.length = 0; game.drawMonster(game.monsters[0], 0, 0, 0);
-      const monsterDraw = calls.some((call) => call.src.endsWith("/creatures.png"));
+      const creatureCall = calls.find((call) => call.src.endsWith("/creatures.png"));
+      const monsterDraw = !!creatureCall, monsterScale = creatureCall?.scaleX ?? null;
       const thumbChanged = api.getSpriteUrl("zombie", true) !== api.getSpriteUrl("zombie", false);
       game.applySettings({ ...game.settings, craftPix: false });
       calls.length = 0; game.drawVillager(game.villagers.find((v) => v.figure === 0), 0, 0, 0); game.drawMonster(game.monsters[0], 0, 0, 0);
       const disabledNewDraw = calls.some((call) => /\/(?:figures|creatures)\.png$/.test(call.src));
       game.applySettings({ ...game.settings, craftPix: true });
+      // Actual world rendering uses the enlarged reference, not just a stored scale.
+      const mainHouse = game.villageHouses[0];
+      game.px = mainHouse.x; game.py = mainHouse.y + 170; game.centerCamera(); game.monsters = [];
+      calls.length = 0; game.render();
+      const houseCall = calls.find((call) => call.src.endsWith("/house.png"));
+      const worldHouseSize = houseCall ? houseCall.args.slice(-2) : null;
       game.tileAt = () => 2;
       game.structures = []; game.monsters = [];
       game.questP[1] = 19;
@@ -137,7 +144,7 @@ try {
       completedOldQuest.destroy();
       localStorage.removeItem(key);
 
-      const fight = make(); fight.skipCutscene(); fight.escort.active = false; fight.tileAt = () => 2; fight.structures = []; fight.monsters = []; fight.projectiles = [];
+      const fight = make(); fight.skipCutscene(); fight.escort.active = false; fight.tileAt = () => 2; fight.structures = []; fight.monsters = []; fight.projectiles = []; fight.animals = [];
       fight.px = 1100; fight.py = 1100; fight.hp = 100; fight.invulnT = 0;
       fight.allies = []; fight.specialists.archer.rescued = true; fight.hireSpecialist("archer");
       const archer = fight.allies[0]; archer.x = 1000; archer.y = 1100;
@@ -273,7 +280,7 @@ try {
       const renderedArcher = calls.some((call) => call.src.endsWith("/archer.png"));
       fight.destroy();
       ctx.drawImage = original;
-      return { status, newPreviews, figureDraws, monsterDraw, thumbChanged, disabledNewDraw, drewArcher, objects, icon, newAssets, expansion, bridgePaint, defenseSources, houseSources, disabledDefenseSources, regional, residentSources, paperdollBow, calls: directCalls, frame, recruited, questDoesNotHire, oldCount, oldLevel, upgradedSave, premature, arrow, combat, closed, open, noTunnel, hostileDamage, noTarget, monsterAtBuilding, buildingShots, placedFootprints, shadowCalls, closedChestArt, openChestArt, castleWall, closedCastleGate, openCastleGate, towerFootprint, castleTower, footprint, placement, front, escaped, solidCamp, firstRingFree, campCollisions, disabledFootprint, escort, scene, disabled, renderedArcher };
+      return { status, newPreviews, figureDraws, monsterDraw, monsterScale, worldHouseSize, thumbChanged, disabledNewDraw, drewArcher, objects, icon, newAssets, expansion, bridgePaint, defenseSources, houseSources, disabledDefenseSources, regional, residentSources, paperdollBow, calls: directCalls, frame, recruited, questDoesNotHire, oldCount, oldLevel, upgradedSave, premature, arrow, combat, closed, open, noTunnel, hostileDamage, noTarget, monsterAtBuilding, buildingShots, placedFootprints, shadowCalls, closedChestArt, openChestArt, castleWall, closedCastleGate, openCastleGate, towerFootprint, castleTower, footprint, placement, front, escaped, solidCamp, firstRingFree, campCollisions, disabledFootprint, escort, scene, disabled, renderedArcher };
     });
     const assets = scenario !== "missing", archer = assets && scenario !== "broken-archer", chapel = assets && scenario !== "broken-object";
     const figures = assets && scenario !== "broken-figures", creatures = assets && scenario !== "broken-creatures";
@@ -281,6 +288,8 @@ try {
       creature: creatures, drawn: creatures, white: creatures, red: creatures, unknown: false, thumb: creatures, cached: true }, `${scenario}: figuras e criaturas opcionais`);
     assert.equal(result.figureDraws, figures ? scenario === "partial-figures" ? 2 : 4 : 0, `${scenario}: visitantes usam as células disponíveis`);
     assert.equal(result.monsterDraw, creatures, `${scenario}: criatura renderizada no mundo`);
+    assert.equal(result.monsterScale, creatures ? 0.75 : null, `${scenario}: escala proporcional da criatura`);
+    assert.deepEqual(result.worldHouseSize, assets ? [396, 450] : null, `${scenario}: casa ampliada no mundo`);
     assert.equal(result.thumbChanged, creatures, `${scenario}: miniatura do bestiário`);
     assert.equal(result.disabledNewDraw, false, `${scenario}: arte desativada usa fallback`);
     assert.equal(result.status.archer, archer, scenario);

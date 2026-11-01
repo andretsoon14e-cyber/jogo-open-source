@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { chromium } from "@playwright/test";
+import { build } from "esbuild";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import sharp from "sharp";
 
+const bundle = join(tmpdir(), "ultima-luz-ui-layout-test.js");
+await build({ entryPoints: ["tests/browser-entry.ts"], bundle: true, platform: "browser", format: "iife", globalName: "LayoutTest", outfile: bundle, tsconfig: "tsconfig.json" });
 const base = process.env.APP_URL ?? "http://127.0.0.1:3000";
 const scene = await sharp({ create: { width: 960, height: 517, channels: 4, background: "#4a6f55" } }).png().toBuffer();
 const chapelScene = await sharp({ create: { width: 960, height: 640, channels: 4, background: "#4a6f55" } }).png().toBuffer();
@@ -41,9 +46,17 @@ const errors = [];
 try {
   const context = await contextFor({ width: 1280, height: 800 });
   const page = await context.newPage(); page.on("pageerror", (error) => errors.push(error.message));
+  // Their dry, road-free positions are generated from the seed, not hardcoded.
+  await page.goto(base); await page.addScriptTag({ path: bundle });
+  const village = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    const game = new window.LayoutTest.Engine({ canvas, mode: "single", difficulty: "dificil", playerName: "Teste", seed: 77, continueSave: false, onUi() {}, settings: { craftPix: false } });
+    const positions = Object.fromEntries(game.villageBuildings.map((b) => [b.name, { x: b.x, y: b.y }]));
+    game.destroy(); return positions;
+  });
   const locations = [
-    ["Mercado", 58 * 32 + 220, 122 * 32 + 35 + 45],
-    ["Capela", 58 * 32 + 145, 122 * 32 - 200 + 45],
+    ["Mercado", village.market.x, village.market.y + 45],
+    ["Capela", village.chapel.x, village.chapel.y + 45],
     ["Acampamento", 104 * 32 - 130, 88 * 32 - 120 + 45],
     ["Esgoto", 98 * 32 + 160, 30 * 32 + 195 + 45],
   ];
@@ -116,6 +129,7 @@ try {
   assert.equal(await tiers.getByRole("button", { name: "Nv. 2" }).getAttribute("aria-pressed"), "true");
   assert.match(await workshop.locator(".recipe-art img").getAttribute("src"), /^data:image\/png/);
   await workshop.getByTitle("Barricada").click();
+  await page.waitForFunction(() => /barricade_2\.png$/.test(document.querySelector(".recipe-art img")?.getAttribute("src") ?? ""));
   assert.match(await workshop.locator(".recipe-art img").getAttribute("src"), /barricade_2\.png$/);
   assert.equal((await page.evaluate(() => JSON.parse(localStorage.getItem("ilha-save-dificil-single")))).defenseTier, 2);
   await workshop.getByRole("button", { name: "Pessoas" }).click();
@@ -198,6 +212,7 @@ try {
   assert.ok(tabGeometry[3].top > tabGeometry[0].top, "abas devem ocupar duas linhas legíveis");
   assert.equal(await phoneWorkshop.evaluate((el) => el.scrollWidth > el.clientWidth + 2), false, "seletor de defesa transborda no celular");
   await phoneWorkshop.getByTitle("Barricada").click();
+  await phone.waitForFunction(() => /barricade_2\.png$/.test(document.querySelector(".recipe-art img")?.getAttribute("src") ?? ""));
   assert.match(await phoneWorkshop.locator(".recipe-art img").getAttribute("src"), /barricade_2\.png$/);
   await phoneWorkshop.getByRole("button", { name: "Pessoas" }).click();
   const phonePeople = phone.getByRole("dialog", { name: "Pessoas & tarefas" }); await phonePeople.waitFor();
