@@ -25,7 +25,7 @@ def _normalize_step(step: str) -> str:
          category="automacao",
          description="Cria uma rotina a partir de uma frase falada",
          examples=["Quando eu disser modo estudo, abra o navegador e abra a pasta de estudos"],
-         priority=5)
+         priority=8)
 def create_routine(ctx: Context):
     text = ctx.text
     match = re.search(r"(?i)(?:quando eu (?:disser|falar|diga)|se eu (?:disser|falar)|ao (?:dizer|falar))"

@@ -250,6 +250,32 @@
                 <input type="checkbox" data-setting="voice.tts.enabled" />
               </label>
               <label class="field">
+                <span>Motor de voz</span>
+                <select data-setting="voice.tts.engine">
+                  <option value="auto">automático (melhor disponível)</option>
+                  <option value="piper">Piper (neural local)</option>
+                  <option value="pyttsx3">vozes do Windows</option>
+                  <option value="browser">vozes do navegador</option>
+                  <option value="espeak">espeak (robótica)</option>
+                  <option value="disabled">desligada</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>Timbre no navegador</span>
+                <select id="tts-browser-voice"></select>
+              </label>
+              <label class="field range">
+                <span>Velocidade da fala <b id="lbl-tts-rate">1.00×</b></span>
+                <input type="range" min="0.7" max="1.5" step="0.05" data-setting="voice.tts.rate"
+                       data-decimal="1" />
+              </label>
+              <label class="field range">
+                <span>Tom da voz <b id="lbl-tts-pitch">0.95</b></span>
+                <input type="range" min="0.6" max="1.4" step="0.05" data-setting="voice.tts.pitch"
+                       data-decimal="1" />
+              </label>
+              <button class="ghost" id="btn-test-voice">testar voz</button>
+              <label class="field">
                 <span>Confirmação obrigatória a partir do nível</span>
                 <select data-setting="security.confirm_level">
                   <option value="1">1 — ações simples</option>

@@ -209,3 +209,123 @@ def test_texto_fora_do_escopo_nao_cria_nota(assistant):
     assert response.intent == "unknown"
     assert "ajuda" in response.reply
     assert assistant.db.one("SELECT COUNT(*) AS c FROM notes")["c"] == before
+
+
+# ----------------------------------------------------- internet e terminal (v1.1)
+def test_pesquisa_na_internet(assistant, monkeypatch):
+    from jarvis.system import web
+
+    resultados = [web.Result("Python — Wikipédia", "https://pt.wikipedia.org/wiki/Python",
+                             "Linguagem de alto nível.")]
+    monkeypatch.setattr(web, "search", lambda *a, **k: resultados)
+    response = run(assistant.handle_text("pesquisa na internet sobre python", speak=False))
+    assert response.intent == "web.search"
+    assert "Python — Wikipédia" in response.reply
+    assert assistant.last_search["results"][0]["url"].startswith("https://pt.wikipedia.org")
+    assert any(e["action"] == "web.search" for e in assistant.audit.recent(10))
+
+
+def test_pesquisa_com_internet_desligada(assistant):
+    assistant.config.set("web.enabled", False)
+    response = run(assistant.handle_text("pesquisa na internet sobre python", speak=False))
+    assert response.error is True
+    assert "desativado" in response.reply.lower()
+
+
+def test_pergunta_factual(assistant, monkeypatch):
+    from jarvis.system import web
+
+    monkeypatch.setattr(web, "answer", lambda *a, **k: (
+        "Fotossíntese: processo usado por plantas para converter luz em energia química.",
+        [web.Result("Fotossíntese", "https://pt.wikipedia.org/wiki/Fotossintese", "…")],
+    ))
+    response = run(assistant.handle_text("o que é fotossíntese", speak=False))
+    assert response.intent == "web.define"
+    assert "energia química" in response.reply
+
+
+def test_abrir_primeiro_resultado(assistant, monkeypatch):
+    from jarvis.commands import web_cmds
+
+    aberto = {}
+    monkeypatch.setattr(web_cmds.web, "open_url", lambda url: aberto.update(url=url))
+    assistant.last_search = {"query": "python", "results": [
+        {"title": "Python", "url": "https://python.org", "snippet": "site oficial"}]}
+    response = run(assistant.handle_text("abre o primeiro resultado", speak=False))
+    assert response.intent == "web.open_result"
+    assert aberto["url"] == "https://python.org"
+
+
+def test_previsao_do_tempo_com_cidade(assistant, monkeypatch):
+    from jarvis.system import web
+
+    monkeypatch.setattr(web, "weather", lambda city, config: {
+        "city": city, "temperature": 21.5, "description": "chuva leve", "feels_like": 22.0,
+        "humidity": 80, "max": 25.0, "min": 15.0, "rain_chance": 70,
+        "tomorrow_description": "encoberto", "wind": 8,
+    })
+    assistant.config.set("web.location", "Curitiba")
+    response = run(assistant.handle_text("como está o tempo hoje", speak=False))
+    assert response.intent == "conversation.weather"
+    assert "Curitiba" in response.reply and "21.5" in response.reply
+
+
+def test_definir_cidade(assistant):
+    response = run(assistant.handle_text("minha cidade é Curitiba", speak=False))
+    assert response.intent == "settings.location"
+    assert assistant.config.get("web.location") == "Curitiba"
+
+
+def test_comando_de_terminal_exige_confirmacao(assistant):
+    response = run(assistant.handle_text("executa o comando echo jarvis", speak=False))
+    assert response.intent == "system.run"
+    assert response.pending is not None and response.pending["level"] == 3
+    assert "echo jarvis" in response.pending["description"]
+    concluido = run(assistant.confirm(response.pending["id"], True))
+    assert "jarvis" in concluido.reply.lower()
+    assert any(e["action"] == "system.run" for e in assistant.audit.recent(10))
+
+
+def test_terminal_bloqueado_por_configuracao(assistant):
+    assistant.config.set("security.allow_shell", False)
+    response = run(assistant.handle_text("executa o comando echo teste", speak=False))
+    assert response.error is True
+    assert "desativada" in response.reply.lower()
+
+
+def test_rede_local(assistant):
+    response = run(assistant.handle_text("qual é o meu ip", speak=False))
+    assert response.intent == "system.network"
+    assert "IP local" in response.reply
+
+
+# ------------------------------------------------ voz natural e fluidez (v1.1)
+def test_respostas_nao_expoem_meta_discurso(assistant):
+    """O assistente fala como assistente: nada de “regra do projeto”, “nossa conversa”."""
+    proibidos = ("regra do projeto", "nossa conversa", "diretriz do projeto",
+                 "protocolo do projeto", "como combinamos no desenvolvimento",
+                 "esta conversa de desenvolvimento", "senhor me desenvolveu")
+    frases = ["bom dia", "quem é você", "como você está", "o que você pode fazer",
+              "como está o tempo hoje", "quais são as configurações de segurança",
+              "explique como funciona a memória", "quero um modelo local",
+              "o que você sabe sobre mim", "qual é a capital da mongólia"]
+    for frase in frases:
+        resposta = run(assistant.handle_text(frase, speak=False))
+        texto = resposta.reply.lower()
+        for termo in proibidos:
+            assert termo not in texto, f"{frase!r} expôs meta-discurso: {termo}"
+
+
+def test_texto_do_tempo_nao_pede_configuracao_de_projeto(assistant, monkeypatch):
+    from jarvis.system import web
+
+    monkeypatch.setattr(web, "weather", lambda city, config: {
+        "city": city, "temperature": 18.0, "description": "céu limpo", "feels_like": 18.0,
+        "humidity": 60, "max": 24.0, "min": 12.0, "rain_chance": 5,
+        "tomorrow_description": "parcialmente nublado", "wind": 5,
+    })
+    assistant.config.set("web.location", "Curitiba")
+    response = run(assistant.handle_text("como está o tempo hoje", speak=False))
+    assert "18.0" in response.reply and "céu limpo" in response.reply
+    assert "regra" not in response.reply.lower()
+    assert "serviço externo" not in response.reply.lower()

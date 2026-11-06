@@ -123,6 +123,13 @@ def open_app(name: str, aliases: dict[str, str], folders: dict[str, str]) -> tup
                      Path(os.path.expandvars("%LOCALAPPDATA%"))]:
             for exe in (base.glob(f"*/{name}*.exe") if base.exists() else []):
                 return launch(str(exe))
+    # 5) Windows: deixa o próprio sistema resolver (apps da Store, protocolos, .exe no PATH)
+    if IS_WINDOWS:
+        try:
+            os.startfile(name)  # type: ignore[attr-defined]
+            return True, f"iniciei {name}"
+        except OSError:
+            pass
     return False, f"não encontrei nenhum programa chamado '{name}'"
 
 

@@ -394,14 +394,18 @@ def show_settings(ctx: Context):
     tts = ctx.config.get("voice.tts.engine", "auto")
     rotulo_voz = {"disabled": "desativada", "auto": "automática (motor local disponível)",
                   "browser": "vozes locais do navegador"}.get(tts, str(tts))
+    web_on = ctx.config.get("web.enabled", True)
+    shell = ctx.config.get("security.allow_shell", True)
     linhas = [
         f"Confirmação: nível {level} de 3.",
         f"Microfone: {'ativado' if mic else 'desativado'}; palavra de ativação: "
         f"{'ativa' if wake else 'inativa'}.",
         f"Voz: {rotulo_voz}.",
-        "Modelo de linguagem local: " + ("ativado por sua escolha." if llm
-                                         else "desligado — nenhuma conversa sai deste computador."),
-        "Nenhuma informação é enviada para a internet.",
+        "Modelo de linguagem local: " + ("ativado por sua escolha." if llm else "desligado."),
+        "Internet: " + ("ligada — só acesso quando você pede uma pesquisa." if web_on
+                        else "desligada; nenhuma consulta sai daqui."),
+        "Comandos no terminal: " + ("permitidos, sempre com confirmação de nível 3." if shell
+                                    else "bloqueados."),
     ]
     return ok(ctx, " ".join(linhas), confirm_level=level, microphone_enabled=bool(mic),
               llm_enabled=bool(llm))

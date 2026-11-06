@@ -92,10 +92,11 @@ async function boot() {
       : (status.assistant?.state?.state || 'idle'));
     ui.renderModules(status);
     ui.renderSettings(state.settings);
+    applyVoiceSettings();
     ui.renderHelp(commands.commands);
     ui.renderSuggestions(DEFAULT_SUGGESTIONS);
     ui.message('assistant', status.assistant?.name
-      ? `${greetingText()}. Todos os módulos locais estão ativos — nenhum dado sai deste computador. Como posso ajudar?`
+      ? `${greetingText()}. Todos os sistemas ativos. Como posso ajudar?`
       : 'Sistemas inicializados. Como posso ajudar?', { intent: 'startup' });
     await refreshAll();
   } catch (error) {
@@ -114,6 +115,22 @@ async function boot() {
 
   setInterval(refreshStatus, 15000);
   setInterval(() => refreshTab(state.tab), 30000);
+}
+
+function applyVoiceSettings() {
+  const tts = state.settings?.voice?.tts || {};
+  state.speaker.setConfig({
+    rate: tts.rate, pitch: tts.pitch, volume: tts.volume,
+    browser_voice: tts.browser_voice,
+  });
+  ui.renderVoices(state.speaker.voicesList(), tts.browser_voice || '');
+  const select = document.getElementById('tts-browser-voice');
+  if (select) {
+    select.onchange = () => {
+      state.speaker.setVoice(select.value);
+      state.speaker.speak('Assim está melhor? Posso ajustar velocidade e tom também.');
+    };
+  }
 }
 
 function greetingText() {
@@ -516,11 +533,20 @@ function bindEvents() {
   document.getElementById('btn-save-settings')?.addEventListener('click', async () => {
     try {
       const payload = ui.collectSettings();
+      const voiceSelect = document.getElementById('tts-browser-voice');
+      if (voiceSelect) payload['voice.tts.browser_voice'] = voiceSelect.value || '';
       const result = await api.saveSettings(payload);
       state.settings = result.settings;
+      applyVoiceSettings();
       ui.toast('Ajustes', 'Preferências salvas.', 'info', 4000);
       refreshStatus();
     } catch (error) { ui.toast('Ajustes', error.message, 'error'); }
+  });
+
+  document.getElementById('btn-test-voice')?.addEventListener('click', () => {
+    const sobre = document.getElementById('tts-browser-voice')?.selectedOptions?.[0]?.text || 'padrão';
+    state.speaker.speak('Boa tarde. Sou o Jarvis. Esta é a voz que vou usar para falar com você.');
+    ui.toast('Voz', `Testando: ${sobre}`, 'info', 4000);
   });
 
   document.getElementById('btn-refresh-agenda')?.addEventListener('click', () => refreshTab('agenda'));

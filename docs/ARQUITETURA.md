@@ -191,3 +191,12 @@ Regras: nunca usar `shell=True` com texto do usuário; operações de arquivo pa
 - Configuração corrompida cai para os padrões.
 - WebSocket reconecta com backoff; a interface funciona mesmo se o WS cair (usa REST).
 - O `ResizeObserver` mantém o canvas nítido; a animação pausa com a aba oculta.
+
+
+## Módulo de internet (`jarvis/system/web.py`)
+
+Fica em `system/` porque é uma capacidade do computador, não do interpretador. Expõe
+`search()`, `wiki_summary()`, `answer()`, `weather()`, `weather_text()`, `normalize_url()`,
+`site_url()` e `open_url()`, todos com timeout, cabeçalho de navegador e erros convertidos em
+`WebError` com mensagem apresentável. O interpretador continua 100% local: a rede só é tocada
+quando um comando de `web_cmds.py` chama esse módulo, e cada chamada passa pela auditoria.

@@ -113,10 +113,16 @@ class Personality:
         return f"{ack} {message}".strip()
 
     def error(self, message: str) -> str:
+        # mensagens que já vêm completas do comando não ganham prefixo:
+        # antes saía "Não consegui concluir...: Não consegui falar com a internet".
+        texto = (message or "").strip()
+        if texto[:1].isupper() and texto.split(" ")[0].rstrip(",").lower() in (
+                "não", "nao", "sem", "preciso", "falta", "impossível", "impossivel"):
+            return texto
         return self._pick("err", [
-            f"Não consegui concluir essa tarefa, {self.title() or 'senhor'}: {message}",
-            f"Receio que houve um impedimento: {message}",
-            f"Infelizmente não deu certo — {message}",
+            f"Não consegui concluir essa tarefa, {self.title() or 'senhor'}: {texto}",
+            f"Receio que houve um impedimento: {texto}",
+            f"Infelizmente não deu certo — {texto}",
         ])
 
     def denied(self, why: str) -> str:
@@ -146,12 +152,10 @@ class Personality:
     def honest_unknown(self, topic: str | None = None) -> str:
         focus = f" sobre {topic}" if topic else ""
         return (
-            f"Não tenho uma base de conhecimento enciclopédica local para responder{focus} "
-            "com precisão, e não vou inventar uma resposta. "
-            "O que posso fazer: registrar informações suas para consultas futuras, "
-            "organizar o raciocínio em etapas junto com você, ou — se você autorizar — "
-            "conectar um modelo de linguagem local (llama.cpp/Ollama na sua máquina, "
-            "sem internet). Diga “quero um modelo local” para ver as instruções."
+            f"Não tenho isso em base local para responder{focus} com precisão, e prefiro não "
+            "inventar. Duas saídas: eu pesquiso na internet agora — diga “pesquisa sobre …” — ou, "
+            "se preferir conversa aberta sem rede, existe a opção de um modelo de linguagem rodando "
+            "na sua máquina (“quero um modelo local”)."
         )
 
     def confirm_request(self, description: str, level: int) -> str:

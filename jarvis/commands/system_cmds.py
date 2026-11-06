@@ -1,6 +1,7 @@
 """Comandos do computador: desempenho, disco, energia, volume e inicialização."""
 from __future__ import annotations
 
+import subprocess
 from datetime import datetime
 
 from ..core.response import Response
@@ -10,6 +11,96 @@ from ..system import power, sysinfo, volume
 from ..system.platform import IS_WINDOWS, set_startup, startup_status
 from .base import Context
 from .helpers import ask_confirmation, err, format_when, ok
+
+
+@command("system.run",
+         must=[["executar", "rodar"], ["comando", "terminal", "cmd", "powershell", "shell"]],
+         extra_patterns=[{"must": [["no"], ["terminal"]]},
+                         {"must": [["no"], ["cmd"]]},
+                         {"must": [["no"], ["powershell"]]},
+                         {"must": [["digita"], ["terminal", "cmd", "powershell"]]}],
+         level=3,
+         gate=False,
+         category="sistema",
+         description="Executa um comando no terminal, sempre com confirmação explícita",
+         examples=["Executa o comando ipconfig /all", "No terminal, roda dir C:\\"],
+         priority=7)
+def run_command(ctx: Context):
+    if not ctx.config.get("security.allow_shell", True):
+        return err(ctx, "A execução de comandos do sistema está desativada nas configurações.")
+    command = extract.after_marker(ctx.text, [
+        "executar o comando", "executa o comando", "rodar o comando", "roda o comando",
+        "no terminal", "no cmd", "no powershell", "digita no terminal", "digita no cmd",
+        "digita no powershell", "comando",
+    ])
+    command = (command or "").strip(" .,;\n")
+    if not command:
+        return ok(ctx, "Qual comando devo executar? Exemplo: “executa o comando ipconfig /all”.")
+
+    def run():
+        try:
+            proc = subprocess.run(command, shell=True, capture_output=True, text=True,
+                                  errors="replace", timeout=120)
+        except subprocess.TimeoutExpired:
+            ctx.assistant.audit.record("system.run", f"{command} (timeout)", level=3,
+                                       result="timeout", confirmed=True)
+            return err(ctx, f"O comando “{command}” passou de 2 minutos e foi interrompido.")
+        except Exception as exc:  # noqa: BLE001
+            return err(ctx, f"Não consegui executar: {exc}")
+        output = (proc.stdout or "").strip()
+        problems = (proc.stderr or "").strip()
+        ctx.assistant.audit.record("system.run", command, level=3, confirmed=True)
+        resumo = output[:1200] if output else "sem saída"
+        texto = f"Comando executado (código {proc.returncode}).\n{resumo}"
+        if problems:
+            texto += f"\nAvisos:\n{problems[:400]}"
+        return ok(ctx, texto, command=command, returncode=proc.returncode,
+                  stdout=output[:4000], stderr=problems[:2000])
+
+    if ctx.dry_run:
+        return ok(ctx, f"Executaria no terminal: {command}")
+    return ask_confirmation(ctx, f"executar no terminal: {command}", 3, run,
+                            preview={"command": command, "items": [command]})
+
+
+@command("system.network",
+         must=[["ip"]],
+         extra_patterns=[{"must": [["qual"], ["ip"]]},
+                         {"must": [["wifi", "wi-fi"]], "optional": [["nome", "rede", "estou"]]},
+                         {"must": [["rede"]], "optional": [["conectada", "status", "conexao",
+                                                           "estou", "atual"]]}],
+         category="sistema",
+         description="Mostra IP local, rede e nome do Wi-Fi",
+         examples=["Qual é o meu IP?", "Em que rede estou?"],
+         priority=4)
+def network(ctx: Context):
+    import socket as _socket
+
+    import psutil
+
+    addresses = []
+    for name, infos in psutil.net_if_addrs().items():
+        for info in infos:
+            if info.family == _socket.AF_INET and not info.address.startswith("127."):
+                addresses.append((name, info.address))
+    if not addresses:
+        return err(ctx, "Não encontrei nenhuma interface de rede ativa.")
+    ssid = ""
+    try:
+        if IS_WINDOWS:
+            saida = subprocess.run(["netsh", "wlan", "show", "interfaces"], capture_output=True,
+                                   text=True, errors="replace", timeout=10).stdout
+            achado = re.search(r"(?im)^\s*SSID\s*:\s*(.+)$", saida)
+            ssid = achado.group(1).strip() if achado else ""
+        else:
+            saida = subprocess.run(["iwgetid", "-r"], capture_output=True, text=True, timeout=5).stdout
+            ssid = saida.strip()
+    except Exception:
+        ssid = ""
+    rede = f"Wi-Fi “{ssid}”" if ssid else "rede cabeada ou sem Wi-Fi identificado"
+    lista = ", ".join(f"{name}: {ip}" for name, ip in addresses[:4])
+    return ok(ctx, f"Você está em {rede}. IP local: {lista}.", ssid=ssid,
+              addresses=[{"interface": n, "ip": i} for n, i in addresses])
 
 
 @command("system.uptime",

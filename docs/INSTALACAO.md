@@ -86,7 +86,7 @@ python jarvis.py --diagnose
 ```
 
 Mostra Python, sistema, dependências presentes/ausentes, estado dos motores de voz, métricas
-do computador e testa o interpretador com frases reais. Nada é enviado para a internet.
+do computador e testa o interpretador com frases reais, sem acessar a internet.
 
 ```bash
 python jarvis.py --test-command "desliga o computador daqui a 30 minutos"
@@ -167,3 +167,16 @@ Depois basta dizer: **“Jarvis, abre meu jogo”**.
 
 Nenhum serviço é instalado e nenhuma chave de registro extra é criada além da entrada de
 inicialização opcional.
+
+
+## Deixar a voz menos robótica
+
+1. **Melhor opção (offline e natural):** instale o Piper e o modelo
+   `pt_BR-faber-medium` com `python scripts/setup_models.py --piper`. A voz neural é outra
+   categoria de qualidade em relação ao sintetizador padrão do Windows.
+2. **Sem instalar nada:** abra a interface → aba **ajustes** → *Motor de voz* em “automático” e
+   escolha o **Timbre no navegador**. O Jarvis ordena as vozes pt-BR por qualidade e prefere as
+   neurais (“Natural”, “Online”, Google/Microsoft), evitando `espeak`.
+3. Ajuste **Velocidade** (~0.95–1.05) e **Tom** (~0.90–1.00) e clique em **testar voz**.
+4. O `espeak` continua disponível, mas só aparece se você escolher explicitamente — ele é a voz
+   robótica clássica e não entra mais na escolha automática.

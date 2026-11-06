@@ -7,7 +7,7 @@
 - [x] Fase 3 — HUD futurista com núcleo animado por estado, telemetria, painéis, modo mini
 - [x] Fase 4 — STT offline (Vosk/whisper.cpp), TTS local (Piper/pyttsx3/espeak/navegador),
       palavra de ativação, fim de fala automático, interrupção
-- [x] Fase 5 — interpretador de 81 intenções com sinônimos, slots, compostos e fallback honesto
+- [x] Fase 5 — interpretador de 89 intenções com sinônimos, slots, compostos e fallback honesto
 - [x] Bateria de regressão de NLU (`scripts/nlu_battery.py`, 84 frases) rodando também no pytest
 - [x] Fase 6 — programas, janelas, arquivos, energia, volume, rotinas, agendamentos
 - [x] Fase 7 — memória, notas, tarefas, lembretes, objetivos, agenda, timers

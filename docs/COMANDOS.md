@@ -2,7 +2,7 @@
 
 Este arquivo é gerado automaticamente a partir do interpretador (`python scripts/gen_commands_doc.py`).
 
-**81 intenções registradas.** O reconhecimento aceita variações informais, erros de pronúncia e sinônimos — as frases abaixo são exemplos, não a única forma válida.
+**89 intenções registradas.** O reconhecimento aceita variações informais, erros de pronúncia e sinônimos — as frases abaixo são exemplos, não a única forma válida.
 
 > Dica: diga ou escreva “Jarvis” antes da frase quando estiver usando a palavra de ativação.
 > O assistente também entende frases compostas como “anote que preciso revisar o código e quais são minhas tarefas”.
@@ -31,7 +31,7 @@ Este arquivo é gerado automaticamente a partir do interpretador (`python script
 | `conversation.set_name` | Registra como o usuário quer ser chamado | “Meu nome é Tony”<br>“Pode me chamar de Stark” | nível 1 · simples |
 | `conversation.thanks` | Responde a agradecimentos | “Obrigado, Jarvis” | nível 1 · simples |
 | `conversation.time` | Informa a hora atual | “Que horas são?”<br>“Qual é o horário agora?” | nível 1 · simples |
-| `conversation.weather` | Explica a limitação de previsão do tempo offline | “Jarvis, vai chover hoje?”<br>“Como está o clima?” | nível 1 · simples |
+| `conversation.weather` | Consulta a previsão do tempo real da sua cidade | “Jarvis, vai chover hoje?”<br>“Como está o clima?” | nível 1 · simples |
 | `meta.help` | Lista o que o assistente sabe fazer | “Jarvis, ajuda”<br>“O que você pode fazer?” | nível 1 · simples |
 
 ## Computador
@@ -40,9 +40,11 @@ Este arquivo é gerado automaticamente a partir do interpretador (`python script
 | --- | --- | --- | --- |
 | `system.disk` | Informa espaço livre em disco | “Quanto espaço tem no disco?” | nível 1 · simples |
 | `system.lock` | Bloqueia a tela do computador | “Bloqueia o computador” | nível 2 · altera dados |
+| `system.network` | Mostra IP local, rede e nome do Wi-Fi | “Qual é o meu IP?”<br>“Em que rede estou?” | nível 1 · simples |
 | `system.power` | Desliga, reinicia ou suspende o computador | “Desliga o computador”<br>“Reinicia o computador” | nível 3 · crítica |
 | `system.power.cancel` | Cancela desligamento/reinício agendado | “Cancela o desligamento” | nível 1 · simples |
 | `system.processes` | Lista os programas em execução | “Quais processos estão rodando?” | nível 1 · simples |
+| `system.run` | Executa um comando no terminal, sempre com confirmação explícita | “Executa o comando ipconfig /all”<br>“No terminal, roda dir C:\” | nível 3 · crítica |
 | `system.status` | Relata CPU, memória, disco e temperatura reais | “Jarvis, como está o desempenho do computador?” | nível 1 · simples |
 | `system.uptime` | Informa há quanto tempo o computador está ligado | “Há quanto tempo o computador está ligado?” | nível 1 · simples |
 | `system.volume.mute` | Silencia o som do sistema | “Jarvis, silencia o som” | nível 1 · simples |
@@ -70,6 +72,7 @@ Este arquivo é gerado automaticamente a partir do interpretador (`python script
 | `file.large` | Lista os maiores arquivos das pastas autorizadas | “Quais são os arquivos grandes?” | nível 1 · simples |
 | `file.list` | Lista o conteúdo de uma pasta | “Lista os arquivos da pasta downloads” | nível 1 · simples |
 | `file.mkdir` | Cria uma pasta | “Cria uma pasta chamada Projetos em Documentos” | nível 2 · altera dados |
+| `file.open` | Abre um arquivo existente com o programa padrão | “Abre o arquivo relatório.pdf”<br>“Abre a planilha orçamento.xlsx” | nível 1 · simples |
 | `file.organize` | Organiza uma pasta por categoria de arquivo | “Jarvis, organize os arquivos da minha pasta de downloads” | nível 2 · altera dados |
 | `file.rename` | Renomeia um arquivo ou pasta | “Renomeia o arquivo relatorio.txt para final.txt” | nível 2 · altera dados |
 | `file.search` | Procura arquivos e pastas pelo nome | “Procura o arquivo relatório.pdf”<br>“Onde está a pasta projetos?” | nível 1 · simples |
@@ -141,6 +144,21 @@ Este arquivo é gerado automaticamente a partir do interpretador (`python script
 | Intenção | O que faz | Exemplos | Nível |
 | --- | --- | --- | --- |
 | `system.startup` | Liga/desliga a inicialização automática com o sistema | “Iniciar com Windows”<br>“Desativa a inicialização automática” | nível 3 · crítica |
+
+## configuracoes
+
+| Intenção | O que faz | Exemplos | Nível |
+| --- | --- | --- | --- |
+| `settings.location` | Guarda a sua cidade para a previsão do tempo | “Minha cidade é Curitiba”<br>“Moro em São Paulo” | nível 1 · simples |
+
+## internet
+
+| Intenção | O que faz | Exemplos | Nível |
+| --- | --- | --- | --- |
+| `web.define` | Responde 'o que é / quem é' com um resumo da Wikipédia e busca de apoio | “O que é computação quântica?”<br>“Quem é Ada Lovelace?” | nível 1 · simples |
+| `web.open_result` | Abre no navegador um dos resultados da última pesquisa | “Abre o primeiro resultado”<br>“Abre o link 2” | nível 1 · simples |
+| `web.open_site` | Abre um site ou endereço no navegador padrão | “Abre o site do GitHub”<br>“Abre o endereço wikipedia.org” | nível 1 · simples |
+| `web.search` | Pesquisa na internet e resume os primeiros resultados | “Pesquisa na internet sobre DeepSeek”<br>“Procura no Google passagens para o Rio” | nível 1 · simples |
 
 ## privacidade
 

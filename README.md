@@ -21,7 +21,9 @@ futurista, voz em português brasileiro, memória local, controle do sistema e a
 
 | Área | Recursos implementados |
 | --- | --- |
-| **Voz** | reconhecimento offline (Vosk ou whisper.cpp), síntese local (Piper, pyttsx3/SAPI5, espeak ou vozes do sistema), palavra de ativação “Jarvis”, detecção automática de fim de fala, interrupção da própria fala |
+| **Voz** | reconhecimento offline (Vosk ou whisper.cpp), síntese local com timbre natural (Piper neural, vozes do Windows ou do navegador — o espeak sai da cadeia automática), escolha de timbre/velocidade/tom na interface, palavra de ativação “Jarvis”, detecção automática de fim de fala, interrupção da própria fala |
+| **Internet** | pesquisa no DuckDuckGo, resumos da Wikipédia (“o que é / quem é”), previsão do tempo via Open-Meteo, abertura de sites e dos resultados — sempre acionada por você |
+| **Terminal** | executa qualquer comando com confirmação de nível 3 mostrando a linha exata, com saída na tela e registro na auditoria |
 | **Conversa** | personalidade educada e honesta, variações de fala, humor discreto, limites declarados (“não sei” quando é o caso) |
 | **Computador** | CPU, RAM, disco, temperatura, bateria, uptime, processos · volume · bloqueio de tela · suspender, reiniciar, desligar (com confirmação) |
 | **Programas e janelas** | abrir/fechar programas, abrir pastas, minimizar, maximizar, alternar janelas, listar processos e janelas |
@@ -196,7 +198,7 @@ inicialização automática (registro do Windows / `~/.config/autostart`).
 | 2 · Estrutura inicial | núcleo, configuração, banco, inicialização | ✅ |
 | 3 · Interface | HUD, núcleo animado, painéis, histórico, responsivo, modo mini | ✅ |
 | 4 · Voz | STT/TTS offline, wake word, barge-in, VAD | ✅ (depende de modelos instalados) |
-| 5 · Comandos | 81 intenções, sinônimos, slots, compostos | ✅ |
+| 5 · Comandos | 89 intenções, sinônimos, slots, compostos | ✅ |
 | 6 · Automações | programas, janelas, arquivos, energia, rotinas, agendamentos | ✅ |
 | 7 · Memória e organização | memória, notas, tarefas, lembretes, objetivos | ✅ |
 | 8 · Personalidade | respostas, confirmações, honestidade, conselheiro | ✅ |

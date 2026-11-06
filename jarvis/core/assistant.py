@@ -52,6 +52,7 @@ class Assistant:
         self.engine = engine
         self.started_at = time.time()
         self.last_response: Response | None = None
+        self.last_search: dict | None = None
         self._loaded = False
         self._load_commands()
         from ..personal.scheduler import Scheduler

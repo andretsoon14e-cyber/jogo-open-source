@@ -211,20 +211,63 @@ export class Speaker {
     this.url = null;
     this.enabled = true;
     this.preferredVoice = null;
+    this.voices = [];
+    this.voiceHint = '';
+    this.rate = 1;
+    this.pitch = 0.95;
+    this.volume = 1;
     this._loadVoices();
     if ('speechSynthesis' in window) {
       window.speechSynthesis.onvoiceschanged = () => this._loadVoices();
     }
   }
 
+  /* Pontuação de qualidade: vozes neurais/naturais ganham, robóticas perdem. */
+  static scoreVoice(voice) {
+    const blob = `${voice.name} ${voice.lang}`.toLowerCase();
+    const isPt = /pt[-_]?br|pt[-_]?pt|portugu/.test(blob);
+    if (!isPt) return -1;
+    let score = 10;
+    if (/natural|neural|online|premium|enhanced|expressive/.test(blob)) score += 12;
+    if (/google/.test(blob)) score += 8;
+    if (/microsoft/.test(blob)) score += 6;
+    if (/daniel|antonio|antônio|ricardo|felipe|thiago|homem|male|joaquim/.test(blob)) score += 4;
+    if (voice.localService === false) score += 1;
+    if (/espeak|robot|compact|eloquence|deepl/.test(blob)) score -= 20;
+    if (voice.default) score += 1;
+    return score;
+  }
+
   _loadVoices() {
     if (!('speechSynthesis' in window)) return;
     const voices = window.speechSynthesis.getVoices() || [];
-    const pt = voices.filter((v) => /pt[-_]?BR|pt-BR|portugu/i.test(`${v.lang} ${v.name}`));
-    // prioriza vozes locais (offline) do sistema
-    const local = pt.filter((v) => v.localService !== false);
-    this.preferredVoice = local[0] || pt[0] || null;
-    this.voices = voices;
+    this.voices = voices.slice().sort((a, b) => Speaker.scoreVoice(b) - Speaker.scoreVoice(a));
+    const hint = (this.voiceHint || '').toLowerCase();
+    let escolhida = null;
+    if (hint) {
+      escolhida = this.voices.find((v) => `${v.name} ${v.lang}`.toLowerCase().includes(hint)) || null;
+    }
+    if (!escolhida) escolhida = this.voices.find((v) => Speaker.scoreVoice(v) > 0) || null;
+    this.preferredVoice = escolhida;
+  }
+
+  setConfig(config = {}) {
+    if (!config) return;
+    if (typeof config.rate === 'number' && config.rate > 0) this.rate = config.rate;
+    if (typeof config.pitch === 'number' && config.pitch > 0) this.pitch = config.pitch;
+    if (typeof config.volume === 'number') this.volume = config.volume;
+    if (typeof config.browser_voice === 'string') this.voiceHint = config.browser_voice;
+    this._loadVoices();
+  }
+
+  setVoice(name) {
+    this.voiceHint = name || '';
+    this._loadVoices();
+  }
+
+  voicesList() {
+    return (this.voices || []).filter((v) => Speaker.scoreVoice(v) > 0)
+      .map((v) => ({ name: v.name, lang: v.lang, label: `${v.name} — ${v.lang}` }));
   }
 
   get status() {
@@ -285,9 +328,9 @@ export class Speaker {
       const part = parts[index++];
       const utterance = new SpeechSynthesisUtterance(part.trim());
       utterance.lang = 'pt-BR';
-      utterance.rate = 0.98;
-      utterance.pitch = 0.92;
-      utterance.volume = 1;
+      utterance.rate = Math.max(0.5, Math.min(2, this.rate));
+      utterance.pitch = Math.max(0.1, Math.min(2, this.pitch));
+      utterance.volume = Math.max(0, Math.min(1, this.volume));
       if (this.preferredVoice) utterance.voice = this.preferredVoice;
       utterance.onend = next;
       utterance.onerror = () => { this.onEnd(); };

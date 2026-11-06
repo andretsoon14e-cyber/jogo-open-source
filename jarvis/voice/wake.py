@@ -27,9 +27,23 @@ def detect(text: str, sensitivity: float = 0.78) -> bool:
     return False
 
 
+WAKE_PATTERN = r"(?:j[aá]r\s?vis|jarves|jervis|javis|jarbas)"
+
+
 def strip(text: str) -> str:
-    """Remove a palavra de ativação mantendo o restante da frase."""
-    cleaned = re.sub(r"(?i)\b(j[aá]r\s?vis|jarves|jervis|javis|jarbas)\b[,\s]*", "", text)
+    """Remove a palavra de ativação sem tocar no conteúdo da ordem.
+
+    Só remove quando ela é chamamento no início ou vocativo no fim (após
+    vírgula). Antes a remoção era global e transformava
+    "executa o comando echo jarvis" em "executa o comando echo".
+    """
+    cleaned = text.strip()
+    for _ in range(3):  # "Jarvis, Jarvis, ..." também acontece
+        novo = re.sub(rf"(?i)^\s*{WAKE_PATTERN}\b\s*[,:;.!?-]*\s*", "", cleaned, count=1)
+        if novo == cleaned:
+            break
+        cleaned = novo
+    cleaned = re.sub(rf"(?i)[,;]\s*{WAKE_PATTERN}\s*[.!?]*\s*$", "", cleaned, count=1)
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,.;!?")
     return cleaned
 

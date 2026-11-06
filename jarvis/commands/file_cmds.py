@@ -50,6 +50,55 @@ def _name_after(text: str, markers: list[str]) -> str | None:
 
 
 # ------------------------------------------------------------------- leitura --
+@command("file.open",
+         must=[["abrir", "abre"], ["arquivo", "planilha", "pdf", "documento", "foto", "imagem",
+                                   "video", "música", "musica"]],
+         optional=[["o", "a", "meu", "minha"]],
+         category="arquivos",
+         description="Abre um arquivo existente com o programa padrão",
+         examples=["Abre o arquivo relatório.pdf", "Abre a planilha orçamento.xlsx"],
+         priority=4)
+def open_file(ctx: Context):
+    from ..system import platform as sysplat
+
+    name = extract.quoted(ctx.text) or extract.after_marker(
+        ctx.text, ["abre o arquivo", "abrir o arquivo", "abre a planilha", "abre o documento",
+                   "abre a foto", "abre o vídeo", "abre o video", "abre", "abrir"]) or ""
+    name = re.sub(r"(?i)^(?:o|a|os|as|meu|minha)\s+", "", name.strip())
+    name = re.sub(r"(?i)\b(?:em|no|na|de|do|da)\s+(?:documentos|downloads|imagens|músicas|musicas|"
+                  r"vídeos|videos|área de trabalho|area de trabalho)\b", "", name)
+    name = name.strip(" .,!?")
+    if not name:
+        return ok(ctx, "Qual arquivo devo abrir? Diga o nome, por exemplo “abre o arquivo orçamento.xlsx”.")
+
+    encontrados: list[Path] = []
+    for root in _roots(ctx):
+        try:
+            encontrados.extend(filetools.search(root, name, limit=6, max_depth=5))
+        except Exception:
+            continue
+    arquivos = [p for p in encontrados if p.is_file()]
+    pastas = [p for p in encontrados if p.is_dir()]
+    candidatos = arquivos or pastas
+    if not candidatos:
+        return err(ctx, f"Não encontrei “{name}” nas suas pastas. Diga “pesquisa arquivos com nome {name}” "
+                        "que eu procuro em outros lugares.")
+    if len(candidatos) > 1:
+        nomes = human_list([f"{p.name} ({p.parent.name})" for p in candidatos[:5]])
+        return ok(ctx, f"Encontrei mais de um: {nomes}. Seja mais específico, por favor.",
+                  candidates=[str(p) for p in candidatos[:8]])
+    alvo = candidatos[0]
+    try:
+        safe = ctx.permissions.check_path(alvo)
+    except Exception as exc:
+        return err(ctx, str(exc))
+    success, message = sysplat.open_path(safe)
+    if not success:
+        return err(ctx, message)
+    ctx.assistant.audit.record("file.open", str(alvo), level=1)
+    return ok(ctx, f"Abri {alvo.name}.", path=str(alvo))
+
+
 @command("file.search",
          must=[["pesquisar"], ["arquivo", "pasta", "onde", "computador"]],
          extra_patterns=[{"must": [["pesquisar", "localizar"]]},

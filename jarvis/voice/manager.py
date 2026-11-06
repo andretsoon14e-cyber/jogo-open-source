@@ -88,7 +88,11 @@ class VoiceManager:
     def status(self) -> dict:
         return {
             "stt": self.stt.status(),
-            "tts": self.tts.status(),
+            "tts": {**self.tts.status(),
+                    "rate": float(self.config.get("voice.tts.rate", 1.0) or 1.0),
+                    "pitch": float(self.config.get("voice.tts.pitch", 0.95) or 0.95),
+                    "browser_voice": str(self.config.get("voice.tts.browser_voice", "") or ""),
+                    "volume": float(self.config.get("voice.tts.volume", 0.9) or 0.9)},
             "microphone_enabled": self.microphone_enabled,
             "wake_word": {
                 "enabled": bool(self.config.get("voice.wake_word.enabled", True)),
@@ -97,5 +101,5 @@ class VoiceManager:
             },
             "barge_in": bool(self.config.get("voice.barge_in.enabled", True)),
             "sample_rate": self.sample_rate,
-            "offline": True,
+            "offline": self.tts.name != "edge",
         }

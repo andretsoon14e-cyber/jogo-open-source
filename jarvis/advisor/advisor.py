@@ -88,19 +88,19 @@ SELF_KNOWLEDGE: list[tuple[str, str]] = [
      "(excluir, desligar, mexer em configurações) exigem confirmação explícita. Tudo o que executo "
      "fica registrado em auditoria local (data/logs/audit.jsonl)."),
     ("arquitetura|como funciona|modulo|módulo|tecnologia",
-     "Sou dividido em módulos: núcleo, interpretador de intenções, voz, sistema, arquivos, memória, "
-     "organização pessoal, automações, segurança, conselheiro, interface e configurações. O "
-     "interpretador é baseado em regras explícitas e sinônimos do português — não em IA generativa. "
-     "Isso me torna previsível, auditável e totalmente offline."),
-    ("offline|internet|nuvem|privacidade",
-     "Não faço nenhuma chamada de rede para serviços de IA. A interface e o núcleo falam apenas com "
-     "127.0.0.1. Exceções que você mesmo pode ativar: um modelo de linguagem local (Ollama/llama.cpp "
-     "na sua máquina) e, opcionalmente, abrir o navegador em sites que você pedir."),
+     "Funciono em módulos independentes: núcleo, interpretação da fala, voz, controle do sistema, "
+     "arquivos, memória, organização pessoal, automações, segurança e interface. O que entende as "
+     "suas ordens são regras explícitas de português, não IA generativa — por isso sou previsível e "
+     "você pode auditar cada ação no log."),
+    ("internet|nuvem|privacidade|pesquisa|busca",
+     "Pesquiso na internet quando você pede — DuckDuckGo para resultados, Wikipédia para resumos e "
+     "Open-Meteo para a previsão do tempo. A sua memória pessoal nunca entra na consulta: só o texto "
+     "que você ditou. Fora isso, não há chamadas de fundo nem telemetria."),
     ("inteligencia artificial|ia|modelo|llm",
-     "Minha inteligência é simbólica: regras, sinônimos, extração de datas e durações, e bancos de "
-     "frases escritos à mão. Consigo executar e organizar tarefas com precisão, mas não tenho "
-     "conhecimento enciclopédico. Para conversa aberta existe a opção de um modelo local, sob sua "
-     "autorização explícita."),
+     "Meu raciocínio é simbólico: regras, sinônimos, extração de datas e durações, e um repertório "
+     "de respostas escritas. Executo e organizo com precisão, mas não tenho conhecimento "
+     "enciclopédico — quando falta, eu pesquiso na internet ou digo que não sei. Se quiser conversa "
+     "aberta, existe a opção de um modelo local rodando na sua máquina."),
 ]
 
 

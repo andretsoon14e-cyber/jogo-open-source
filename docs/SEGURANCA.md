@@ -125,3 +125,14 @@ sem dupla checagem), porque não toca na memória de longo prazo.
 
 O interpretador também bloqueia padrões destrutivos conhecidos (`security.forbidden_patterns`)
 antes de executar qualquer coisa, mesmo quando a frase casa com uma intenção válida.
+
+
+## Internet e terminal
+
+* **Pesquisa** é nível 1 (só leitura), mas registrada: cada consulta entra na auditoria com o
+  texto exato. A memória pessoal nunca é anexada à busca.
+* **Executar comando no terminal** é nível 3 com `gate=False`: a confirmação é montada dentro do
+  próprio comando, mostrando a linha a ser executada, para você revisar antes de aprovar.
+  `security.allow_shell: false` bloqueia o recurso por completo.
+* **Abrir site/resultado** é nível 1; só esquemas `http`/`https` são aceitos (`file://`,
+  `javascript:` e afins são recusados).

@@ -7,7 +7,7 @@ de algo além do escopo atual. Nada aqui é promessa vaga: cada item descreve o 
 
 ## 1. Compreensão de linguagem
 
-**O que existe:** 81 intenções programadas, normalização de português, sinônimos, tolerância a
+**O que existe:** 89 intenções programadas, normalização de português, sinônimos, tolerância a
 erros de reconhecimento, extração de datas/durações/números/caminhos, encadeamento de frases
 compostas (“anote X e quais são minhas tarefas”).
 
@@ -53,7 +53,7 @@ Depois, na aba **Ajustes**:
 - modelo: `qwen2.5:3b-instruct`.
 
 O assistente passa a usar esse modelo apenas quando habilitado, e o tráfego é `localhost` —
-nada sai para a internet. **Ele não instala nem ativa nada sozinho**: a decisão e a instalação
+nada é baixado sem você mandar. **Ele não instala nem ativa nada sozinho**: a decisão e a instalação
 são suas. Sem o endpoint respondendo, o sistema volta ao comportamento por regras.
 
 Requisitos aproximados para um modelo de 3B quantizado: 4–6 GB de RAM livre (ou GPU com 6 GB),
@@ -156,3 +156,26 @@ responde que não conhece. Use o explorador de arquivos ou a busca por nome.
 "Me avisa às 18h" cria um aviso único; "toda sexta às 18h" não é interpretado como recorrência.
 A tabela `schedules` existe e a interface lista o que está programado, mas o parser de recorrência
 por voz é uma evolução planejada — não uma funcionalidade entregue.
+
+
+## O que vai para a internet (e o que não vai)
+
+A pesquisa é opcional e sempre disparada por uma ordem sua. Quando acontece:
+
+* vai para o serviço **apenas o texto da sua busca** (DuckDuckGo), o termo consultado
+  (Wikipédia) ou a cidade (Open-Meteo);
+* **não** vão memórias, tarefas, notas, histórico de conversa, nome do computador nem IP;
+* cada consulta fica registrada em `data/logs/audit.jsonl` com data, hora e o texto usado;
+* `web.enabled: false` (ou o ajuste na interface) desliga qualquer saída de rede — os comandos
+  respondem que o acesso está desativado em vez de falhar sem explicação.
+
+Limites práticos: sem internet, a pesquisa devolve “não consegui falar com a internet agora”;
+páginas com paywall/JavaScript pesado podem render menos resultados do que no navegador; e a
+previsão do tempo é do modelo Open-Meteo, não de uma estação local.
+
+## Comandos no terminal
+
+“Executa o comando …” roda de verdade, com `shell` do sistema, e por isso é **nível 3**: o pedido
+mostra a linha exata, exige confirmação explícita e fica na auditoria. Padrões catastróficos da
+lista `security.forbidden_patterns` (formatar disco, `diskpart`, `rm -rf /`…) são recusados antes
+de qualquer execução. Ainda assim, é poder real: confira a linha antes de confirmar.

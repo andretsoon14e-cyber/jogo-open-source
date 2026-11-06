@@ -29,13 +29,15 @@ SETTINGS_WHITELIST = {
     "personality.formality", "personality.humor", "personality.verbosity",
     "personality.use_honorific", "personality.proactive_suggestions",
     "voice.wake_word.enabled", "voice.wake_word.sensitivity", "voice.wake_word.greeting",
-    "voice.tts.engine", "voice.tts.prefer_browser", "voice.tts.rate", "voice.tts.volume",
+    "voice.tts.engine", "voice.tts.prefer_browser", "voice.tts.rate", "voice.tts.pitch",
+    "voice.tts.volume", "voice.tts.browser_voice", "voice.tts.pyttsx3_voice",
     "voice.stt.engine", "voice.barge_in.enabled",
     "security.confirm_level", "security.default_confirm", "security.microphone_enabled",
     "security.audit_enabled",
     "interface.show_performance", "interface.theme", "interface.history_limit",
     "llm.enabled", "llm.endpoint", "llm.model", "llm.provider",
     "automation.scheduler_tick_s", "system.performance_interval_s",
+    "web.enabled", "web.location", "web.max_results", "security.allow_shell",
 }
 
 

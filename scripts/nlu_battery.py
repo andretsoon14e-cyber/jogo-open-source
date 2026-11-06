@@ -106,6 +106,17 @@ CASES: list[tuple[str, str | None]] = [
     ("apaga o histórico de conversas", "history.clear"),
     ("quais são as configurações de segurança", "settings.show"),
     ("onde ficam meus dados", "settings.data_location"),
+    # internet, terminal e voz (v1.1)
+    ("pesquisa na internet sobre buracos negros", "web.search"),
+    ("procura no google passagens para o rio", "web.search"),
+    ("o que é computação quântica", "web.define"),
+    ("quem é Ada Lovelace", "web.define"),
+    ("abre o primeiro resultado", "web.open_result"),
+    ("abre o site do github", "web.open_site"),
+    ("minha cidade é Curitiba", "settings.location"),
+    ("executa o comando ipconfig /all", "system.run"),
+    ("qual é o meu ip", "system.network"),
+    ("abre o arquivo relatório.pdf", "file.open"),
     # fora do escopo (deve cair no fallback honesto)
     ("qual é a capital da mongólia", None),
     ("escreve um poema sobre o mar", None),

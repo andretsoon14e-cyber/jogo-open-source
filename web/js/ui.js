@@ -526,7 +526,9 @@ export const ui = {
       }
       if (input.type === 'range') {
         const numeric = typeof value === 'number' ? value : 0.5;
-        input.value = String(Math.round(numeric * 100));
+        input.value = input.dataset.decimal
+          ? String(numeric)
+          : String(Math.round(numeric * 100));
         this._updateRangeLabel(input);
         continue;
       }
@@ -542,9 +544,17 @@ export const ui = {
       'personality.formality': '#lbl-formality',
       'personality.humor': '#lbl-humor',
       'personality.verbosity': '#lbl-verbosity',
+      'voice.tts.rate': '#lbl-tts-rate',
+      'voice.tts.pitch': '#lbl-tts-pitch',
     };
     const target = $(map[input.dataset.setting]);
-    if (target) target.textContent = `${input.value}%`;
+    if (!target) return;
+    if (input.dataset.decimal) {
+      const sufixo = input.dataset.setting === 'voice.tts.rate' ? '×' : '';
+      target.textContent = `${Number(input.value).toFixed(2)}${sufixo}`;
+    } else {
+      target.textContent = `${input.value}%`;
+    }
   },
 
   collectSettings() {
@@ -560,7 +570,7 @@ export const ui = {
         continue;
       }
       if (input.type === 'range') {
-        payload[path] = Number(input.value) / 100;
+        payload[path] = input.dataset.decimal ? Number(input.value) : Number(input.value) / 100;
         continue;
       }
       if (input.type === 'number' || input.type === 'select-one') {
@@ -576,6 +586,21 @@ export const ui = {
       payload[path] = input.value;
     }
     return payload;
+  },
+
+  renderVoices(voices, selected = '') {
+    const select = $('#tts-browser-voice');
+    if (!select) return;
+    const atual = selected || select.value || '';
+    select.innerHTML = '';
+    const auto = el('option', { value: '', text: 'automática (melhor voz pt-BR disponível)' });
+    select.append(auto);
+    for (const voice of voices || []) {
+      select.append(el('option', { value: voice.name, text: voice.label }));
+    }
+    const match = [...select.options].find((opt) => opt.value && atual &&
+      opt.value.toLowerCase().includes(atual.toLowerCase()));
+    select.value = match ? match.value : '';
   },
 
   /* --------------------------------------------------------------- sugestões */

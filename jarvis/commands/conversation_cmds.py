@@ -8,7 +8,7 @@ from datetime import datetime
 from .. import __version__
 from ..nlu.engine import command, engine
 from .base import Context
-from .helpers import human_list, ok
+from .helpers import err, human_list, ok
 
 WEEKDAYS = ["segunda-feira", "terça-feira", "quarta-feira", "quinta-feira",
             "sexta-feira", "sábado", "domingo"]
@@ -39,15 +39,14 @@ def greet(ctx: Context):
          priority=3)
 def identity(ctx: Context):
     text = (
-        f"Sou o {ctx.config.get('assistant.name', 'J.A.R.V.I.S.')}, versão {__version__} — "
-        "um assistente pessoal que roda inteiramente na sua máquina. "
-        "Não uso nenhuma inteligência artificial na nuvem: interpretação de comandos por regras, "
-        "voz e memória locais, e um banco de dados SQLite no seu disco. "
-        "Posso abrir programas, cuidar de arquivos, registrar lembretes e tarefas, organizar rotinas, "
-        "monitorar o computador e ajudar a estruturar decisões. "
-        "Quando não sei algo, digo que não sei — não faz parte do meu funcionamento inventar."
+        f"Sou o {ctx.config.get('assistant.name', 'J.A.R.V.I.S.')}, versão {__version__}, "
+        "o seu assistente pessoal neste computador. "
+        "Entendo as ordens por regras de português, sem IA na nuvem, e mantenho a sua memória "
+        "num banco local. Controlo programas, arquivos, volume, energia e processos, organizo "
+        "tarefas, lembretes e rotinas, acompanho o hardware e, quando você pede, pesquiso na "
+        "internet. Quando não sei algo, digo que não sei — inventar não é o meu jeito."
     )
-    return ok(ctx, text, version=__version__, offline=True)
+    return ok(ctx, text, version=__version__, internet=bool(ctx.config.get("web.enabled", True)))
 
 
 @command("meta.help",
@@ -141,8 +140,8 @@ def farewell(ctx: Context):
          examples=["Como você está?", "Tudo bem com você?"],
          priority=2)
 def how_are_you(ctx: Context):
-    text = ("Operando normalmente: todos os módulos locais ativos, sem uso de serviços externos. "
-            "Obrigado por perguntar. E o senhor, como está?")
+    text = ("Operando normalmente: todos os sistemas ativos, sem nada pendente. "
+            "Obrigado por perguntar. E você, como está?")
     if ctx.personality.humor > 0.5:
         text += " " + ctx.personality.humor_line()
     return ok(ctx, text)
@@ -198,14 +197,25 @@ def joke(ctx: Context):
                          {"must": [["temperatura"], ["ambiente"]]}],
          optional=[["hoje", "amanha", "agora"]],
          category="conversa",
-         description="Explica a limitação de previsão do tempo offline",
+         description="Consulta a previsão do tempo real da sua cidade",
          examples=["Jarvis, vai chover hoje?", "Como está o clima?"])
 def weather(ctx: Context):
-    text = ("Não tenho acesso a serviços de meteorologia — e, como a regra do projeto é não "
-            "consultar serviços externos, não vou chutar a previsão. O que posso fazer: consultar "
-            "a temperatura dos sensores internos do computador, se o senhor quiser. "
-            "Para previsão do tempo real, seria necessário um serviço externo ou uma estação local.")
-    return ok(ctx, text)
+    from ..system import web
+
+    city = str(ctx.config.get("web.location", "") or "").strip()
+    found = re.search(r"(?i)\b(?:em|para|de|no)\s+([A-Za-zÀ-ÿ][\wÀ-ÿ .\-]{2,40}?)\s*$", ctx.clean)
+    if found and not re.search(r"(?i)hoje|amanha|amanhã|agora", found.group(1)):
+        city = found.group(1).strip(" .,!?")
+    if not city:
+        return ok(ctx, "De qual cidade? Diga “minha cidade é Curitiba” que eu já guardo isso.")
+    if not ctx.config.get("web.enabled", True):
+        return ok(ctx, "Não consigo consultar a previsão com o acesso à internet desligado.")
+    try:
+        data = web.weather(city, ctx.config)
+    except web.WebError as exc:
+        return err(ctx, f"Não consegui consultar a previsão agora: {exc}")
+    ctx.assistant.audit.record("web.weather", city, level=1)
+    return ok(ctx, web.weather_text(data), city=data.get("city"), weather=data)
 
 
 @command("conversation.set_name",

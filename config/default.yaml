@@ -40,12 +40,25 @@ voice:
     piper_binary: ""       # ex.: C:/jarvis/piper/piper.exe
     piper_model: "models/piper/pt_BR-faber-medium.onnx"
     piper_config: ""       # opcional (.json)
-    rate: 1.0              # 1.0 = normal (pyttsx3/espeak)
+    rate: 1.0              # 1.0 = normal (pyttsx3 / espeak / navegador)
+    pitch: 0.95            # tom da voz no navegador (0.8 = mais grave)
     volume: 0.9
+    pyttsx3_voice: ""      # trecho do nome da voz do Windows (ex.: "Daniel")
+    browser_voice: ""      # trecho do nome da voz do navegador; vazio = melhor disponível
     prefer_browser: true   # no navegador usa a voz local do sistema (offline)
   barge_in:
     enabled: true          # permite interromper a fala dizendo "jarvis, pare"
     stop_words: ["pare", "para", "silencio", "silêncio", "cala a boca", "chega", "cancela"]
+
+web:
+  # Acesso à internet. Nada é acessado sem você pedir uma pesquisa.
+  enabled: true
+  search_enabled: true
+  timeout_s: 8
+  max_results: 5
+  location: ""             # ex.: "Curitiba, PR" — usado na previsão do tempo
+  user_agent: "Mozilla/5.0 (compatible; JarvisLocal/1.0)"
+  open_links_in_browser: true
 
 security:
   default_confirm: true
@@ -72,6 +85,7 @@ security:
   session_trust_minutes: 0          # >0 = confirmação vale por X minutos
   audit_enabled: true
   microphone_enabled: true
+  allow_shell: true        # permite "executa o comando X" com confirmação de nível 3
 
 system:
   apps:

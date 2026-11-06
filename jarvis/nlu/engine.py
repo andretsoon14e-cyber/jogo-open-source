@@ -251,7 +251,7 @@ def load_commands() -> None:
     """Importa os módulos de comando, que se registram no motor via decorador."""
     from ..commands import (  # noqa: F401
         advisor_cmds, app_cmds, assistant_cmds, conversation_cmds, file_cmds,
-        memory_cmds, routine_cmds, system_cmds, voice_cmds,
+        memory_cmds, routine_cmds, system_cmds, voice_cmds, web_cmds,
     )
 
 

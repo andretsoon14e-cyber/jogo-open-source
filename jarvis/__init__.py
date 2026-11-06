@@ -3,5 +3,5 @@
 Nenhuma chamada a serviços de IA na nuvem é feita por este pacote.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 __all__ = ["__version__"]

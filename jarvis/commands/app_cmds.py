@@ -180,7 +180,7 @@ def list_windows(ctx: Context):
          category="aplicativos",
          description="Abre uma pasta do usuário",
          examples=["Abre a pasta de downloads"],
-         priority=3)
+         priority=6)
 def open_folder(ctx: Context):
     folders = ctx.config.get("system.folders", {}) or {}
     folder = filetools.resolve_folder(ctx.clean, folders, ctx.permissions)

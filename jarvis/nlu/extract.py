@@ -192,11 +192,19 @@ def after_marker(text: str, markers: list[str]) -> str | None:
 
 
 def strip_wake_word(text: str, wake_words: list[str] | None = None) -> str:
-    """Remove 'jarvis' (ou variações) do início/fim da frase."""
+    """Remove 'jarvis' apenas quando é chamamento (início) ou encerramento (fim).
+
+    Antes a remoção era global e corrompia ordens que citam a palavra no meio —
+    por exemplo “executa o comando echo jarvis”.
+    """
     words = wake_words or ["jarvis", "jarvis", "jarvis"]
-    cleaned = text
+    cleaned = text.strip()
     for word in words:
-        cleaned = re.sub(rf"(?i)\b{re.escape(word)}\b", " ", cleaned)
+        token = re.escape(word)
+        cleaned = re.sub(rf"(?i)^\s*{token}\b\s*[,:;.!?-]*\s*", "", cleaned, count=1)
+        # no fim, só conta como chamamento quando vem depois de vírgula
+        # ("obrigado, Jarvis") — "echo jarvis" é conteúdo do comando.
+        cleaned = re.sub(rf"(?i)[,;]\s*{token}\s*[.!?]*\s*$", "", cleaned, count=1)
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" ,.;!?")
     return cleaned or text.strip()
 
