@@ -78,7 +78,7 @@ Consumo observado no desenvolvimento: processo Python entre 60 e 180 MB, CPU oci
 | Reconhecimento errar palavras | normalização + sinônimos + similaridade + confirmação em ações críticas |
 | Áudio do microfone vazar para a rede | apenas `127.0.0.1`; nenhuma chamada externa no código de voz |
 | Comando destrutivo acidental | níveis de autorização, lista de padrões proibidos, prévia obrigatória, auditoria |
-| Interpretador confundir intenções | padrões específicos com prioridade, testes parametrizados (205 no total) |
+| Interpretador confundir intenções | padrões específicos com prioridade, testes parametrizados (207 no total) |
 | Interface “bonita mas inútil” | todos os painéis leem dados reais da API; botões executam comandos reais |
 | Dependência de modelo de voz ausente | cadeia de fallback + mensagem explícita na interface e no diagnóstico |
 | Credenciais/senhas | o projeto **não** armazena senhas; não há campo para isso |

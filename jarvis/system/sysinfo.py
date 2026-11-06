@@ -160,9 +160,12 @@ def summary_text(data: dict | None = None) -> str:
     data = data or snapshot()
     cpu = data["cpu"]
     mem = data["memory"]
+    fisicos = cpu["cores_physical"]
+    logicos = cpu["cores_logical"]
+    nucleos = f"{fisicos} núcleo{'s' if fisicos != 1 else ''} físico{'s' if fisicos != 1 else ''}"
+    linhas_cpu = f"Processador em {cpu['percent']}% de uso ({nucleos}, {logicos} lógico{'s' if logicos != 1 else ''})"
     lines = [
-        f"Processador em {cpu['percent']}% de uso ({cpu['cores_physical']} núcleos físicos, "
-        f"{cpu['cores_logical']} lógicos)",
+        linhas_cpu,
         f"Memória RAM em {mem['percent']}% — {mem['used_gb']} GB de {mem['total_gb']} GB",
     ]
     if data["disks"]:

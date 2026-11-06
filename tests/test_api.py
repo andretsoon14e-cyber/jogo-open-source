@@ -108,3 +108,14 @@ def test_websocket_envia_snapshot(client):
         assert first["type"] == "snapshot"
         second = ws.receive_json()
         assert second["type"] == "state"
+
+
+def test_websocket_desconexao_abrupta_nao_derruba_o_servidor(client):
+    """Fechar a aba do navegador no meio do stream não deve gerar erro no servidor."""
+    with client.websocket_connect("/ws") as ws:
+        assert ws.receive_json()["type"] == "snapshot"
+        ws.receive_json()  # state
+    # uma nova conexão depois da desconexão abrupta continua funcionando
+    with client.websocket_connect("/ws") as ws:
+        assert ws.receive_json()["type"] == "snapshot"
+    assert client.get("/api/status").status_code == 200

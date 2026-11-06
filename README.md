@@ -152,7 +152,7 @@ jarvis/
   server/                  API HTTP/WebSocket e servidor da interface
 web/                       interface (HTML/CSS/JS puro, sem build, sem CDN)
 scripts/                   setup_models.py, gen_commands_doc.py, smoke_test.py
-tests/                     205 testes automatizados + bateria de 84 frases
+tests/                     207 testes automatizados + bateria de 84 frases
 docs/                      planejamento, arquitetura, instalação, segurança, limites
 ```
 
@@ -165,7 +165,7 @@ Planejamento e decisões técnicas: **[docs/PLANEJAMENTO.md](docs/PLANEJAMENTO.m
 
 ```bash
 pip install pytest
-python -m pytest tests -q        # 205 testes: NLU, segurança, banco, núcleo, API
+python -m pytest tests -q        # 207 testes: NLU, segurança, banco, núcleo, API
 python scripts/smoke_test.py     # roteiro completo em um HOME temporário
 ```
 
@@ -200,7 +200,7 @@ inicialização automática (registro do Windows / `~/.config/autostart`).
 | 6 · Automações | programas, janelas, arquivos, energia, rotinas, agendamentos | ✅ |
 | 7 · Memória e organização | memória, notas, tarefas, lembretes, objetivos | ✅ |
 | 8 · Personalidade | respostas, confirmações, honestidade, conselheiro | ✅ |
-| 9 · Testes | 205 testes + bateria de NLU + smoke test | ✅ contínuo |
+| 9 · Testes | 207 testes + bateria de NLU + smoke test | ✅ contínuo |
 
 Próximos passos sugeridos em **[docs/ROADMAP.md](docs/ROADMAP.md)**.
 

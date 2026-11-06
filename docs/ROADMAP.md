@@ -12,7 +12,7 @@
 - [x] Fase 6 — programas, janelas, arquivos, energia, volume, rotinas, agendamentos
 - [x] Fase 7 — memória, notas, tarefas, lembretes, objetivos, agenda, timers
 - [x] Fase 8 — personalidade, confirmações, conselheiro, explicações sobre si mesmo
-- [x] Fase 9 — 205 testes automatizados, bateria de frases, smoke test, diagnóstico de ambiente
+- [x] Fase 9 — 207 testes automatizados, bateria de frases, smoke test, diagnóstico de ambiente
 
 ---
 

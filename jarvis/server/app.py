@@ -9,7 +9,7 @@ import asyncio
 import json
 import logging
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -407,11 +407,17 @@ def create_app(assistant: Assistant | None = None) -> FastAPI:
             async def sender():
                 while True:
                     event = await queue.get()
-                    await ws.send_text(json.dumps(event, ensure_ascii=False, default=str))
+                    try:
+                        await ws.send_text(json.dumps(event, ensure_ascii=False, default=str))
+                    except (WebSocketDisconnect, RuntimeError):
+                        return
 
             async def receiver():
                 while True:
-                    raw = await ws.receive_text()
+                    try:
+                        raw = await ws.receive_text()
+                    except (WebSocketDisconnect, RuntimeError):
+                        return
                     try:
                         message = json.loads(raw)
                     except Exception:
@@ -425,6 +431,11 @@ def create_app(assistant: Assistant | None = None) -> FastAPI:
             done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             for task in pending:
                 task.cancel()
+            # recolhe o resultado de todas as tarefas: sem isso, a desconexão
+            # abrupta do navegador virava "Task exception was never retrieved".
+            for task in tasks:
+                with suppress(asyncio.CancelledError, WebSocketDisconnect, Exception):
+                    await task
         except WebSocketDisconnect:
             pass
         except Exception as exc:  # pragma: no cover
