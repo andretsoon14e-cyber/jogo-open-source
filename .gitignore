@@ -1,0 +1,25 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- dados de execução (nunca versionar) ---
+data/
+config/user.yaml
+models/
+*.log
+*.db
+*.db-wal
+*.db-shm
+audit.jsonl
+
+# --- sistema ---
+.DS_Store
+Thumbs.db
+desktop.ini

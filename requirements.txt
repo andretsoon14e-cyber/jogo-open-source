@@ -1,0 +1,25 @@
+# ============================================================
+# J.A.R.V.I.S. — dependências
+# Instalação:  pip install -r requirements.txt
+# Tudo roda localmente. Nenhuma dependência aqui envia seus
+# dados para serviços externos.
+# ============================================================
+
+# --- núcleo e servidor local ---------------------------------
+fastapi>=0.104,<1.0
+uvicorn[standard]>=0.24
+PyYAML>=6.0
+psutil>=5.9
+
+# --- reconhecimento de voz offline (opcional, recomendado) ----
+vosk>=0.3.45            # transcrição local com modelo pt-BR
+                        # (o modelo é baixado à parte: scripts/setup_models.py)
+
+# --- síntese de voz local (opcional) --------------------------
+pyttsx3>=2.90           # usa SAPI5 (Windows) / espeak (Linux) do sistema
+                        # Piper é um binário separado: scripts/setup_models.py
+
+# --- extras por sistema ---------------------------------------
+send2trash>=1.8; python_version >= "3.8"     # excluir para a lixeira
+pycaw>=20230407; sys_platform == "win32"      # controle preciso de volume
+comtypes>=1.2; sys_platform == "win32"       # dependência do pycaw

@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <title>J.A.R.V.I.S. — Assistente Pessoal</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/css/hud.css" />
+</head>
+<body>
+  <div class="bg-grid" aria-hidden="true"></div>
+  <div class="bg-glow" aria-hidden="true"></div>
+  <div class="bg-scan" aria-hidden="true"></div>
+
+  <!-- ============================ INTERFACE COMPLETA ============================ -->
+  <div class="app" id="app">
+    <header class="topbar">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 48 48" aria-hidden="true">
+          <circle cx="24" cy="24" r="19" fill="none" stroke="currentColor" stroke-width="1.2" opacity=".55"/>
+          <circle cx="24" cy="24" r="13" fill="none" stroke="currentColor" stroke-width="1" opacity=".35"
+                  stroke-dasharray="4 5"/>
+          <circle cx="24" cy="24" r="6.5" fill="currentColor" opacity=".85"/>
+          <path d="M24 5v6M24 37v6M5 24h6M37 24h6" stroke="currentColor" stroke-width="1.4" opacity=".7"/>
+        </svg>
+        <div class="brand-text">
+          <h1>J.A.R.V.I.S.</h1>
+          <p>assistente pessoal · 100% local</p>
+        </div>
+      </div>
+
+      <div class="chips" id="chips">
+        <span class="chip" id="chip-voice" title="Motor de voz"><i class="dot"></i><span>voz</span></span>
+        <span class="chip" id="chip-mic" title="Microfone"><i class="dot"></i><span>microfone</span></span>
+        <span class="chip" id="chip-security" title="Nível de confirmação"><i class="dot"></i><span>nível 2</span></span>
+        <span class="chip chip-offline" title="Nenhum dado sai desta máquina">
+          <svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 3a7 7 0 017 7 7 7 0 01-1.2 3.9L7.1 6.2A7 7 0 0112 5zm0 14a7 7 0 01-5.8-3.1l10.7-8.9A7 7 0 0112 19z" fill="currentColor"/></svg>
+          offline
+        </span>
+      </div>
+
+      <div class="clock">
+        <div class="clock-time" id="clock-time">--:--</div>
+        <div class="clock-date" id="clock-date">carregando…</div>
+      </div>
+
+      <div class="topbar-actions">
+        <button class="icon-btn" id="btn-mini" title="Modo compacto" aria-label="Modo compacto">
+          <svg viewBox="0 0 24 24" width="16" height="16"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="11" y="11" width="7" height="5" fill="currentColor" opacity=".7"/></svg>
+        </button>
+        <button class="icon-btn" id="btn-help" title="Ajuda e comandos" aria-label="Ajuda">
+          <svg viewBox="0 0 24 24" width="16" height="16"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M9.6 9.2a2.5 2.5 0 114.2 2c-.8.8-1.8 1.1-1.8 2.4M12 17h.01" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <!-- ------------------------------ COLUNA ESQUERDA ------------------------------ -->
+      <aside class="col col-left">
+        <section class="panel">
+          <header class="panel-head">
+            <h2>Telemetria</h2>
+            <span class="panel-sub" id="host-name">—</span>
+          </header>
+          <div class="gauges">
+            <div class="gauge" data-metric="cpu">
+              <svg viewBox="0 0 100 100"><circle class="gauge-track" cx="50" cy="50" r="42"/><circle class="gauge-fill" cx="50" cy="50" r="42"/></svg>
+              <div class="gauge-value"><strong id="g-cpu">0</strong><span>%</span></div>
+              <div class="gauge-label">CPU</div>
+            </div>
+            <div class="gauge" data-metric="ram">
+              <svg viewBox="0 0 100 100"><circle class="gauge-track" cx="50" cy="50" r="42"/><circle class="gauge-fill" cx="50" cy="50" r="42"/></svg>
+              <div class="gauge-value"><strong id="g-ram">0</strong><span>%</span></div>
+              <div class="gauge-label">RAM</div>
+            </div>
+            <div class="gauge" data-metric="disk">
+              <svg viewBox="0 0 100 100"><circle class="gauge-track" cx="50" cy="50" r="42"/><circle class="gauge-fill" cx="50" cy="50" r="42"/></svg>
+              <div class="gauge-value"><strong id="g-disk">0</strong><span>%</span></div>
+              <div class="gauge-label">DISCO</div>
+            </div>
+          </div>
+          <dl class="kv">
+            <div><dt>Memória</dt><dd id="v-mem">—</dd></div>
+            <div><dt>Processos</dt><dd id="v-proc">—</dd></div>
+            <div><dt>Temperatura</dt><dd id="v-temp">—</dd></div>
+            <div><dt>Uptime</dt><dd id="v-uptime">—</dd></div>
+            <div><dt>Bateria</dt><dd id="v-battery">—</dd></div>
+          </dl>
+          <div class="spark-wrap">
+            <canvas id="spark" height="46"></canvas>
+            <span class="spark-label">histórico cpu</span>
+          </div>
+        </section>
+
+        <section class="panel">
+          <header class="panel-head"><h2>Módulos</h2><span class="panel-sub" id="mod-count">—</span></header>
+          <ul class="modules" id="modules"></ul>
+        </section>
+      </aside>
+
+      <!-- ------------------------------- COLUNA CENTRAL ------------------------------ -->
+      <section class="col col-center">
+        <div class="orb-stage" id="orb-stage">
+          <canvas id="orb"></canvas>
+          <div class="orb-frame" aria-hidden="true"></div>
+          <div class="orb-overlay">
+            <div class="state-label" id="state-label">INATIVO</div>
+            <div class="state-hint" id="state-hint">diga “jarvis” ou escreva um comando</div>
+          </div>
+          <div class="orb-corner tl" aria-hidden="true"></div>
+          <div class="orb-corner tr" aria-hidden="true"></div>
+          <div class="orb-corner bl" aria-hidden="true"></div>
+          <div class="orb-corner br" aria-hidden="true"></div>
+        </div>
+
+        <div class="transcript" id="transcript" aria-live="polite"></div>
+
+        <form class="composer" id="composer" autocomplete="off">
+          <button type="button" class="mic-btn" id="btn-mic" title="Ativar microfone (espaço duas vezes)">
+            <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+              <rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/>
+              <path d="M5 11a7 7 0 0014 0M12 18v3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+            </svg>
+          </button>
+          <input id="input-command" type="text" placeholder="Fale ou escreva um comando…" aria-label="Comando" />
+          <button type="submit" class="send-btn" title="Enviar (Enter)">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M4 12h15M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <button type="button" class="stop-btn" id="btn-stop" title="Interromper fala / cancelar">
+            <svg viewBox="0 0 24 24" width="14" height="14"><rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor"/></svg>
+          </button>
+        </form>
+        <div class="suggestions" id="suggestions"></div>
+      </section>
+
+      <!-- ------------------------------- COLUNA DIREITA ------------------------------ -->
+      <aside class="col col-right">
+        <nav class="tabs" id="tabs" role="tablist">
+          <button class="tab active" data-tab="agenda" role="tab">Agenda</button>
+          <button class="tab" data-tab="memory" role="tab">Memória</button>
+          <button class="tab" data-tab="tasks" role="tab">Tarefas</button>
+          <button class="tab" data-tab="routines" role="tab">Rotinas</button>
+          <button class="tab" data-tab="system" role="tab">Sistema</button>
+          <button class="tab" data-tab="settings" role="tab">Ajustes</button>
+          <button class="tab" data-tab="logs" role="tab">Logs</button>
+        </nav>
+
+        <div class="tab-body">
+          <!-- AGENDA -->
+          <section class="tab-panel active" data-panel="agenda">
+            <div class="panel-head"><h2>Próximos</h2><button class="mini-btn" id="btn-refresh-agenda">atualizar</button></div>
+            <ul class="list" id="list-agenda"></ul>
+            <form class="inline-form" id="form-reminder">
+              <input id="reminder-text" placeholder="Novo lembrete…" />
+              <input id="reminder-time" type="datetime-local" />
+              <button type="submit">criar</button>
+            </form>
+          </section>
+
+          <!-- MEMÓRIA -->
+          <section class="tab-panel" data-panel="memory">
+            <div class="panel-head"><h2>Memória local</h2><span class="panel-sub" id="mem-count">—</span></div>
+            <form class="inline-form" id="form-memory">
+              <input id="memory-value" placeholder="Guardar informação…" />
+              <select id="memory-category">
+                <option value="preferencia">preferência</option>
+                <option value="fato">fato</option>
+                <option value="perfil">perfil</option>
+                <option value="projeto">projeto</option>
+                <option value="rotina">rotina</option>
+              </select>
+              <button type="submit">salvar</button>
+            </form>
+            <ul class="list" id="list-memory"></ul>
+            <p class="footnote">Tudo fica em <code>data/jarvis.db</code>. Nada é enviado para fora.</p>
+          </section>
+
+          <!-- TAREFAS -->
+          <section class="tab-panel" data-panel="tasks">
+            <div class="panel-head"><h2>Pendências</h2><span class="panel-sub" id="task-count">—</span></div>
+            <form class="inline-form" id="form-task">
+              <input id="task-title" placeholder="Nova tarefa…" />
+              <button type="submit">adicionar</button>
+            </form>
+            <ul class="list" id="list-tasks"></ul>
+            <div class="panel-head sub"><h2>Objetivos</h2></div>
+            <ul class="list" id="list-goals"></ul>
+          </section>
+
+          <!-- ROTINAS -->
+          <section class="tab-panel" data-panel="routines">
+            <div class="panel-head"><h2>Automações</h2></div>
+            <form class="form-stack" id="form-routine">
+              <input id="routine-name" placeholder="Nome (ex.: modo estudo)" />
+              <textarea id="routine-steps" rows="3" placeholder="Passos, um por linha. Ex.:&#10;abre o navegador&#10;abre a pasta de documentos"></textarea>
+              <button type="submit">criar rotina</button>
+            </form>
+            <ul class="list" id="list-routines"></ul>
+            <p class="footnote">Também é possível criar por voz: “quando eu disser modo estudo, abre o navegador e abre a pasta de documentos”. Para editar, salve novamente com o mesmo nome — a rotina é substituída.</p>
+          </section>
+
+          <!-- SISTEMA -->
+          <section class="tab-panel" data-panel="system">
+            <div class="panel-head"><h2>Computador</h2><span class="panel-sub" id="sys-os">—</span></div>
+            <dl class="kv wide" id="kv-system"></dl>
+            <div class="panel-head sub"><h2>Processos</h2></div>
+            <ul class="list compact" id="list-processes"></ul>
+          </section>
+
+          <!-- AJUSTES -->
+          <section class="tab-panel" data-panel="settings">
+            <div class="panel-head"><h2>Preferências</h2></div>
+            <div class="settings" id="settings-form">
+              <label class="field">
+                <span>Como devo chamá-lo</span>
+                <input data-setting="assistant.user_name" placeholder="seu nome ou apelido" />
+              </label>
+              <label class="field">
+                <span>Tratamento</span>
+                <select data-setting="assistant.user_title">
+                  <option value="Senhor">Senhor</option>
+                  <option value="Doutor">Doutor</option>
+                  <option value="Chefe">Chefe</option>
+                  <option value="">(sem tratamento)</option>
+                </select>
+              </label>
+              <label class="field range">
+                <span>Formalidade <b id="lbl-formality">80%</b></span>
+                <input type="range" min="0" max="100" step="5" data-setting="personality.formality" />
+              </label>
+              <label class="field range">
+                <span>Humor <b id="lbl-humor">55%</b></span>
+                <input type="range" min="0" max="100" step="5" data-setting="personality.humor" />
+              </label>
+              <label class="field range">
+                <span>Detalhamento das respostas <b id="lbl-verbosity">50%</b></span>
+                <input type="range" min="0" max="100" step="5" data-setting="personality.verbosity" />
+              </label>
+              <label class="field toggle">
+                <span>Palavra de ativação “Jarvis”</span>
+                <input type="checkbox" data-setting="voice.wake_word.enabled" />
+              </label>
+              <label class="field toggle">
+                <span>Permitir interromper a fala</span>
+                <input type="checkbox" data-setting="voice.barge_in.enabled" />
+              </label>
+              <label class="field toggle">
+                <span>Voz do assistente</span>
+                <input type="checkbox" data-setting="voice.tts.enabled" />
+              </label>
+              <label class="field">
+                <span>Confirmação obrigatória a partir do nível</span>
+                <select data-setting="security.confirm_level">
+                  <option value="1">1 — ações simples</option>
+                  <option value="2">2 — alterações de dados</option>
+                  <option value="3">3 — apenas ações críticas</option>
+                </select>
+              </label>
+              <label class="field toggle">
+                <span>Modelo de linguagem local (opt-in)</span>
+                <input type="checkbox" data-setting="llm.enabled" />
+              </label>
+              <label class="field">
+                <span>Endpoint local do modelo</span>
+                <input data-setting="llm.endpoint" placeholder="http://127.0.0.1:11434" />
+              </label>
+              <p class="footnote">O modelo local nunca é instalado ou ativado sem sua ação explícita.</p>
+              <button class="primary" id="btn-save-settings">salvar preferências</button>
+            </div>
+          </section>
+
+          <!-- LOGS -->
+          <section class="tab-panel" data-panel="logs">
+            <div class="panel-head"><h2>Auditoria</h2><button class="mini-btn" id="btn-refresh-logs">atualizar</button></div>
+            <ul class="list audit" id="list-audit"></ul>
+            <div class="panel-head sub"><h2>Log técnico</h2></div>
+            <pre class="logbox" id="logbox"></pre>
+          </section>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="statusbar">
+      <span id="status-state">sistema inicializando…</span>
+      <span class="sep"></span>
+      <span id="status-voice">voz: verificando…</span>
+      <span class="sep"></span>
+      <span id="status-stt">reconhecimento: verificando…</span>
+      <span class="grow"></span>
+      <span id="status-commands">—</span>
+    </footer>
+  </div>
+
+  <!-- ================================= MODO MINI ================================== -->
+  <div class="mini" id="mini">
+    <div class="mini-orb"><canvas id="mini-orb-canvas"></canvas></div>
+    <div class="mini-body">
+      <div class="mini-head"><span class="mini-title">J.A.R.V.I.S.</span><span class="mini-state" id="mini-state">inativo</span></div>
+      <p class="mini-text" id="mini-text">Pronto. Diga “jarvis” ou clique no microfone.</p>
+      <div class="mini-actions">
+        <button class="mini-mic" id="mini-mic" title="Microfone">●</button>
+        <button class="mini-expand" id="mini-expand" title="Abrir interface completa">⤢</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================== CONFIRMAÇÃO =================================== -->
+  <div class="modal" id="modal-confirm" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div class="modal-card">
+      <header>
+        <span class="modal-badge" id="confirm-level">nível 2</span>
+        <h3 id="confirm-title">Confirmação necessária</h3>
+      </header>
+      <p class="modal-desc" id="confirm-desc"></p>
+      <ul class="modal-preview" id="confirm-preview"></ul>
+      <div class="modal-countdown"><span id="confirm-bar"></span></div>
+      <footer>
+        <button class="ghost" id="confirm-deny">Cancelar</button>
+        <button class="primary" id="confirm-allow">Autorizar</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ============================== AJUDA ======================================== -->
+  <div class="modal" id="modal-help" role="dialog" aria-modal="true">
+    <div class="modal-card wide">
+      <header><h3>O que eu sei fazer</h3><button class="icon-btn" id="help-close">×</button></header>
+      <div class="help-grid" id="help-grid"></div>
+      <p class="footnote">Tudo roda localmente. Diga “ajuda” a qualquer momento para ouvir um resumo.</p>
+    </div>
+  </div>
+
+  <div class="toasts" id="toasts"></div>
+
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

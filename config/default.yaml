@@ -1,0 +1,139 @@
+# ============================================================
+# J.A.R.V.I.S. — Configuração padrão
+# Este arquivo NÃO deve ser editado manualmente em produção.
+# Suas alterações ficam em config/user.yaml (criado automaticamente).
+# ============================================================
+
+assistant:
+  name: "J.A.R.V.I.S."
+  short_name: "Jarvis"
+  user_title: "Senhor"          # como o assistente se refere a você
+  user_name: ""                 # preenchido na primeira conversa, se quiser
+  language: "pt-BR"
+  timezone: "America/Sao_Paulo"
+
+personality:
+  formality: 0.8          # 0 = informal ... 1 = muito formal
+  humor: 0.55             # quantidade de humor sutil
+  verbosity: 0.5          # 0 = respostas curtas ... 1 = detalhadas
+  honesty: true           # admite quando não sabe (não desligue)
+  use_honorific: true
+  proactive_suggestions: true
+
+voice:
+  wake_word:
+    enabled: true
+    words: ["jarvis", "jarvis", "jarvis"]
+    greeting: "Pois não?"
+    sensitivity: 0.78      # 0..1 — tolerância a erros de pronúncia
+  stt:
+    engine: "auto"         # auto | vosk | whisper_cpp | disabled
+    vosk_model: "models/vosk-model-small-pt-0.3"
+    vosk_model_alt: "models/vosk-model-pt"
+    whisper_cpp_binary: "" # ex.: C:/jarvis/whisper.cpp/main.exe
+    whisper_cpp_model: "models/ggml-small.bin"
+    sample_rate: 16000
+    silence_timeout_ms: 900      # detecção de fim de fala
+    max_utterance_s: 15
+  tts:
+    engine: "auto"         # auto | piper | pyttsx3 | espeak | browser | disabled
+    piper_binary: ""       # ex.: C:/jarvis/piper/piper.exe
+    piper_model: "models/piper/pt_BR-faber-medium.onnx"
+    piper_config: ""       # opcional (.json)
+    rate: 1.0              # 1.0 = normal (pyttsx3/espeak)
+    volume: 0.9
+    prefer_browser: true   # no navegador usa a voz local do sistema (offline)
+  barge_in:
+    enabled: true          # permite interromper a fala dizendo "jarvis, pare"
+    stop_words: ["pare", "para", "silencio", "silêncio", "cala a boca", "chega", "cancela"]
+
+security:
+  default_confirm: true
+  allow_destructive: false          # liberar exclusão permanente exige nível 3 confirmado
+  forbidden_patterns:
+    - "rm -rf /"
+    - "mkfs"
+    - "diskpart"
+    - "format c:"
+    - "del /f /s /q c:\\"
+    - "cipher /w"
+    - "bcdedit"
+    - "reg delete hklm"
+  protected_paths:
+    - "C:/Windows"
+    - "C:/Program Files"
+    - "C:/Program Files (x86)"
+    - "/etc"
+    - "/usr"
+    - "/boot"
+    - "/bin"
+  allowed_roots: []                 # vazio = usar home do usuário automaticamente
+  confirm_level: 2                  # a partir deste nível sempre pede confirmação
+  session_trust_minutes: 0          # >0 = confirmação vale por X minutos
+  audit_enabled: true
+  microphone_enabled: true
+
+system:
+  apps:
+    navegador: "default_browser"
+    browser: "default_browser"
+    chrome: "C:/Program Files/Google/Chrome/Application/chrome.exe"
+    edge: "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"
+    firefox: "C:/Program Files/Mozilla Firefox/firefox.exe"
+    bloco de notas: "notepad.exe"
+    notepad: "notepad.exe"
+    calculadora: "calc.exe"
+    calculator: "calc.exe"
+    explorer: "explorer.exe"
+    gerenciador de tarefas: "taskmgr.exe"
+    task manager: "taskmgr.exe"
+    discord: "C:/Users/%USERNAME%/AppData/Local/Discord/Update.exe --processStart Discord.exe"
+    spotify: "C:/Users/%USERNAME%/AppData/Roaming/Spotify/Spotify.exe"
+    steam: "C:/Program Files (x86)/Steam/steam.exe"
+    vscode: "C:/Users/%USERNAME%/AppData/Local/Programs/Microsoft VS Code/Code.exe"
+    word: "winword.exe"
+    excel: "excel.exe"
+    powerpoint: "powerpnt.exe"
+    teams: "msteams.exe"
+    whatsapp: "whatsapp.exe"
+    telegram: "telegram.exe"
+  folders:
+    downloads: "~/Downloads"
+    documentos: "~/Documents"
+    imagens: "~/Pictures"
+    musicas: "~/Music"
+    videos: "~/Videos"
+    desktop: "~/Desktop"
+    area de trabalho: "~/Desktop"
+  performance_interval_s: 3
+
+automation:
+  routines_enabled: true
+  scheduler_tick_s: 20
+  confirm_bulk_actions: true
+  bulk_threshold: 10
+
+interface:
+  host: "0.0.0.0"
+  port: 8765
+  theme: "cyan"
+  start_minimized: false
+  show_performance: true
+  history_limit: 200
+
+logging:
+  level: "INFO"
+  file: "data/logs/jarvis.log"
+  audit_file: "data/logs/audit.jsonl"
+  max_bytes: 2097152
+  backups: 3
+
+llm:
+  # Modelo de linguagem LOCAL opcional (llama.cpp / Ollama em 127.0.0.1).
+  # Desativado por padrão. Nada é enviado para a internet.
+  enabled: false
+  provider: "ollama"        # ollama | llama_cpp_server
+  endpoint: "http://127.0.0.1:11434"
+  model: "qwen2.5:3b-instruct"
+  timeout_s: 20
+  require_authorization: true
